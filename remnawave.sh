@@ -29,15 +29,52 @@ check_running_as_root() {
     fi
 }
 
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$NAME
+    else
+        colorized_echo red "Cannot detect OS"
+        exit 1
+    fi
+}
+
+install_package() {
+    local package=$1
+    detect_os
+    colorized_echo blue "Installing $package"
+    case "$OS" in
+        "Ubuntu"|"Debian GNU/Linux")
+            apt-get update && apt-get install -y "$package" || { colorized_echo red "Failed to install $package"; exit 1; }
+            ;;
+        "CentOS Linux"|"AlmaLinux")
+            yum install -y "$package" || { colorized_echo red "Failed to install $package"; exit 1; }
+            ;;
+        *)
+            colorized_echo red "Unsupported OS: $OS"
+            exit 1
+            ;;
+    esac
+}
+
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then
         COMPOSE='docker compose'
     elif docker-compose version >/dev/null 2>&1; then
         COMPOSE='docker-compose'
     else
-        colorized_echo red "Docker Compose not found. Please install Docker Compose."
-        exit 1
+        colorized_echo red "Docker Compose not found. Installing..."
+        install_package docker-compose || install_docker
     fi
+}
+
+install_docker() {
+    colorized_echo blue "Installing Docker"
+    curl -fsSL https://get.docker.com | sh || {
+        colorized_echo red "Failed to install Docker"
+        exit 1
+    }
+    colorized_echo green "Docker installed successfully"
 }
 
 # Telegram Backup Functions
@@ -60,20 +97,16 @@ send_backup_to_telegram() {
 
     local backup_size=$(du -m "$backup_path" | cut -f1)
     local split_dir="/tmp/remnawave_backup_split"
-    local is_single_file=true
-
     mkdir -p "$split_dir"
 
     if [ "$backup_size" -gt 49 ]; then
         colorized_echo yellow "Backup is larger than 49MB. Splitting the archive..."
         split -b 49M "$backup_path" "$split_dir/part_"
-        is_single_file=false
     else
         cp "$backup_path" "$split_dir/part_aa"
     fi
 
     local backup_time=$(date "+%Y-%m-%d %H:%M:%S %Z")
-
     for part in "$split_dir"/*; do
         local part_name=$(basename "$part")
         local custom_filename="backup_${part_name}.sql"
@@ -178,7 +211,7 @@ backup_service() {
     echo "BACKUP_TELEGRAM_CHAT_ID=$chat_id" >> "$ENV_FILE"
     echo "BACKUP_CRON_SCHEDULE=\"$cron_schedule\"" >> "$ENV_FILE"
 
-    local backup_command="$(which bash) -c 'remna backup'"
+    local backup_command="$(which bash) -c '/usr/local/bin/remna backup'"
     crontab -l 2>/dev/null | grep -v "$backup_command" > /tmp/cron || true
     echo "$cron_schedule $backup_command # remnawave-backup" >> /tmp/cron
     crontab /tmp/cron
@@ -209,6 +242,17 @@ remove_backup_service() {
 # Command Functions
 install_command() {
     check_running_as_root
+
+    # Install dependencies
+    if ! command -v curl >/dev/null 2>&1; then install_package curl; fi
+
+    # Install the script first
+    colorized_echo blue "Installing remna script"
+    curl -sSL "$REPO_URL/remnawave.sh" -o /usr/local/bin/remna || {
+        colorized_echo red "Failed to install remna script"
+        exit 1
+    }
+    chmod +x /usr/local/bin/remna
 
     if [ -d "$APP_DIR" ]; then
         colorized_echo red "Remnawave is already installed at $APP_DIR"
@@ -419,14 +463,7 @@ WEB_PAGE_TEMPLATE_PATH=/app/templates/subscription/index.html
 EOF
 
     # Install Docker if not present
-    if ! command -v docker >/dev/null 2>&1; then
-        colorized_echo blue "Installing Docker"
-        curl -fsSL https://get.docker.com | sh || {
-            colorized_echo red "Failed to install Docker"
-            exit 1
-        }
-    fi
-
+    if ! command -v docker >/dev/null 2>&1; then install_docker; fi
     detect_compose
 
     # Create directories for remnawave-json templates
@@ -441,13 +478,6 @@ EOF
         colorized_echo red "Failed to start Remnawave services"
         exit 1
     }
-
-    # Install the script as remna
-    curl -sSL "$REPO_URL/remnawave.sh" -o /usr/local/bin/remna || {
-        colorized_echo red "Failed to install remna script"
-        exit 1
-    }
-    chmod +x /usr/local/bin/remna
 
     colorized_echo green "Remnawave installed successfully!"
     colorized_echo green "Panel URL: https://$panel_domain"
@@ -543,13 +573,11 @@ restore_command() {
         exit 1
     fi
 
-    # Basic check to see if it looks like a PostgreSQL dump
     if ! head -n 10 "$backup_path" | grep -q "PostgreSQL database dump"; then
         colorized_echo red "This file does not appear to be a valid PostgreSQL backup."
         exit 1
     fi
 
-    # Drop and recreate the database, then restore
     $COMPOSE -f "$COMPOSE_FILE" exec -T remnawave-db dropdb -U postgres postgres || {
         colorized_echo red "Failed to drop database"
         exit 1
@@ -573,20 +601,9 @@ core_update_command() {
     detect_compose
     [ -f "$COMPOSE_FILE" ] || { colorized_echo red "Compose file not found"; exit 1; }
 
-    # Check for unzip dependency
-    if ! command -v unzip >/dev/null 2>&1; then
-        colorized_echo blue "Installing unzip"
-        if command -v apt-get >/dev/null 2>&1; then
-            apt-get update && apt-get install -y unzip
-        elif command -v yum >/dev/null 2>&1; then
-            yum install -y unzip
-        else
-            colorized_echo red "Package manager not found. Please install unzip manually."
-            exit 1
-        fi
-    fi
+    if ! command -v unzip >/dev/null 2>&1; then install_package unzip; fi
+    if ! command -v curl >/dev/null 2>&1; then install_package curl; fi
 
-    # Download and update Xray core (assumes amd64 for simplicity)
     local xray_version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'"' -f4)
     local xray_filename="Xray-linux-64.zip"
     local xray_url="https://github.com/XTLS/Xray-core/releases/download/$xray_version/$xray_filename"
