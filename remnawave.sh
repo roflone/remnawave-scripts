@@ -242,9 +242,12 @@ remove_backup_service() {
 # Command Functions
 install_command() {
     check_running_as_root
+    colorized_echo blue "Starting installation..."
 
     # Install dependencies
+    colorized_echo blue "Checking dependencies..."
     if ! command -v curl >/dev/null 2>&1; then install_package curl; fi
+    if ! command -v git >/dev/null 2>&1; then install_package git; fi
 
     # Install the script first
     colorized_echo blue "Installing remna script"
@@ -253,6 +256,7 @@ install_command() {
         exit 1
     }
     chmod +x /usr/local/bin/remna
+    colorized_echo green "remna script installed"
 
     if [ -d "$APP_DIR" ]; then
         colorized_echo red "Remnawave is already installed at $APP_DIR"
@@ -264,7 +268,16 @@ install_command() {
         rm -rf "$APP_DIR"
     fi
 
+    colorized_echo blue "Creating app directory..."
     mkdir -p "$APP_DIR"
+
+    # Clone remnawave-json repository
+    colorized_echo blue "Cloning remnawave-json repository"
+    git clone https://github.com/Jolymmiles/remnawave-json "$REMNAWAVE_JSON_DIR" || {
+        colorized_echo red "Failed to clone remnawave-json repository"
+        exit 1
+    }
+    colorized_echo green "remnawave-json cloned successfully"
 
     colorized_echo blue "Fetching docker-compose.yml"
     cat > "$COMPOSE_FILE" <<EOF
@@ -329,8 +342,8 @@ services:
     networks:
       - remnawave-network
     volumes:
-      - /opt/remnawave/remnawave-json/templates/subscription/index.html:/app/templates/subscription/index.html
-      - /opt/remnawave/remnawave-json/templates/2ray/v2ray.json:/app/templates/v2ray/v2ray.json
+      - $REMNAWAVE_JSON_DIR/templates/subscription/index.html:/app/templates/subscription/index.html
+      - $REMNAWAVE_JSON_DIR/templates/v2ray/v2ray.json:/app/templates/v2ray/v2ray.json
 
 networks:
   remnawave-network:
@@ -348,23 +361,25 @@ volumes:
     external: false
     name: remnawave-redis-data
 EOF
+    colorized_echo green "docker-compose.yml created"
 
     # Prompt for domains
-    colorized_echo blue "Please enter the domain for the Remnawave panel (e.g., test.openode.ru):"
-    read -p "Panel Domain: " panel_domain
+    colorized_echo blue "Prompting for panel domain..."
+    read -p "Please enter the domain for the Remnawave panel (e.g., test.openode.ru): " panel_domain
     while [ -z "$panel_domain" ]; do
         colorized_echo red "Panel domain cannot be empty. Please try again."
         read -p "Panel Domain: " panel_domain
     done
 
-    colorized_echo blue "Please enter the domain for the subscription page (e.g., link.openode.ru):"
-    read -p "Subscription Domain: " sub_domain
+    colorized_echo blue "Prompting for subscription domain..."
+    read -p "Please enter the domain for the subscription page (e.g., link.openode.ru): " sub_domain
     while [ -z "$sub_domain" ]; do
         colorized_echo red "Subscription domain cannot be empty. Please try again."
         read -p "Subscription Domain: " sub_domain
     done
 
     # Prompt for Telegram settings
+    colorized_echo blue "Prompting for Telegram settings..."
     local telegram_enabled bot_token admin_id notify_chat_id
     read -p "Enable Telegram notifications? (y/n): " -r
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -390,8 +405,10 @@ EOF
         admin_id="change_me"
         notify_chat_id="change_me"
     fi
+    colorized_echo green "Telegram settings configured"
 
     # Generate secrets
+    colorized_echo blue "Generating secrets..."
     JWT_AUTH_SECRET=$(openssl rand -hex 128)
     JWT_API_TOKENS_SECRET=$(openssl rand -hex 128)
     METRICS_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
@@ -461,23 +478,26 @@ APP_HOST=0.0.0.0
 V2RAY_TEMPLATE_PATH=/app/templates/v2ray/v2ray.json
 WEB_PAGE_TEMPLATE_PATH=/app/templates/subscription/index.html
 EOF
+    colorized_echo green ".env file created"
 
     # Install Docker if not present
+    colorized_echo blue "Checking Docker installation..."
     if ! command -v docker >/dev/null 2>&1; then install_docker; fi
     detect_compose
-
-    # Create directories for remnawave-json templates
-    mkdir -p /opt/remnawave/remnawave-json/templates/subscription
-    mkdir -p /opt/remnawave/remnawave-json/templates/2ray
-    touch /opt/remnawave/remnawave-json/templates/subscription/index.html
-    touch /opt/remnawave/remnawave-json/templates/2ray/v2ray.json
+    colorized_echo green "Docker setup complete"
 
     # Pull and start containers
-    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" pull
+    colorized_echo blue "Pulling Docker images..."
+    $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" pull || {
+        colorized_echo red "Failed to pull Docker images"
+        exit 1
+    }
+    colorized_echo blue "Starting Remnawave services..."
     $COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" up -d || {
         colorized_echo red "Failed to start Remnawave services"
         exit 1
     }
+    colorized_echo green "Remnawave services started"
 
     colorized_echo green "Remnawave installed successfully!"
     colorized_echo green "Panel URL: https://$panel_domain"
@@ -485,7 +505,9 @@ EOF
     colorized_echo green "Metrics password: $METRICS_PASS"
 
     # Prompt for backup service setup
+    colorized_echo blue "Configuring backup service..."
     backup_service
+    colorized_echo green "Installation completed!"
 }
 
 up_command() {
