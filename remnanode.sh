@@ -804,25 +804,25 @@ edit_command() {
 
 usage() {
     colorized_echo blue "================================"
-    colorized_echo magenta "       $APP_NAME Node CLI Help"
+    colorized_echo magenta "       $APP_NAME CLI Help"
     colorized_echo blue "================================"
     colorized_echo cyan "Usage:"
     echo "  $APP_NAME [command]"
     echo
 
     colorized_echo cyan "Commands:"
-    colorized_echo yellow "  up              $(tput sgr0)– Start services"
-    colorized_echo yellow "  down            $(tput sgr0)– Stop services"
-    colorized_echo yellow "  restart         $(tput sgr0)– Restart services"
-    colorized_echo yellow "  status          $(tput sgr0)– Show status"
-    colorized_echo yellow "  logs            $(tput sgr0)– Show logs"
-    colorized_echo yellow "  install         $(tput sgr0)– Install/reinstall Remnanode"
-    colorized_echo yellow "  update          $(tput sgr0)– Update to latest version"
-    colorized_echo yellow "  uninstall       $(tput sgr0)– Uninstall Remnanode"
-    colorized_echo yellow "  install-script  $(tput sgr0)– Install Remnanode script"
-    colorized_echo yellow "  uninstall-script  $(tput sgr0)– Uninstall Remnanode script"
-    colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
-    colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
+    colorized_echo yellow "  up                  $(tput sgr0)– Start services"
+    colorized_echo yellow "  down                $(tput sgr0)– Stop services"
+    colorized_echo yellow "  restart             $(tput sgr0)– Restart services"
+    colorized_echo yellow "  status              $(tput sgr0)– Show status"
+    colorized_echo yellow "  logs                $(tput sgr0)– Show logs"
+    colorized_echo yellow "  install             $(tput sgr0)– Install/reinstall Remnanode"
+    colorized_echo yellow "  update              $(tput sgr0)– Update to latest version"
+    colorized_echo yellow "  uninstall           $(tput sgr0)– Uninstall Remnanode"
+    colorized_echo yellow "  install-script      $(tput sgr0)– Install Remnanode script"
+    colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnanode script"
+    colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
+    colorized_echo yellow "  core-update         $(tput sgr0)– Update/Change Xray core"
     
     echo
     colorized_echo cyan "Options for install:"
