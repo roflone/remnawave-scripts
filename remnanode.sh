@@ -228,7 +228,7 @@ install_remnanode() {
         if [[ -z $line ]]; then
             break
         fi
-        SSL_CERT="$SSL_CERT$line\n"
+        SSL_CERT="$SSL_CERT$line"
     done
 
     get_occupied_ports
