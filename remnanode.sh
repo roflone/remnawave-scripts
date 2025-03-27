@@ -19,6 +19,15 @@ while [[ $# -gt 0 ]]; do
             fi
             shift # past value
         ;;
+        --dev)
+            if [[ "$COMMAND" == "install" ]]; then
+                USE_DEV_BRANCH="true"
+            else
+                echo "Error: --dev parameter is only allowed with 'install' command."
+                exit 1
+            fi
+            shift # past argument
+        ;;
         *)
             shift # past unknown argument
         ;;
@@ -47,8 +56,8 @@ APP_DIR="$INSTALL_DIR/$APP_NAME"
 DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
-LAST_XRAY_CORES=5
-SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/refs/heads/main/remnanode.sh"  # Замените на ваш URL, если нужно
+XRAY_FILE="$DATA_DIR/xray"
+SCRIPT_URL="https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh"  # Убедитесь, что URL актуален
 
 colorized_echo() {
     local color=$1
@@ -217,6 +226,45 @@ is_port_occupied() {
     fi
 }
 
+install_latest_xray_core() {
+    identify_the_operating_system_and_architecture
+    mkdir -p "$DATA_DIR"
+    cd "$DATA_DIR"
+    
+    latest_release=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | grep -oP '"tag_name": "\K(.*?)(?=")')
+    if [ -z "$latest_release" ]; then
+        colorized_echo red "Failed to fetch latest Xray-core version."
+        exit 1
+    fi
+    
+    if ! dpkg -s unzip >/dev/null 2>&1; then
+        colorized_echo blue "Installing unzip..."
+        detect_os
+        install_package unzip
+    fi
+    
+    xray_filename="Xray-linux-$ARCH.zip"
+    xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${latest_release}/${xray_filename}"
+    
+    colorized_echo blue "Downloading Xray-core version ${latest_release}..."
+    wget "${xray_download_url}" -q
+    if [ $? -ne 0 ]; then
+        colorized_echo red "Error: Failed to download Xray-core."
+        exit 1
+    fi
+    
+    colorized_echo blue "Extracting Xray-core..."
+    unzip -o "${xray_filename}" -d "$DATA_DIR" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        colorized_echo red "Error: Failed to extract Xray-core."
+        exit 1
+    fi
+    
+    rm "${xray_filename}"
+    chmod +x "$XRAY_FILE"
+    colorized_echo green "Latest Xray-core (${latest_release}) installed at $XRAY_FILE"
+}
+
 install_remnanode() {
     mkdir -p "$APP_DIR"
     mkdir -p "$DATA_DIR"
@@ -250,15 +298,29 @@ install_remnanode() {
         fi
     done
 
+    # Ask about installing Xray-core
+    read -p "Do you want to install the latest version of Xray-core? (y/n): " -r install_xray
+    INSTALL_XRAY=false
+    if [[ "$install_xray" =~ ^[Yy]$ ]]; then
+        INSTALL_XRAY=true
+        install_latest_xray_core
+    fi
+
     colorized_echo blue "Generating .env file"
     cat > "$ENV_FILE" <<EOL
 ### APP ###
 APP_PORT=$APP_PORT
 
 ### XRAY ###
-$SSL_CERT
+SSL_CERT="$SSL_CERT"
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
+
+    # Determine image based on --dev flag
+    IMAGE_TAG="latest"
+    if [ "$USE_DEV_BRANCH" == "true" ]; then
+        IMAGE_TAG="dev"
+    fi
 
     colorized_echo blue "Generating docker-compose.yml file"
     cat > "$COMPOSE_FILE" <<EOL
@@ -266,13 +328,20 @@ services:
   remnanode:
     container_name: $APP_NAME
     hostname: $APP_NAME
-    image: remnawave/node:latest
+    image: remnawave/node:${IMAGE_TAG}
     env_file:
       - .env
     network_mode: host
-    volumes:
-      - $DATA_DIR:/usr/local/bin/xray
 EOL
+
+    # Add volumes only if Xray-core was installed
+    if [ "$INSTALL_XRAY" == "true" ]; then
+        cat >> "$COMPOSE_FILE" <<EOL
+    volumes:
+      - $XRAY_FILE:/usr/local/bin/xray
+EOL
+    fi
+
     colorized_echo green "Docker Compose file saved in $COMPOSE_FILE"
 }
 
@@ -590,9 +659,8 @@ identify_the_operating_system_and_architecture() {
 }
 
 get_current_xray_core_version() {
-    XRAY_BINARY="$DATA_DIR/xray"
-    if [ -f "$XRAY_BINARY" ]; then
-        version_output=$("$XRAY_BINARY" -version 2>/dev/null)
+    if [ -f "$XRAY_FILE" ]; then
+        version_output=$("$XRAY_FILE" -version 2>/dev/null)
         if [ $? -eq 0 ]; then
             version=$(echo "$version_output" | head -n1 | awk '{print $2}')
             echo "$version"
@@ -634,7 +702,7 @@ get_xray_core() {
         echo -e "\033[1;32m==============================\033[0m"
     }
     
-    latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=$LAST_XRAY_CORES")
+    latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5")
     versions=($(echo "$latest_releases" | grep -oP '"tag_name": "\K(.*?)(?=")'))
     
     while true; do
@@ -686,18 +754,24 @@ get_xray_core() {
     fi
     
     echo -e "\033[1;33mExtracting Xray-core...\033[0m"
-    unzip -o "${xray_filename}" >/dev/null 2>&1
+    unzip -o "${xray_filename}" -d "$DATA_DIR" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo -e "\033[1;31mError: Failed to extract Xray-core. Please check the downloaded file.\033[0m"
         exit 1
     fi
     
     rm "${xray_filename}"
+    chmod +x "$XRAY_FILE"
 }
 
 update_core_command() {
     check_running_as_root
     get_xray_core
+    colorized_echo blue "Updating docker-compose.yml with Xray-core volume..."
+    if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
+        echo "    volumes:" >> "$COMPOSE_FILE"
+        echo "      - $XRAY_FILE:/usr/local/bin/xray" >> "$COMPOSE_FILE"
+    fi
     colorized_echo red "Restarting Remnanode..."
     $APP_NAME restart -n
     colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
@@ -749,6 +823,10 @@ usage() {
     colorized_echo yellow "  uninstall-script  $(tput sgr0)– Uninstall Remnanode script"
     colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
     colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
+    
+    echo
+    colorized_echo cyan "Options for install:"
+    colorized_echo yellow "  --dev           $(tput sgr0)– Use remnawave/node:dev instead of latest"
     
     echo
     colorized_echo cyan "Node Information:"
