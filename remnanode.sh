@@ -48,7 +48,7 @@ DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 LAST_XRAY_CORES=5
-SCRIPT_URL="https://github.com/DigneZzZ/Marzban-scripts-beta/raw/main/node.sh"  # Замените на ваш URL, если нужно
+SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/refs/heads/main/remnanode.sh"  # Замените на ваш URL, если нужно
 
 colorized_echo() {
     local color=$1
