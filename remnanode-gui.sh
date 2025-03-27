@@ -141,7 +141,7 @@ install_latest_xray_core() {
     progress_bar "Extracting Xray-core..." "unzip -o Xray-linux-$ARCH.zip && rm Xray-linux-$ARCH.zip && chmod +x $XRAY_FILE"
 }
 
-# Установка remnanode
+# Установка remnanode (исправлена запись volumes)
 install_remnanode() {
     mkdir -p "$APP_DIR" "$DATA_DIR/$APP_NAME"
 
@@ -159,6 +159,7 @@ $SSL_CERT
 EOL
 
     IMAGE_TAG=${USE_DEV_BRANCH:+"dev"} && IMAGE_TAG=${IMAGE_TAG:-"latest"}
+    # Используем heredoc для корректной записи с переносами строк и отступами
     cat > "$COMPOSE_FILE" <<EOL
 services:
   remnanode:
@@ -169,7 +170,14 @@ services:
     network_mode: host
 EOL
 
-    [ -f "$XRAY_FILE" ] && echo "    volumes:\n      - $XRAY_FILE:/usr/local/bin/xray" >> "$COMPOSE_FILE"
+    # Добавляем volumes с правильными отступами, если Xray установлен
+    if [ -f "$XRAY_FILE" ]; then
+        cat >> "$COMPOSE_FILE" <<EOL
+    volumes:
+      - $XRAY_FILE:/usr/local/bin/xray
+EOL
+    fi
+
     install_remnanode_script
 }
 
@@ -198,8 +206,10 @@ update_core_command() {
     command -v unzip >/dev/null || install_package unzip
     install_latest_xray_core
     if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-        echo "    volumes:" >> "$COMPOSE_FILE"
-        echo "      - $XRAY_FILE:/usr/local/bin/xray" >> "$COMPOSE_FILE"
+        cat >> "$COMPOSE_FILE" <<EOL
+    volumes:
+      - $XRAY_FILE:/usr/local/bin/xray
+EOL
     fi
     restart_remnanode
     show_msg "Xray-core updated successfully"
