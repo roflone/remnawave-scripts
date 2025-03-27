@@ -312,7 +312,7 @@ install_remnanode() {
 APP_PORT=$APP_PORT
 
 ### XRAY ###
-SSL_CERT="$SSL_CERT"
+$SSL_CERT
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
