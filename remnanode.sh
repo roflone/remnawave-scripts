@@ -804,7 +804,7 @@ edit_command() {
 
 usage() {
     colorized_echo blue "================================"
-    colorized_echo magenta "       $APP_NAME Node CLI Help"
+    colorized_echo magenta "       $APP_NAME CLI Help"
     colorized_echo blue "================================"
     colorized_echo cyan "Usage:"
     echo "  $APP_NAME [command]"
