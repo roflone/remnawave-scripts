@@ -93,9 +93,19 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
 
     if [ -f "$RESTORE_PATH/.env" ]; then
         echo -e "${GREEN}✔ Found .env file, loading database credentials...${NC}"
-        set -a
-        source "$RESTORE_PATH/.env"
-        set +a
+        while IFS='=' read -r key value; do
+
+            if [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]]; then
+                continue
+            fi
+
+            key=$(echo "$key" | tr -d '[:space:]')
+            value=$(echo "$value" | tr -d '[:space:]')
+
+            export "$key=$value"
+        done < "$RESTORE_PATH/.env"
+    else
+        echo -e "${YELLOW}⚠ No .env file found in $RESTORE_PATH${NC}"
     fi
 
     if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_DB" ]; then
