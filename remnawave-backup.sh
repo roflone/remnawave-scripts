@@ -42,7 +42,7 @@ if [ ! -f "$COMPOSE_PATH/docker-compose.yml" ]; then
     exit 1
 fi
 
-# Спрашиваем, хочет ли пользователь бэкапить всю папку
+
 echo -e "${YELLOW}📁 Do you want to backup the entire folder ($COMPOSE_PATH)?${NC}"
 echo -e "${BLUE}  1) Yes, backup all files and subfolders${NC}"
 echo -e "${BLUE}  2) No, backup only specific files (docker-compose.yml, .env, app-config.json)${NC}"
@@ -67,8 +67,6 @@ else
     prompt_input "${YELLOW}Enter POSTGRES_PASSWORD${NC}" POSTGRES_PASSWORD ""
     prompt_input "${YELLOW}Enter POSTGRES_DB${NC}" POSTGRES_DB "postgres"
 fi
-
-# Проверяем имя контейнера базы данных
 DB_CONTAINER=$(docker ps --filter "name=remnawave-db" --format "{{.Names}}")
 if [ -z "$DB_CONTAINER" ]; then
     echo -e "${RED}✖ Error: Database container 'remnawave-db' not found!${NC}"
