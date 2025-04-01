@@ -15,7 +15,7 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 ```
 ![image](https://github.com/user-attachments/assets/1e24d4d0-3210-45bb-b02b-e123344a6593)
 
-## Remnawave RESTORE install-script:
+## Remnawave RESTORE install-script (BETA!!! Dont use on Production!!!):
 ```
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/restore.sh)"
 ```
