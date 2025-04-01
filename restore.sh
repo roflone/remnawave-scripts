@@ -147,8 +147,16 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
         echo -e "${BLUE}Waiting for database container to be ready (10 seconds)...${NC}"
         sleep 10
 
+        echo -e "${BLUE}Clearing existing data from database '$POSTGRES_DB'...${NC}"
+        docker exec remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE;'; END LOOP; END \$\$;"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✖ Error: Failed to clear database tables${NC}"
+            docker compose logs remnawave-db
+            exit 1
+        fi
+
         echo -e "${BLUE}Restoring database dump...${NC}"
-        docker exec -i remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$RESTORE_PATH/db_backup.sql"
+        docker exec -i remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" --set ON_ERROR_STOP=on < "$RESTORE_PATH/db_backup.sql"
         if [ $? -ne 0 ]; then
             echo -e "${RED}✖ Error: Failed to restore database${NC}"
             docker compose logs remnawave-db
