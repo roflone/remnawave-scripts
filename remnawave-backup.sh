@@ -42,6 +42,20 @@ if [ ! -f "$COMPOSE_PATH/docker-compose.yml" ]; then
     exit 1
 fi
 
+# Спрашиваем, хочет ли пользователь бэкапить всю папку
+echo -e "${YELLOW}📁 Do you want to backup the entire folder ($COMPOSE_PATH)?${NC}"
+echo -e "${BLUE}  1) Yes, backup all files and subfolders${NC}"
+echo -e "${BLUE}  2) No, backup only specific files (docker-compose.yml, .env, app-config.json)${NC}"
+echo -ne "Choose an option (1-2) [2]: "
+read backup_choice
+backup_choice=${backup_choice:-2}
+
+case $backup_choice in
+    1) BACKUP_ENTIRE_FOLDER="true" ;;
+    2) BACKUP_ENTIRE_FOLDER="false" ;;
+    *) BACKUP_ENTIRE_FOLDER="false" ;;
+esac
+
 if [ -f "$COMPOSE_PATH/.env" ]; then
     echo -e "${GREEN}✔ .env file found at $COMPOSE_PATH. Using it for DB connection.${NC}"
     USE_ENV=true
@@ -52,6 +66,14 @@ else
     prompt_input "${YELLOW}Enter POSTGRES_USER${NC}" POSTGRES_USER "postgres"
     prompt_input "${YELLOW}Enter POSTGRES_PASSWORD${NC}" POSTGRES_PASSWORD ""
     prompt_input "${YELLOW}Enter POSTGRES_DB${NC}" POSTGRES_DB "postgres"
+fi
+
+# Проверяем имя контейнера базы данных
+DB_CONTAINER=$(docker ps --filter "name=remnawave-db" --format "{{.Names}}")
+if [ -z "$DB_CONTAINER" ]; then
+    echo -e "${RED}✖ Error: Database container 'remnawave-db' not found!${NC}"
+    echo -e "${BLUE}Please enter the correct container name for the database:${NC}"
+    prompt_input "${YELLOW}Enter DB container name${NC}" DB_CONTAINER "remnawave-db"
 fi
 
 echo -e "${YELLOW}📡 Telegram Settings:${NC}"
@@ -80,28 +102,53 @@ BACKUP_DIR="/tmp/backup_\$(date +%Y%m%d_%H%M%S)"
 BACKUP_DATE="\$(date '+%Y-%m-%d %H:%M:%S UTC')"
 ARCHIVE_NAME="\$BACKUP_DIR.tar.gz"
 MAX_SIZE_MB=49
+DB_CONTAINER="$DB_CONTAINER"
 mkdir -p "\$BACKUP_DIR"
 EOF
 
 if [ "$USE_ENV" = true ]; then
-    cat << EOF >> "$BACKUP_SCRIPT"
-export PGPASSWORD="\$POSTGRES_PASSWORD"
-docker exec remnawave-db pg_dump --data-only -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+    cat << 'EOF' >> "$BACKUP_SCRIPT"
+# Экранируем пароль из .env
+POSTGRES_PASSWORD=$(printf '%q' "$POSTGRES_PASSWORD")
+export PGPASSWORD="$POSTGRES_PASSWORD"
+docker exec "$DB_CONTAINER" pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "$BACKUP_DIR/db_backup.sql"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to create database backup"
+    unset PGPASSWORD
+    exit 1
+fi
 unset PGPASSWORD
 EOF
 else
+    # Экранируем введённый пароль
+    ESCAPED_POSTGRES_PASSWORD=$(printf '%q' "$POSTGRES_PASSWORD")
     cat << EOF >> "$BACKUP_SCRIPT"
-export PGPASSWORD='$POSTGRES_PASSWORD'
-docker exec remnawave-db pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+export PGPASSWORD='$ESCAPED_POSTGRES_PASSWORD'
+docker exec "\$DB_CONTAINER" pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+if [ \$? -ne 0 ]; then
+    echo "Error: Failed to create database backup"
+    unset PGPASSWORD
+    exit 1
+fi
 unset PGPASSWORD
 EOF
 fi
 
-cat << 'EOF' >> "$BACKUP_SCRIPT"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to create database backup"
+# Логика бэкапа в зависимости от выбора пользователя
+if [ "$BACKUP_ENTIRE_FOLDER" = "true" ]; then
+    cat << EOF >> "$BACKUP_SCRIPT"
+# Добавляем все файлы и подпапки из $COMPOSE_PATH прямо в архив
+tar -czvf "\$ARCHIVE_NAME" -C "$COMPOSE_PATH" . "\$BACKUP_DIR/db_backup.sql"
+if [ \$? -ne 0 ]; then
+    echo "Error: Failed to create archive"
     exit 1
 fi
+
+CONTENTS="📁 Entire folder ($COMPOSE_PATH)
+📋 db_backup.sql"
+EOF
+else
+    cat << 'EOF' >> "$BACKUP_SCRIPT"
 cp docker-compose.yml "$BACKUP_DIR/" || { echo "Error: Failed to copy docker-compose.yml"; exit 1; }
 [ -f .env ] && cp .env "$BACKUP_DIR/" || echo "File .env not found, skipping"
 [ -f app-config.json ] && cp app-config.json "$BACKUP_DIR/" || echo "File app-config.json not found, skipping"
@@ -116,14 +163,18 @@ CONTENTS=""
 [ -f "$BACKUP_DIR/app-config.json" ] && CONTENTS="$CONTENTS⚙️ app-config.json
 "
 
-MESSAGE=$(printf "🔔 Remnawave Backup\n📅 Date: %s\n📦 Archive contents:\n%s" "$BACKUP_DATE" "$CONTENTS")
-
 tar -czvf "$ARCHIVE_NAME" -C "$BACKUP_DIR" .
 if [ $? -ne 0 ]; then
     echo "Error: Failed to create archive"
     exit 1
 fi
+EOF
+fi
+
+cat << 'EOF' >> "$BACKUP_SCRIPT"
 ARCHIVE_SIZE=$(du -m "$ARCHIVE_NAME" | cut -f1)
+
+MESSAGE=$(printf "🔔 Remnawave Backup\n📅 Date: %s\n📦 Archive contents:\n%s" "$BACKUP_DATE" "$CONTENTS")
 
 send_telegram() {
     local file="$1"
