@@ -42,7 +42,7 @@ if [ ! -f "$COMPOSE_PATH/docker-compose.yml" ]; then
     exit 1
 fi
 
-
+# Спрашиваем, хочет ли пользователь бэкапить всю папку
 echo -e "${YELLOW}📁 Do you want to backup the entire folder ($COMPOSE_PATH)?${NC}"
 echo -e "${BLUE}  1) Yes, backup all files and subfolders${NC}"
 echo -e "${BLUE}  2) No, backup only specific files (docker-compose.yml, .env, app-config.json)${NC}"
@@ -59,6 +59,10 @@ esac
 if [ -f "$COMPOSE_PATH/.env" ]; then
     echo -e "${GREEN}✔ .env file found at $COMPOSE_PATH. Using it for DB connection.${NC}"
     USE_ENV=true
+    # Загружаем .env для получения данных
+    set -a
+    source "$COMPOSE_PATH/.env"
+    set +a
 else
     echo -e "${YELLOW}⚠ .env file not found at $COMPOSE_PATH.${NC}"
     echo -e "${BLUE}You’ll need to enter DB connection details manually.${NC}"
@@ -67,6 +71,8 @@ else
     prompt_input "${YELLOW}Enter POSTGRES_PASSWORD${NC}" POSTGRES_PASSWORD ""
     prompt_input "${YELLOW}Enter POSTGRES_DB${NC}" POSTGRES_DB "postgres"
 fi
+
+# Проверяем имя контейнера базы данных
 DB_CONTAINER=$(docker ps --filter "name=remnawave-db" --format "{{.Names}}")
 if [ -z "$DB_CONTAINER" ]; then
     echo -e "${RED}✖ Error: Database container 'remnawave-db' not found!${NC}"
@@ -83,6 +89,16 @@ if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
     echo -e "${RED}✖ Error: Telegram Bot Token and Chat ID are required!${NC}"
     exit 1
 fi
+
+# Создаём файл .pgpass для безопасной передачи пароля
+PGPASS_FILE="/root/.pgpass"
+if [ "$USE_ENV" = true ]; then
+    POSTGRES_PASSWORD_ESCAPED=$(printf '%q' "$POSTGRES_PASSWORD")
+    echo "remnawave-db:5432:$POSTGRES_DB:$POSTGRES_USER:$POSTGRES_PASSWORD" > "$PGPASS_FILE"
+else
+    echo "remnawave-db:5432:$POSTGRES_DB:$POSTGRES_USER:$POSTGRES_PASSWORD" > "$PGPASS_FILE"
+fi
+chmod 600 "$PGPASS_FILE"
 
 BACKUP_SCRIPT="$COMPOSE_PATH/backup.sh"
 cat << EOF > "$BACKUP_SCRIPT"
@@ -101,36 +117,20 @@ BACKUP_DATE="\$(date '+%Y-%m-%d %H:%M:%S UTC')"
 ARCHIVE_NAME="\$BACKUP_DIR.tar.gz"
 MAX_SIZE_MB=49
 DB_CONTAINER="$DB_CONTAINER"
+PGPASS_FILE="/root/.pgpass"
 mkdir -p "\$BACKUP_DIR"
 EOF
 
-if [ "$USE_ENV" = true ]; then
-    cat << 'EOF' >> "$BACKUP_SCRIPT"
-# Экранируем пароль из .env
-POSTGRES_PASSWORD=$(printf '%q' "$POSTGRES_PASSWORD")
-export PGPASSWORD="$POSTGRES_PASSWORD"
+cat << 'EOF' >> "$BACKUP_SCRIPT"
+# Устанавливаем переменную окружения для использования .pgpass
+export PGPASSFILE="$PGPASS_FILE"
+
 docker exec "$DB_CONTAINER" pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "$BACKUP_DIR/db_backup.sql"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to create database backup"
-    unset PGPASSWORD
     exit 1
 fi
-unset PGPASSWORD
 EOF
-else
-    # Экранируем введённый пароль
-    ESCAPED_POSTGRES_PASSWORD=$(printf '%q' "$POSTGRES_PASSWORD")
-    cat << EOF >> "$BACKUP_SCRIPT"
-export PGPASSWORD='$ESCAPED_POSTGRES_PASSWORD'
-docker exec "\$DB_CONTAINER" pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
-if [ \$? -ne 0 ]; then
-    echo "Error: Failed to create database backup"
-    unset PGPASSWORD
-    exit 1
-fi
-unset PGPASSWORD
-EOF
-fi
 
 # Логика бэкапа в зависимости от выбора пользователя
 if [ "$BACKUP_ENTIRE_FOLDER" = "true" ]; then
