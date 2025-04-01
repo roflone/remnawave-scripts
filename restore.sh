@@ -42,8 +42,9 @@ echo -e "${YELLOW}📦 Specify the path to the backup archive (.tar.gz):${NC}"
 echo -e "${BLUE}Example: /tmp/backup_20250401_112710.tar.gz${NC}"
 prompt_input "${BLUE}Enter the path${NC}" BACKUP_ARCHIVE ""
 
+echo -e "${BLUE}Checking archive path: $BACKUP_ARCHIVE${NC}"
 if [ -z "$BACKUP_ARCHIVE" ] || [ ! -f "$BACKUP_ARCHIVE" ]; then
-    echo -e "${RED}✖ Error: Backup archive not found or not specified!${NC}"
+    echo -e "${RED}✖ Error: Backup archive not found at '$BACKUP_ARCHIVE'${NC}"
     exit 1
 fi
 
@@ -76,11 +77,6 @@ if [ "$mode" = "1" ]; then
     tar -xzvf "$BACKUP_ARCHIVE" -C "$RESTORE_PATH"
     if [ $? -ne 0 ]; then
         echo -e "${RED}✖ Error: Failed to extract archive${NC}"
-        exit 1
-    fi
-
-    if [ ! -f "$RESTORE_PATH/docker-compose.yml" ]; then
-        echo -e "${RED}✖ Error: docker-compose.yml not found in $RESTORE_PATH${NC}"
         exit 1
     fi
 fi
