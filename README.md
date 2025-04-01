@@ -8,6 +8,8 @@
 ```
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
 ```
+![image](https://github.com/user-attachments/assets/7f351b1e-0980-4301-8db4-cb922ee7dc48)
+
 
 ## Remnawave BackUP install-script:
 ```
