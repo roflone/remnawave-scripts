@@ -94,11 +94,14 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
     if [ -f "$RESTORE_PATH/.env" ]; then
         echo -e "${GREEN}✔ Found .env file, loading database credentials...${NC}"
         while IFS='=' read -r key value; do
+            # Пропускаем пустые строки и комментарии
             if [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]]; then
                 continue
             fi
+            # Удаляем пробелы вокруг ключа и значения
             key=$(echo "$key" | tr -d '[:space:]')
             value=$(echo "$value" | tr -d '[:space:]')
+            # Экспортируем переменную
             export "$key=$value"
         done < "$RESTORE_PATH/.env"
     else
@@ -146,20 +149,6 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
 
         echo -e "${BLUE}Waiting for database container to be ready (10 seconds)...${NC}"
         sleep 10
-
-        echo -e "${BLUE}Dropping and recreating database '$POSTGRES_DB'...${NC}"
-        docker exec remnawave-db psql -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE IF EXISTS $POSTGRES_DB;"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}✖ Error: Failed to drop database${NC}"
-            docker compose logs remnawave-db
-            exit 1
-        fi
-        docker exec remnawave-db psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $POSTGRES_DB;"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}✖ Error: Failed to create database${NC}"
-            docker compose logs remnawave-db
-            exit 1
-        fi
 
         echo -e "${BLUE}Restoring database dump...${NC}"
         docker exec -i remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$RESTORE_PATH/db_backup.sql"
