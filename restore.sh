@@ -94,14 +94,11 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
     if [ -f "$RESTORE_PATH/.env" ]; then
         echo -e "${GREEN}✔ Found .env file, loading database credentials...${NC}"
         while IFS='=' read -r key value; do
-            # Пропускаем пустые строки и комментарии
             if [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]]; then
                 continue
             fi
-            # Удаляем пробелы вокруг ключа и значения
             key=$(echo "$key" | tr -d '[:space:]')
             value=$(echo "$value" | tr -d '[:space:]')
-            # Экспортируем переменную
             export "$key=$value"
         done < "$RESTORE_PATH/.env"
     else
