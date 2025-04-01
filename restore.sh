@@ -91,8 +91,38 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
         fi
     fi
 
+    if [ -f "$RESTORE_PATH/.env" ]; then
+        echo -e "${GREEN}✔ Found .env file, loading database credentials...${NC}"
+        set -a
+        source "$RESTORE_PATH/.env"
+        set +a
+    fi
+
+    if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_DB" ]; then
+        echo -e "${YELLOW}⚠ Database credentials not found in .env or environment.${NC}"
+        prompt_input "${BLUE}Enter PostgreSQL username${NC}" POSTGRES_USER "postgres"
+        prompt_input "${BLUE}Enter PostgreSQL database name${NC}" POSTGRES_DB "remnawave"
+    fi
+
+    echo -e "${BLUE}Starting all containers to initialize databases...${NC}"
+    docker compose up -d
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}✖ Error: Failed to start containers${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Waiting for containers to fully start (20 seconds)...${NC}"
+    sleep 20
+
+    echo -e "${BLUE}Stopping all containers...${NC}"
+    docker compose down
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}✖ Error: Failed to stop containers${NC}"
+        exit 1
+    fi
+
     if [ -f "$RESTORE_PATH/db_backup.sql" ]; then
-        echo -e "${YELLOW}⚠ Warning: This will replace all data in the database.${NC}"
+        echo -e "${YELLOW}⚠ Warning: This will replace all data in the database '$POSTGRES_DB' as user '$POSTGRES_USER'.${NC}"
         echo -ne "${BLUE}Do you want to proceed? (y/N): ${NC}"
         read confirm
         if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
@@ -100,17 +130,17 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
             exit 1
         fi
 
-        echo -e "${BLUE}Preparing to restore database...${NC}"
-        docker compose stop
+        echo -e "${BLUE}Starting database container...${NC}"
         docker compose up -d remnawave-db
         if [ $? -ne 0 ]; then
             echo -e "${RED}✖ Error: Failed to start remnawave-db${NC}"
             exit 1
         fi
 
-        echo -e "${BLUE}Waiting for database container to be ready...${NC}"
+        echo -e "${BLUE}Waiting for database container to be ready (10 seconds)...${NC}"
         sleep 10
 
+        echo -e "${BLUE}Restoring database dump...${NC}"
         docker exec -i remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$RESTORE_PATH/db_backup.sql"
         if [ $? -ne 0 ]; then
             echo -e "${RED}✖ Error: Failed to restore database${NC}"
@@ -118,12 +148,18 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
             exit 1
         fi
         echo -e "${GREEN}✔ Database restored successfully${NC}"
+
+        echo -e "${BLUE}Stopping database container...${NC}"
+        docker compose down
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✖ Error: Failed to stop remnawave-db${NC}"
+            exit 1
+        fi
     else
         echo -e "${YELLOW}⚠ No db_backup.sql found, skipping database restore${NC}"
     fi
 
-    echo -e "${BLUE}Restarting all containers...${NC}"
-    docker compose down
+    echo -e "${BLUE}Starting all containers...${NC}"
     docker compose up -d
     if [ $? -ne 0 ]; then
         echo -e "${RED}✖ Error: Failed to start containers${NC}"
