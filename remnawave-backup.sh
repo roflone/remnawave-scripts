@@ -82,11 +82,11 @@ EOF
 
 if [ "$USE_ENV" = true ]; then
     cat << EOF >> "$BACKUP_SCRIPT"
-docker exec remnawave-db pg_dump -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+docker exec remnawave-db pg_dump --data-only -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
 EOF
 else
     cat << EOF >> "$BACKUP_SCRIPT"
-docker exec remnawave-db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+docker exec remnawave-db pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
 EOF
 fi
 
