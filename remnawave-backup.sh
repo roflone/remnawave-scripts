@@ -56,6 +56,7 @@ fi
 echo -e "${YELLOW}📡 Telegram Settings:${NC}"
 prompt_input "${BLUE}Enter Telegram Bot Token (from @BotFather)${NC}" TELEGRAM_BOT_TOKEN ""
 prompt_input "${BLUE}Enter Telegram Chat/Channel ID (e.g., -1001234567890)${NC}" TELEGRAM_CHAT_ID ""
+prompt_input "${BLUE}Enter Telegram Topic ID (optional, press Enter to skip)${NC}" TELEGRAM_TOPIC_ID ""
 
 if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
     echo -e "${RED}✖ Error: Telegram Bot Token and Chat ID are required!${NC}"
@@ -73,6 +74,7 @@ if [ -f ".env" ]; then
 fi
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+TELEGRAM_TOPIC_ID="$TELEGRAM_TOPIC_ID"
 BACKUP_DIR="/tmp/backup_\$(date +%Y%m%d_%H%M%S)"
 BACKUP_DATE="\$(date '+%Y-%m-%d %H:%M:%S UTC')"
 ARCHIVE_NAME="\$BACKUP_DIR.tar.gz"
@@ -99,7 +101,6 @@ cp docker-compose.yml "$BACKUP_DIR/" || { echo "Error: Failed to copy docker-com
 [ -f .env ] && cp .env "$BACKUP_DIR/" || echo "File .env not found, skipping"
 [ -f app-config.json ] && cp app-config.json "$BACKUP_DIR/" || echo "File app-config.json not found, skipping"
 
-
 CONTENTS=""
 [ -f "$BACKUP_DIR/db_backup.sql" ] && CONTENTS="$CONTENTS📋 db_backup.sql
 "
@@ -118,6 +119,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 ARCHIVE_SIZE=$(du -m "$ARCHIVE_NAME" | cut -f1)
+
+send_telegram() {
+    local file="$1"
+    local caption="$2"
+    local curl_cmd="curl -F chat_id=\"\$TELEGRAM_CHAT_ID\""
+    [ -n "$TELEGRAM_TOPIC_ID" ] && curl_cmd="$curl_cmd -F message_thread_id=\"\$TELEGRAM_TOPIC_ID\""
+    curl_cmd="$curl_cmd -F document=@\"\$file\" -F \"caption=\$caption\" \"https://api.telegram.org/bot\$TELEGRAM_BOT_TOKEN/sendDocument\" -o telegram_response.json"
+    eval "$curl_cmd"
+}
+
 if [ "$ARCHIVE_SIZE" -gt "$MAX_SIZE_MB" ]; then
     echo "Archive size ($ARCHIVE_SIZE MB) exceeds $MAX_SIZE_MB MB, splitting into parts..."
     split -b 49m "$ARCHIVE_NAME" "$BACKUP_DIR/part_"
@@ -127,10 +138,7 @@ if [ "$ARCHIVE_SIZE" -gt "$MAX_SIZE_MB" ]; then
         PART_FILE="${PARTS[$i]}"
         PART_NUM=$((i + 1))
         PART_MESSAGE=$(printf "🔔 Remnawave Backup (Part %d of %d)\n📅 Date: %s\n📦 Archive contents:\n\n%s" "$PART_NUM" "$PART_COUNT" "$BACKUP_DATE" "$CONTENTS")
-        curl -F chat_id="$TELEGRAM_CHAT_ID" \
-             -F document=@"$PART_FILE" \
-             -F "caption=$PART_MESSAGE" \
-             "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" -o telegram_response.json
+        send_telegram "$PART_FILE" "$PART_MESSAGE"
         if [ $? -ne 0 ] || grep -q '"ok":false' telegram_response.json; then
             echo "Error sending part $PART_NUM:"
             cat telegram_response.json
@@ -139,10 +147,7 @@ if [ "$ARCHIVE_SIZE" -gt "$MAX_SIZE_MB" ]; then
         echo "Part $PART_NUM of $PART_COUNT sent successfully"
     done
 else
-    curl -F chat_id="$TELEGRAM_CHAT_ID" \
-         -F document=@"$ARCHIVE_NAME" \
-         -F "caption=$MESSAGE" \
-         "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" -o telegram_response.json
+    send_telegram "$ARCHIVE_NAME" "$MESSAGE"
     if [ $? -ne 0 ]; then
         echo "Error sending archive to Telegram"
         cat telegram_response.json
