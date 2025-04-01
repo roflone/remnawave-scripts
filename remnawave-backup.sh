@@ -50,6 +50,7 @@ else
     echo -e "${BLUE}You’ll need to enter DB connection details manually.${NC}"
     USE_ENV=false
     prompt_input "${YELLOW}Enter POSTGRES_USER${NC}" POSTGRES_USER "postgres"
+    prompt_input "${YELLOW}Enter POSTGRES_PASSWORD${NC}" POSTGRES_PASSWORD ""
     prompt_input "${YELLOW}Enter POSTGRES_DB${NC}" POSTGRES_DB "postgres"
 fi
 
@@ -84,11 +85,15 @@ EOF
 
 if [ "$USE_ENV" = true ]; then
     cat << EOF >> "$BACKUP_SCRIPT"
+export PGPASSWORD="\$POSTGRES_PASSWORD"
 docker exec remnawave-db pg_dump --data-only -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+unset PGPASSWORD
 EOF
 else
     cat << EOF >> "$BACKUP_SCRIPT"
+export PGPASSWORD='$POSTGRES_PASSWORD'
 docker exec remnawave-db pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+unset PGPASSWORD
 EOF
 fi
 
