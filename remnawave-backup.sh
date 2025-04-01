@@ -129,11 +129,17 @@ EOF
 
 if [ "$BACKUP_ENTIRE_FOLDER" = "true" ]; then
     cat << EOF >> "$BACKUP_SCRIPT"
-tar -czvf "\$ARCHIVE_NAME" -C "$COMPOSE_PATH" . "\$BACKUP_DIR/db_backup.sql"
+TEMP_ARCHIVE_DIR="/tmp/archive_\$(date +%Y%m%d_%H%M%S)"
+mkdir -p "\$TEMP_ARCHIVE_DIR"
+cp -r "$COMPOSE_PATH/." "\$TEMP_ARCHIVE_DIR/"
+mv "\$BACKUP_DIR/db_backup.sql" "\$TEMP_ARCHIVE_DIR/db_backup.sql"
+tar -czvf "\$ARCHIVE_NAME" -C "\$TEMP_ARCHIVE_DIR" .
 if [ \$? -ne 0 ]; then
     echo "Error: Failed to create archive"
+    rm -rf "\$TEMP_ARCHIVE_DIR"
     exit 1
 fi
+rm -rf "\$TEMP_ARCHIVE_DIR"
 CONTENTS="📁 Entire folder ($COMPOSE_PATH)
 📋 db_backup.sql"
 EOF
