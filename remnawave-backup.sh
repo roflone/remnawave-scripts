@@ -42,7 +42,6 @@ if [ ! -f "$COMPOSE_PATH/docker-compose.yml" ]; then
     exit 1
 fi
 
-# Спрашиваем, хочет ли пользователь бэкапить всю папку
 echo -e "${YELLOW}📁 Do you want to backup the entire folder ($COMPOSE_PATH)?${NC}"
 echo -e "${BLUE}  1) Yes, backup all files and subfolders${NC}"
 echo -e "${BLUE}  2) No, backup only specific files (docker-compose.yml, .env, app-config.json)${NC}"
@@ -56,13 +55,26 @@ case $backup_choice in
     *) BACKUP_ENTIRE_FOLDER="false" ;;
 esac
 
+read_env_var() {
+    local var_name="$1"
+    local file="$2"
+    local value
+    value=$(grep "^$var_name=" "$file" | cut -d '=' -f 2-)
+    echo "$value"
+}
+
 if [ -f "$COMPOSE_PATH/.env" ]; then
     echo -e "${GREEN}✔ .env file found at $COMPOSE_PATH. Using it for DB connection.${NC}"
     USE_ENV=true
-    # Загружаем .env для получения данных
-    set -a
-    source "$COMPOSE_PATH/.env"
-    set +a
+    POSTGRES_USER=$(read_env_var "POSTGRES_USER" "$COMPOSE_PATH/.env")
+    POSTGRES_PASSWORD=$(read_env_var "POSTGRES_PASSWORD" "$COMPOSE_PATH/.env")
+    POSTGRES_DB=$(read_env_var "POSTGRES_DB" "$COMPOSE_PATH/.env")
+    POSTGRES_USER=${POSTGRES_USER:-postgres}
+    POSTGRES_DB=${POSTGRES_DB:-postgres}
+    if [ -z "$POSTGRES_PASSWORD" ]; then
+        echo -e "${RED}✖ Error: POSTGRES_PASSWORD not found in .env file!${NC}"
+        exit 1
+    fi
 else
     echo -e "${YELLOW}⚠ .env file not found at $COMPOSE_PATH.${NC}"
     echo -e "${BLUE}You’ll need to enter DB connection details manually.${NC}"
@@ -72,7 +84,6 @@ else
     prompt_input "${YELLOW}Enter POSTGRES_DB${NC}" POSTGRES_DB "postgres"
 fi
 
-# Проверяем имя контейнера базы данных
 DB_CONTAINER=$(docker ps --filter "name=remnawave-db" --format "{{.Names}}")
 if [ -z "$DB_CONTAINER" ]; then
     echo -e "${RED}✖ Error: Database container 'remnawave-db' not found!${NC}"
@@ -90,25 +101,10 @@ if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
     exit 1
 fi
 
-# Создаём файл .pgpass для безопасной передачи пароля
-PGPASS_FILE="/root/.pgpass"
-if [ "$USE_ENV" = true ]; then
-    POSTGRES_PASSWORD_ESCAPED=$(printf '%q' "$POSTGRES_PASSWORD")
-    echo "remnawave-db:5432:$POSTGRES_DB:$POSTGRES_USER:$POSTGRES_PASSWORD" > "$PGPASS_FILE"
-else
-    echo "remnawave-db:5432:$POSTGRES_DB:$POSTGRES_USER:$POSTGRES_PASSWORD" > "$PGPASS_FILE"
-fi
-chmod 600 "$PGPASS_FILE"
-
 BACKUP_SCRIPT="$COMPOSE_PATH/backup.sh"
 cat << EOF > "$BACKUP_SCRIPT"
 #!/bin/bash
 cd "$COMPOSE_PATH" || { echo "Error: Could not change to $COMPOSE_PATH"; exit 1; }
-if [ -f ".env" ]; then
-    set -a
-    source .env
-    set +a
-fi
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
 TELEGRAM_TOPIC_ID="$TELEGRAM_TOPIC_ID"
@@ -117,31 +113,27 @@ BACKUP_DATE="\$(date '+%Y-%m-%d %H:%M:%S UTC')"
 ARCHIVE_NAME="\$BACKUP_DIR.tar.gz"
 MAX_SIZE_MB=49
 DB_CONTAINER="$DB_CONTAINER"
-PGPASS_FILE="/root/.pgpass"
+POSTGRES_USER="$POSTGRES_USER"
+POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+POSTGRES_DB="$POSTGRES_DB"
 mkdir -p "\$BACKUP_DIR"
-EOF
-
-cat << 'EOF' >> "$BACKUP_SCRIPT"
-# Устанавливаем переменную окружения для использования .pgpass
-export PGPASSFILE="$PGPASS_FILE"
-
-docker exec "$DB_CONTAINER" pg_dump --data-only -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "$BACKUP_DIR/db_backup.sql"
-if [ $? -ne 0 ]; then
+export PGPASSWORD="\$POSTGRES_PASSWORD"
+docker exec "\$DB_CONTAINER" pg_dump --data-only -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+if [ \$? -ne 0 ]; then
     echo "Error: Failed to create database backup"
+    unset PGPASSWORD
     exit 1
 fi
+unset PGPASSWORD
 EOF
 
-# Логика бэкапа в зависимости от выбора пользователя
 if [ "$BACKUP_ENTIRE_FOLDER" = "true" ]; then
     cat << EOF >> "$BACKUP_SCRIPT"
-# Добавляем все файлы и подпапки из $COMPOSE_PATH прямо в архив
 tar -czvf "\$ARCHIVE_NAME" -C "$COMPOSE_PATH" . "\$BACKUP_DIR/db_backup.sql"
 if [ \$? -ne 0 ]; then
     echo "Error: Failed to create archive"
     exit 1
 fi
-
 CONTENTS="📁 Entire folder ($COMPOSE_PATH)
 📋 db_backup.sql"
 EOF
@@ -150,7 +142,6 @@ else
 cp docker-compose.yml "$BACKUP_DIR/" || { echo "Error: Failed to copy docker-compose.yml"; exit 1; }
 [ -f .env ] && cp .env "$BACKUP_DIR/" || echo "File .env not found, skipping"
 [ -f app-config.json ] && cp app-config.json "$BACKUP_DIR/" || echo "File app-config.json not found, skipping"
-
 CONTENTS=""
 [ -f "$BACKUP_DIR/db_backup.sql" ] && CONTENTS="$CONTENTS📋 db_backup.sql
 "
@@ -160,7 +151,6 @@ CONTENTS=""
 "
 [ -f "$BACKUP_DIR/app-config.json" ] && CONTENTS="$CONTENTS⚙️ app-config.json
 "
-
 tar -czvf "$ARCHIVE_NAME" -C "$BACKUP_DIR" .
 if [ $? -ne 0 ]; then
     echo "Error: Failed to create archive"
@@ -171,9 +161,7 @@ fi
 
 cat << 'EOF' >> "$BACKUP_SCRIPT"
 ARCHIVE_SIZE=$(du -m "$ARCHIVE_NAME" | cut -f1)
-
 MESSAGE=$(printf "🔔 Remnawave Backup\n📅 Date: %s\n📦 Archive contents:\n%s" "$BACKUP_DATE" "$CONTENTS")
-
 send_telegram() {
     local file="$1"
     local caption="$2"
@@ -182,7 +170,6 @@ send_telegram() {
     curl_cmd="$curl_cmd -F document=@\"\$file\" -F \"caption=\$caption\" \"https://api.telegram.org/bot\$TELEGRAM_BOT_TOKEN/sendDocument\" -o telegram_response.json"
     eval "$curl_cmd"
 }
-
 if [ "$ARCHIVE_SIZE" -gt "$MAX_SIZE_MB" ]; then
     echo "Archive size ($ARCHIVE_SIZE MB) exceeds $MAX_SIZE_MB MB, splitting into parts..."
     split -b 49m "$ARCHIVE_NAME" "$BACKUP_DIR/part_"
