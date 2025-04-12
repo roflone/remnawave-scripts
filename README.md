@@ -4,11 +4,11 @@ A collection of bash scripts to simplify the installation, backup, and restorati
 
 ## RemnaWAVE Install
 
-Installs the core Remnawave panel. (Details pending; please refer to the script for setup instructions.)
+Installs the core Remnawave panel. 
 
 ### Install and Run
 ```bash
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)"
+Not ready yet
 ```
 
 ## RemnaNode Install
