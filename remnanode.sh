@@ -332,6 +332,7 @@ services:
     env_file:
       - .env
     network_mode: host
+    restart: always
 EOL
 
     # Add volumes only if Xray-core was installed
