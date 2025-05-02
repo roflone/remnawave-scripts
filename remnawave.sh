@@ -357,18 +357,20 @@ install_remnawave() {
     done
 
     # Ask for subscription page domain and prefix
-    while true; do
-        read -p "Enter the subscription page domain (e.g., sub-link.example.com): " -r SUB_DOMAIN
-        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")
-        if [[ "$SUB_DOMAIN" == http* ]]; then
-            colorized_echo red "Please enter only the domain without http:// or https://"
-        elif [[ -z "$SUB_DOMAIN" ]]; then
-            colorized_echo red "Domain cannot be empty"
-        elif ! validate_domain "$SUB_DOMAIN"; then
-            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."
-        else
-            break
-        fi
+    while true; do  
+        read -p "Enter the subscription page domain (e.g., sub-link.example.com): " -r SUB_DOMAIN  
+        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")  
+        if [[ "$SUB_DOMAIN" == http* ]]; then  
+            colorized_echo red "Please enter only the domain without http:// or https://"  
+        elif [[ -z "$SUB_DOMAIN" ]]; then  
+            colorized_echo red "Domain cannot be empty"  
+        elif [[ "$SUB_DOMAIN" == */* ]]; then  
+            colorized_echo red "Invalid domain format. Domain should not contain slashes."  
+        elif ! validate_domain "$SUB_DOMAIN"; then  
+            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."  
+        else  
+            break  
+        fi  
     done
 
     while true; do
