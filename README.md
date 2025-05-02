@@ -4,7 +4,7 @@ A collection of bash scripts to simplify the installation, backup, and restorati
 
 # 🚀 Remnawave Panel Installer
 
-Универсальный Bash-скрипт для установки и управления [Remnawave Panel](https://github.com/remnawave/remnawave), включающий:
+Универсальный Bash-скрипт для установки и управления [Remnawave Panel](https://github.com/remnawave/), включающий:
 - удобный CLI-интерфейс (`up`, `down`, `logs`, `console` и др.);
 - автогенерацию токенов, паролей и портов;
 - поддержку Telegram-уведомлений;
