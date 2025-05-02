@@ -6,7 +6,7 @@ set -e
 
 while [[ $# -gt 0 ]]; do
     key="$1"
-    
+
     case $key in
         install|update|uninstall|up|down|restart|status|logs|edit|edit-env|console)
             COMMAND="$1"
@@ -68,12 +68,18 @@ colorized_echo() {
     local style=${3:-0}  # Default style is normal
 
     case $color in
-        "red") printf "\e[${style};91m${text}\e[0m\n" ;;
-        "green") printf "\e[${style};92m${text}\e[0m\n" ;;
-        "yellow") printf "\e[${style};93m${text}\e[0m\n" ;;
-        "blue") printf "\e[${style};94m${text}\e[0m\n" ;;
-        "magenta") printf "\e[${style};95m${text}\e[0m\n" ;;
-        "cyan") printf "\e[${style};96m${text}\e[0m\n" ;;
+        "red") printf "\e[${style};91m${text}\e[0m
+" ;;
+        "green") printf "\e[${style};92m${text}\e[0m
+" ;;
+        "yellow") printf "\e[${style};93m${text}\e[0m
+" ;;
+        "blue") printf "\e[${style};94m${text}\e[0m
+" ;;
+        "magenta") printf "\e[${style};95m${text}\e[0m
+" ;;
+        "cyan") printf "\e[${style};96m${text}\e[0m
+" ;;
         *) echo "${text}" ;;
     esac
 }
@@ -140,10 +146,10 @@ detect_compose() {
             mkdir -p /usr/libexec/docker/cli-plugins
             curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/libexec/docker/cli-plugins/docker-compose >/dev/null 2>&1
             chmod +x /usr/libexec/docker/cli-plugins/docker-compose
-            
+
             # Create symlink for compatibility with older scripts
             ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-            
+
             if docker compose >/dev/null 2>&1; then
                 COMPOSE='docker compose'
                 colorized_echo green "Docker Compose plugin installed successfully"
@@ -242,8 +248,26 @@ is_port_occupied() {
 }
 
 sanitize_domain() {
-    # Remove leading/trailing whitespace and trailing slashes
-    echo "$1" | sed 's|/$||' | xargs
+    # Remove leading/trailing whitespace, trailing slashes, and protocol
+    echo "$1" | sed -e 's|^https\?://||' -e 's|/$||' | xargs
+}
+
+validate_domain() {
+    local domain="$1"
+    # Check if domain contains slashes or spaces after sanitization
+    if [[ "$domain" == */* ]] || [[ "$domain" == *\ * ]]; then
+        return 1
+    fi
+    return 0
+}
+
+validate_prefix() {
+    local prefix="$1"
+    # Check if prefix contains only alphanumeric characters and hyphens
+    if [[ ! "$prefix" =~ ^[a-zA-Z0-9-]+$ ]]; then
+        return 1
+    fi
+    return 0
 }
 
 install_remnawave() {
@@ -252,19 +276,19 @@ install_remnawave() {
     # Generate random JWT secrets using openssl if available
     JWT_AUTH_SECRET=$(openssl rand -hex 128)
     JWT_API_TOKENS_SECRET=$(openssl rand -hex 128)
-    
+
     # Generate random metrics credentials
     METRICS_USER=$(generate_random_string 12)
     METRICS_PASS=$(generate_random_string 32)
 
     # Check for occupied ports
     get_occupied_ports
-    
+
     # Default ports
     DEFAULT_APP_PORT=3000
     DEFAULT_METRICS_PORT=3001
     DEFAULT_SUB_PAGE_PORT=3010
-    
+
     # Check if default ports are occupied and ask for alternatives if needed
     APP_PORT=$DEFAULT_APP_PORT
     if is_port_occupied "$APP_PORT"; then
@@ -282,7 +306,7 @@ install_remnawave() {
             fi
         done
     fi
-    
+
     METRICS_PORT=$DEFAULT_METRICS_PORT
     if is_port_occupied "$METRICS_PORT"; then
         colorized_echo yellow "Default METRICS_PORT $METRICS_PORT is already in use."
@@ -299,7 +323,7 @@ install_remnawave() {
             fi
         done
     fi
-    
+
     SUB_PAGE_PORT=$DEFAULT_SUB_PAGE_PORT
     if is_port_occupied "$SUB_PAGE_PORT"; then
         colorized_echo yellow "Default subscription page port $SUB_PAGE_PORT is already in use."
@@ -316,7 +340,7 @@ install_remnawave() {
             fi
         done
     fi
-    
+
     # Ask for domain names
     while true; do
         read -p "Enter the panel domain (e.g., panel.example.com or * for any domain): " -r FRONT_END_DOMAIN
@@ -325,11 +349,13 @@ install_remnawave() {
             colorized_echo red "Please enter only the domain without http:// or https://"
         elif [[ -z "$FRONT_END_DOMAIN" ]]; then
             colorized_echo red "Domain cannot be empty"
+        elif ! validate_domain "$FRONT_END_DOMAIN" && [[ "$FRONT_END_DOMAIN" != "*" ]]; then
+            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."
         else
             break
         fi
     done
-    
+
     # Ask for subscription page domain and prefix
     while true; do
         read -p "Enter the subscription page domain (e.g., sub-link.example.com): " -r SUB_DOMAIN
@@ -338,30 +364,39 @@ install_remnawave() {
             colorized_echo red "Please enter only the domain without http:// or https://"
         elif [[ -z "$SUB_DOMAIN" ]]; then
             colorized_echo red "Domain cannot be empty"
+        elif ! validate_domain "$SUB_DOMAIN"; then
+            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."
         else
             break
         fi
     done
-    
-    read -p "Enter the subscription page prefix (default: sub): " -r CUSTOM_SUB_PREFIX
-    if [[ -z "$CUSTOM_SUB_PREFIX" ]]; then
-        CUSTOM_SUB_PREFIX="sub"
-    fi
-    
+
+    while true; do
+        read -p "Enter the subscription page prefix (default: sub): " -r CUSTOM_SUB_PREFIX
+        if [[ -z "$CUSTOM_SUB_PREFIX" ]]; then
+            CUSTOM_SUB_PREFIX="sub"
+            break
+        elif ! validate_prefix "$CUSTOM_SUB_PREFIX"; then
+            colorized_echo red "Invalid prefix format. Prefix should contain only letters, numbers, and hyphens."
+        else
+            break
+        fi
+    done
+
     # Construct SUB_PUBLIC_DOMAIN with the prefix
     SUB_PUBLIC_DOMAIN="${SUB_DOMAIN}/${CUSTOM_SUB_PREFIX}"
-    
+
     # Ask for META_TITLE and META_DESCRIPTION
     read -p "Enter the META_TITLE for subscription page (default: 'Remnawave VPN - Your Subscription Page'): " -r META_TITLE
     if [[ -z "$META_TITLE" ]]; then
         META_TITLE="Remnawave VPN - Your Subscription Page"
     fi
-    
+
     read -p "Enter the META_DESCRIPTION for subscription page (default: 'Remnawave VPN - The best VPN service'): " -r META_DESCRIPTION
     if [[ -z "$META_DESCRIPTION" ]]; then
         META_DESCRIPTION="Remnawave VPN - The best VPN service"
     fi
-    
+
     # Ask about Telegram integration
     read -p "Do you want to enable Telegram notifications? (y/n): " -r enable_telegram
     IS_TELEGRAM_ENABLED=false
@@ -370,7 +405,7 @@ install_remnawave() {
     NODES_NOTIFY_CHAT_ID=""
     NODES_NOTIFY_THREAD_ID=""
     TELEGRAM_ADMIN_THREAD_ID=""
-    
+
     if [[ "$enable_telegram" =~ ^[Yy]$ ]]; then
         IS_TELEGRAM_ENABLED=true
         read -p "Enter your Telegram Bot Token: " -r TELEGRAM_BOT_TOKEN
@@ -382,13 +417,13 @@ install_remnawave() {
         read -p "Enter your Nodes Notify Thread ID (optional): " -r NODES_NOTIFY_THREAD_ID
         read -p "Enter your Admin Thread ID (optional): " -r TELEGRAM_ADMIN_THREAD_ID
     fi
-    
+
     # Determine image tag based on --dev flag
     BACKEND_IMAGE_TAG="latest"
     if [ "$USE_DEV_BRANCH" == "true" ]; then
         BACKEND_IMAGE_TAG="dev"
     fi
-    
+
     colorized_echo blue "Generating .env file"
     cat > "$ENV_FILE" <<EOL
 ### APP ###
@@ -464,105 +499,113 @@ HWID_MAX_DEVICES_ANNOUNCE="You have reached the maximum number of devices for yo
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
+    # Create app-config.json for meta information to handle UTF-8 properly
+    colorized_echo blue "Generating app-config.json file"
+    cat > "$APP_CONFIG_FILE" <<EOL
+{
+  "metaTitle": "$META_TITLE",
+  "metaDescription": "$META_DESCRIPTION"
+}
+EOL
+    colorized_echo green "App config file saved in $APP_CONFIG_FILE"
+
     colorized_echo blue "Generating docker-compose.yml file"
-META_TITLE_ESCAPED=$(echo "$META_TITLE" | sed 's/[^a-zA-Z0-9.,_-]/ /g')  
-META_DESCRIPTION_ESCAPED=$(echo "$META_DESCRIPTION" | sed 's/[^a-zA-Z0-9.,_-]/ /g')  
-  
-cat > "$COMPOSE_FILE" <<EOL  
-services:  
-    remnawave-db:  
-        image: postgres:17  
-        container_name: '${APP_NAME}-db'  
-        hostname: remnawave-db  
-        restart: always  
-        env_file:  
-            - .env  
-        environment:  
-            - POSTGRES_USER=\${POSTGRES_USER}  
-            - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}  
-            - POSTGRES_DB=\${POSTGRES_DB}  
-            - TZ=UTC  
-        ports:  
-            - '127.0.0.1:6767:5432'  
-        volumes:  
-            - ${APP_NAME}-db-data:/var/lib/postgresql/data  
-        networks:  
-            - ${APP_NAME}-network  
-        healthcheck:  
-            test: ['CMD-SHELL', 'pg_isready -U \$\${POSTGRES_USER} -d \$\${POSTGRES_DB}']  
-            interval: 3s  
-            timeout: 10s  
-            retries: 3  
-  
-    remnawave:  
-        image: remnawave/backend:${BACKEND_IMAGE_TAG}  
-        container_name: '${APP_NAME}'  
-        hostname: remnawave  
-        restart: always  
-        ports:  
-            - '127.0.0.1:${APP_PORT}:3000'  
-            - '127.0.0.1:${METRICS_PORT}:3001'  
-        env_file:  
-            - .env  
-        networks:  
-            - ${APP_NAME}-network  
-        depends_on:  
-          ${APP_NAME}-db:  
-            condition: service_healthy  
-          ${APP_NAME}-redis:  
-            condition: service_healthy  
-  
-    remnawave-subscription-page:  
-        image: remnawave/subscription-page:latest  
-        container_name: ${APP_NAME}-subscription-page  
-        hostname: remnawave-subscription-page  
-        restart: always  
-        environment:  
-            - REMNAWAVE_PLAIN_DOMAIN=remnawave:3003  
-            - REQUEST_REMNAWAVE_SCHEME=http  
-            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}  
-            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}  
-            - META_TITLE=${META_TITLE_ESCAPED}  
-            - META_DESCRIPTION=${META_DESCRIPTION_ESCAPED}  
-        ports:  
-            - '127.0.0.1:${SUB_PAGE_PORT}:${SUB_PAGE_PORT}'  
-        networks:  
-            - ${APP_NAME}-network  
-        #volumes:  
-        #    - ./app-config.json:/app/dist/assets/app-config.json  
-  
-    remnawave-redis:  
-      image: valkey/valkey:8.0.2-alpine  
-      container_name: ${APP_NAME}-redis  
-      hostname: remnawave-redis  
-      restart: always  
-      networks:  
-        - ${APP_NAME}-network  
-      volumes:  
-        - ${APP_NAME}-redis-data:/data  
-      healthcheck:  
-        test: [ "CMD", "valkey-cli", "ping" ]  
-        interval: 3s  
-        timeout: 10s  
-        retries: 3  
-  
-networks:  
-    ${APP_NAME}-network:  
-        name: ${APP_NAME}-network  
-        driver: bridge  
-        external: false  
-  
-volumes:  
-    ${APP_NAME}-db-data:  
-        driver: local  
-        external: false  
-        name: ${APP_NAME}-db-data  
-    ${APP_NAME}-redis-data:  
-      driver: local  
-      external: false  
-      name: ${APP_NAME}-redis-data  
-EOL  
-colorized_echo green "Docker Compose file saved in $COMPOSE_FILE"
+    cat > "$COMPOSE_FILE" <<EOL
+services:
+    remnawave-db:
+        image: postgres:17
+        container_name: '${APP_NAME}-db'
+        hostname: remnawave-db
+        restart: always
+        env_file:
+            - .env
+        environment:
+            - POSTGRES_USER=\${POSTGRES_USER}
+            - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
+            - POSTGRES_DB=\${POSTGRES_DB}
+            - TZ=UTC
+        ports:
+            - '127.0.0.1:6767:5432'
+        volumes:
+            - ${APP_NAME}-db-data:/var/lib/postgresql/data
+        networks:
+            - ${APP_NAME}-network
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U \$\${POSTGRES_USER} -d \$\${POSTGRES_DB}']
+            interval: 3s
+            timeout: 10s
+            retries: 3
+
+    remnawave:
+        image: remnawave/backend:${BACKEND_IMAGE_TAG}
+        container_name: '${APP_NAME}'
+        hostname: remnawave
+        restart: always
+        ports:
+            - '127.0.0.1:${APP_PORT}:3000'
+            - '127.0.0.1:${METRICS_PORT}:3001'
+        env_file:
+            - .env
+        networks:
+            - ${APP_NAME}-network
+        depends_on:
+          ${APP_NAME}-db:
+            condition: service_healthy
+          ${APP_NAME}-redis:
+            condition: service_healthy
+
+    remnawave-subscription-page:
+        image: remnawave/subscription-page:latest
+        container_name: ${APP_NAME}-subscription-page
+        hostname: remnawave-subscription-page
+        restart: always
+        environment:
+            - REMNAWAVE_PLAIN_DOMAIN=remnawave:3003
+            - REQUEST_REMNAWAVE_SCHEME=http
+            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}
+            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
+            # Using ASCII-only placeholders for environment variables
+            - META_TITLE=Remnawave VPN
+            - META_DESCRIPTION=The best VPN service
+        ports:
+            - '127.0.0.1:${SUB_PAGE_PORT}:${SUB_PAGE_PORT}'
+        networks:
+            - ${APP_NAME}-network
+        volumes:
+            - ${APP_DIR}/app-config.json:/app/dist/assets/app-config.json
+
+    remnawave-redis:
+      image: valkey/valkey:8.0.2-alpine
+      container_name: ${APP_NAME}-redis
+      hostname: remnawave-redis
+      restart: always
+      networks:
+        - ${APP_NAME}-network
+      volumes:
+        - ${APP_NAME}-redis-data:/data
+      healthcheck:
+        test: [ "CMD", "valkey-cli", "ping" ]
+        interval: 3s
+        timeout: 10s
+        retries: 3
+
+networks:
+    ${APP_NAME}-network:
+        name: ${APP_NAME}-network
+        driver: bridge
+        external: false
+
+volumes:
+    ${APP_NAME}-db-data:
+        driver: local
+        external: false
+        name: ${APP_NAME}-db-data
+    ${APP_NAME}-redis-data:
+      driver: local
+      external: false
+      name: ${APP_NAME}-redis-data
+EOL
+    colorized_echo green "Docker Compose file saved in $COMPOSE_FILE"
 }
 
 uninstall_remnawave_script() {
@@ -684,9 +727,9 @@ install_command() {
     install_remnawave_script
     install_remnawave
     up_remnawave
-    
+
     follow_remnawave_logs
-    
+
     colorized_echo green "==================================================="
     colorized_echo green "Remnawave Panel has been installed successfully!"
     colorized_echo green "Panel URL (local access only): http://127.0.0.1:$APP_PORT"
@@ -706,13 +749,13 @@ uninstall_command() {
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     read -p "Do you really want to uninstall Remnawave? (y/n) "
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         colorized_echo red "Aborted"
         exit 1
     fi
-    
+
     detect_compose
     if is_remnawave_up; then
         down_remnawave
@@ -720,12 +763,12 @@ uninstall_command() {
     uninstall_remnawave_script
     uninstall_remnawave
     uninstall_remnawave_docker_images
-    
+
     read -p "Do you want to remove Remnawave data volumes too? This will DELETE ALL DATABASE DATA! (y/n) "
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         uninstall_remnawave_volumes
     fi
-    
+
     colorized_echo green "Remnawave uninstalled successfully"
 }
 
@@ -736,7 +779,7 @@ up_command() {
         echo "  -h, --help        display this help message"
         echo "  -n, --no-logs     do not follow logs after starting"
     }
-    
+
     local no_logs=false
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
@@ -746,19 +789,19 @@ up_command() {
         esac
         shift
     done
-    
+
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     if is_remnawave_up; then
         colorized_echo red "Remnawave already up"
         exit 1
     fi
-    
+
     up_remnawave
     if [ "$no_logs" = false ]; then
         follow_remnawave_logs
@@ -770,14 +813,14 @@ down_command() {
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     if ! is_remnawave_up; then
         colorized_echo red "Remnawave already down"
         exit 1
     fi
-    
+
     down_remnawave
 }
 
@@ -788,7 +831,7 @@ restart_command() {
         echo "  -h, --help        display this help message"
         echo "  -n, --no-logs     do not follow logs after starting"
     }
-    
+
     local no_logs=false
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
@@ -798,17 +841,17 @@ restart_command() {
         esac
         shift
     done
-    
+
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     down_remnawave
     up_remnawave
-    
+
     if [ "$no_logs" = false ]; then
         follow_remnawave_logs
     fi
@@ -820,15 +863,15 @@ status_command() {
         colorized_echo red "Not Installed"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     if ! is_remnawave_up; then
         echo -n "Status: "
         colorized_echo blue "Down"
         exit 1
     fi
-    
+
     echo -n "Status: "
     colorized_echo green "Up"
 }
@@ -840,7 +883,7 @@ logs_command() {
         echo "  -h, --help        display this help message"
         echo "  -n, --no-follow   do not show follow logs"
     }
-    
+
     local no_follow=false
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
@@ -850,19 +893,19 @@ logs_command() {
         esac
         shift
     done
-    
+
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     if ! is_remnawave_up; then
         colorized_echo red "Remnawave is not up."
         exit 1
     fi
-    
+
     if [ "$no_follow" = true ]; then
         show_remnawave_logs
     else
@@ -876,17 +919,17 @@ update_command() {
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     detect_compose
-    
+
     update_remnawave_script
     colorized_echo blue "Pulling latest version"
     update_remnawave
-    
+
     colorized_echo blue "Restarting Remnawave services"
     down_remnawave
     up_remnawave
-    
+
     colorized_echo blue "Remnawave updated successfully"
 }
 
@@ -917,12 +960,12 @@ console_command() {
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
-    
+
     if ! is_remnawave_up; then
         colorized_echo red "Remnawave is not running. Start it first with 'remnawave up'"
         exit 1
     fi
-    
+
     docker exec -it $APP_NAME remnawave
 }
 
@@ -948,24 +991,24 @@ usage() {
     colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml"
     colorized_echo yellow "  edit-env            $(tput sgr0)– Edit .env file"
     colorized_echo yellow "  console             $(tput sgr0)– Access Remnawave CLI console"
-    
+
     echo
     colorized_echo cyan "Options for install:"
     colorized_echo yellow "  --dev               $(tput sgr0)– Use remnawave/backend:dev instead of latest"
     colorized_echo yellow "  --name NAME         $(tput sgr0)– Custom installation name (default: remnawave)"
-    
+
     echo
     colorized_echo cyan "Panel Information:"
     colorized_echo magenta "  Server IP: $NODE_IP"
     echo
-    
+
     if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
         APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         METRICS_PORT=$(grep "METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         SUB_PAGE_PORT=$(grep -A 10 "remnawave-subscription-page:" "$COMPOSE_FILE" | grep "SUBSCRIPTION_PAGE_PORT=" | grep -o '[0-9]*' | head -1)
         FRONT_END_DOMAIN=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
         SUB_PUBLIC_DOMAIN=$(grep "SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
-        
+
         colorized_echo cyan "Ports:"
         colorized_echo magenta "  App port: $APP_PORT"
         colorized_echo magenta "  Metrics port: $METRICS_PORT"
@@ -975,7 +1018,7 @@ usage() {
         colorized_echo magenta "  Panel domain: $FRONT_END_DOMAIN"
         colorized_echo magenta "  Subscription domain: $SUB_PUBLIC_DOMAIN"
     fi
-    
+
     colorized_echo blue "================================="
     echo
 }
