@@ -465,101 +465,104 @@ EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
     colorized_echo blue "Generating docker-compose.yml file"
-    cat > "$COMPOSE_FILE" <<EOL
-services:
-    remnawave-db:
-        image: postgres:17
-        container_name: '${APP_NAME}-db'
-        hostname: remnawave-db
-        restart: always
-        env_file:
-            - .env
-        environment:
-            - POSTGRES_USER=\${POSTGRES_USER}
-            - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
-            - POSTGRES_DB=\${POSTGRES_DB}
-            - TZ=UTC
-        ports:
-            - '127.0.0.1:6767:5432'
-        volumes:
-            - ${APP_NAME}-db-data:/var/lib/postgresql/data
-        networks:
-            - ${APP_NAME}-network
-        healthcheck:
-            test: ['CMD-SHELL', 'pg_isready -U \$\${POSTGRES_USER} -d \$\${POSTGRES_DB}']
-            interval: 3s
-            timeout: 10s
-            retries: 3
-
-    remnawave:
-        image: remnawave/backend:${BACKEND_IMAGE_TAG}
-        container_name: '${APP_NAME}'
-        hostname: remnawave
-        restart: always
-        ports:
-            - '127.0.0.1:${APP_PORT}:3000'
-            - '127.0.0.1:${METRICS_PORT}:3001'
-        env_file:
-            - .env
-        networks:
-            - ${APP_NAME}-network
-        depends_on:
-          ${APP_NAME}-db:
-            condition: service_healthy
-          ${APP_NAME}-redis:
-            condition: service_healthy
-
-    remnawave-subscription-page:
-        image: remnawave/subscription-page:latest
-        container_name: ${APP_NAME}-subscription-page
-        hostname: remnawave-subscription-page
-        restart: always
-        environment:
-            - REMNAWAVE_PLAIN_DOMAIN=remnawave:3003
-            - REQUEST_REMNAWAVE_SCHEME=http
-            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}
-            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
-            - META_TITLE="${META_TITLE}"
-            - META_DESCRIPTION="${META_DESCRIPTION}"
-        ports:
-            - '127.0.0.1:${SUB_PAGE_PORT}:${SUB_PAGE_PORT}'
-        networks:
-            - ${APP_NAME}-network
-        #volumes:
-        #    - ./app-config.json:/app/dist/assets/app-config.json
-
-    remnawave-redis:
-      image: valkey/valkey:8.0.2-alpine
-      container_name: ${APP_NAME}-redis
-      hostname: remnawave-redis
-      restart: always
-      networks:
-        - ${APP_NAME}-network
-      volumes:
-        - ${APP_NAME}-redis-data:/data
-      healthcheck:
-        test: [ "CMD", "valkey-cli", "ping" ]
-        interval: 3s
-        timeout: 10s
-        retries: 3
-
-networks:
-    ${APP_NAME}-network:
-        name: ${APP_NAME}-network
-        driver: bridge
-        external: false
-
-volumes:
-    ${APP_NAME}-db-data:
-        driver: local
-        external: false
-        name: ${APP_NAME}-db-data
-    ${APP_NAME}-redis-data:
-      driver: local
-      external: false
-      name: ${APP_NAME}-redis-data
-EOL
-    colorized_echo green "Docker Compose file saved in $COMPOSE_FILE"
+META_TITLE_ESCAPED=$(echo "$META_TITLE" | sed 's/[^a-zA-Z0-9.,_-]/ /g')  
+META_DESCRIPTION_ESCAPED=$(echo "$META_DESCRIPTION" | sed 's/[^a-zA-Z0-9.,_-]/ /g')  
+  
+cat > "$COMPOSE_FILE" <<EOL  
+services:  
+    remnawave-db:  
+        image: postgres:17  
+        container_name: '${APP_NAME}-db'  
+        hostname: remnawave-db  
+        restart: always  
+        env_file:  
+            - .env  
+        environment:  
+            - POSTGRES_USER=\${POSTGRES_USER}  
+            - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}  
+            - POSTGRES_DB=\${POSTGRES_DB}  
+            - TZ=UTC  
+        ports:  
+            - '127.0.0.1:6767:5432'  
+        volumes:  
+            - ${APP_NAME}-db-data:/var/lib/postgresql/data  
+        networks:  
+            - ${APP_NAME}-network  
+        healthcheck:  
+            test: ['CMD-SHELL', 'pg_isready -U \$\${POSTGRES_USER} -d \$\${POSTGRES_DB}']  
+            interval: 3s  
+            timeout: 10s  
+            retries: 3  
+  
+    remnawave:  
+        image: remnawave/backend:${BACKEND_IMAGE_TAG}  
+        container_name: '${APP_NAME}'  
+        hostname: remnawave  
+        restart: always  
+        ports:  
+            - '127.0.0.1:${APP_PORT}:3000'  
+            - '127.0.0.1:${METRICS_PORT}:3001'  
+        env_file:  
+            - .env  
+        networks:  
+            - ${APP_NAME}-network  
+        depends_on:  
+          ${APP_NAME}-db:  
+            condition: service_healthy  
+          ${APP_NAME}-redis:  
+            condition: service_healthy  
+  
+    remnawave-subscription-page:  
+        image: remnawave/subscription-page:latest  
+        container_name: ${APP_NAME}-subscription-page  
+        hostname: remnawave-subscription-page  
+        restart: always  
+        environment:  
+            - REMNAWAVE_PLAIN_DOMAIN=remnawave:3003  
+            - REQUEST_REMNAWAVE_SCHEME=http  
+            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}  
+            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}  
+            - META_TITLE=${META_TITLE_ESCAPED}  
+            - META_DESCRIPTION=${META_DESCRIPTION_ESCAPED}  
+        ports:  
+            - '127.0.0.1:${SUB_PAGE_PORT}:${SUB_PAGE_PORT}'  
+        networks:  
+            - ${APP_NAME}-network  
+        #volumes:  
+        #    - ./app-config.json:/app/dist/assets/app-config.json  
+  
+    remnawave-redis:  
+      image: valkey/valkey:8.0.2-alpine  
+      container_name: ${APP_NAME}-redis  
+      hostname: remnawave-redis  
+      restart: always  
+      networks:  
+        - ${APP_NAME}-network  
+      volumes:  
+        - ${APP_NAME}-redis-data:/data  
+      healthcheck:  
+        test: [ "CMD", "valkey-cli", "ping" ]  
+        interval: 3s  
+        timeout: 10s  
+        retries: 3  
+  
+networks:  
+    ${APP_NAME}-network:  
+        name: ${APP_NAME}-network  
+        driver: bridge  
+        external: false  
+  
+volumes:  
+    ${APP_NAME}-db-data:  
+        driver: local  
+        external: false  
+        name: ${APP_NAME}-db-data  
+    ${APP_NAME}-redis-data:  
+      driver: local  
+      external: false  
+      name: ${APP_NAME}-redis-data  
+EOL  
+colorized_echo green "Docker Compose file saved in $COMPOSE_FILE"
 }
 
 uninstall_remnawave_script() {
