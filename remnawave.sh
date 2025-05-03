@@ -46,7 +46,7 @@ if [ -z "$NODE_IP" ]; then
 fi
 
 # Set default app name if not provided
-if [[ "$COMMAND" == "install" ]] && [ -z "$APP_NAME" ]; then
+if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]] && [ -z "$APP_NAME" ]; then
     APP_NAME="remnawave"
 fi
 # Set script name if APP_NAME is not set
