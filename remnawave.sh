@@ -4,37 +4,37 @@
 
 set -e
 
-while [[ $# -gt 0 ]]; do
-    key="$1"
-
-    case $key in
-        install|install-script|uninstall-script|update|uninstall|up|down|restart|status|logs|edit|edit-env|console)
-            COMMAND="$1"
-            shift # past argument
-        ;;
-        --name)
-            if [[ "$COMMAND" == "install" ]]; then
-                APP_NAME="$2"
-                shift # past argument
-            else
-                echo "Error: --name parameter is only allowed with 'install' command."
-                exit 1
-            fi
-            shift # past value
-        ;;
-        --dev)
-            if [[ "$COMMAND" == "install" ]]; then
-                USE_DEV_BRANCH="true"
-            else
-                echo "Error: --dev parameter is only allowed with 'install' command."
-                exit 1
-            fi
-            shift # past argument
-        ;;
-        *)
-            shift # past unknown argument
-        ;;
-    esac
+while [[ $# -gt 0 ]]; do  
+    key="$1"  
+      
+    case $key in  
+        install|install-script|uninstall-script|update|uninstall|up|down|restart|status|logs|edit|edit-env|console)  
+            COMMAND="$1"  
+            shift # past argument  
+        ;;  
+        --name)  
+            if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]]; then  
+                APP_NAME="$2"  
+                shift # past argument  
+            else  
+                echo "Error: --name parameter is only allowed with 'install' or 'install-script' commands."  
+                exit 1  
+            fi  
+            shift # past value  
+        ;;  
+        --dev)  
+            if [[ "$COMMAND" == "install" ]]; then  
+                USE_DEV_BRANCH="true"  
+            else  
+                echo "Error: --dev parameter is only allowed with 'install' command."  
+                exit 1  
+            fi  
+            shift # past argument  
+        ;;  
+        *)  
+            shift # past unknown argument  
+        ;;  
+    esac  
 done
 
 # Fetch IP address from ipinfo.io API
@@ -195,24 +195,24 @@ install_docker() {
     fi
 }
 
-install_remnawave_script() {
-    colorized_echo blue "Installing remnawave script"
-    TARGET_PATH="/usr/local/bin/$APP_NAME"
-    
-    if [ ! -d "/usr/local/bin" ]; then
-        mkdir -p /usr/local/bin
-    fi
-    
-    curl -sSL $SCRIPT_URL -o $TARGET_PATH
-
-    chmod 755 $TARGET_PATH
-    
-    if [ -f "$TARGET_PATH" ]; then
-        colorized_echo green "Remnawave script installed successfully at $TARGET_PATH"
-    else
-        colorized_echo red "Failed to install remnawave script at $TARGET_PATH"
-        exit 1
-    fi
+install_remnawave_script() {  
+    colorized_echo blue "Installing remnawave script"  
+    TARGET_PATH="/usr/local/bin/$APP_NAME"  
+      
+    if [ ! -d "/usr/local/bin" ]; then  
+        mkdir -p /usr/local/bin  
+    fi  
+      
+    curl -sSL $SCRIPT_URL -o $TARGET_PATH  
+  
+    chmod 755 $TARGET_PATH  
+      
+    if [ -f "$TARGET_PATH" ]; then  
+        colorized_echo green "Remnawave script installed successfully at $TARGET_PATH"  
+    else  
+        colorized_echo red "Failed to install remnawave script at $TARGET_PATH"  
+        exit 1  
+    fi  
 }
 
 generate_random_string() {
