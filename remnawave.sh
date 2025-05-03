@@ -964,15 +964,17 @@ edit_env_command() {
 }
 
 console_command() {
-    if ! is_remnawave_installed; then
-        colorized_echo red "Remnawave not installed!"
-        exit 1
-    fi
-
-    if ! is_remnawave_up; then
-        colorized_echo red "Remnawave is not running. Start it first with 'remnawave up'"
-        exit 1
-    fi
+        if ! is_remnawave_installed; then
+            colorized_echo red "Remnawave not installed!"
+            exit 1
+        fi
+    
+     detect_compose
+ 
+        if ! is_remnawave_up; then
+            colorized_echo red "Remnawave is not running. Start it first with 'remnawave up'"
+            exit 1
+        fi
 
     docker exec -it $APP_NAME remnawave
 }
