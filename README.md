@@ -1,6 +1,27 @@
 # Remnawave Scripts
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Shell](https://img.shields.io/badge/language-Bash-blue.svg)](#)
+[![Remnawave Panel](https://img.shields.io/badge/Installer-Remnawave-brightgreen)](#remnawave-panel-installer)
+[![RemnaNode](https://img.shields.io/badge/Installer-RemnaNode-lightgrey)](#remnanode-installer)
+[![Backup](https://img.shields.io/badge/Tool-Backup-orange)](#remnawave-backup-script)
+[![Restore](https://img.shields.io/badge/Tool-Restore-red)](#remnawave-restore-script-beta)
+
+
 A collection of Bash scripts to simplify the installation, backup, and restoration of **Remnawave Panel** and **RemnaNode** setups. These scripts are designed for system administrators and technical users who want a clean, CLI-based approach to configuring proxy panels and nodes.
+
+---
+
+
+## 📚 Table of Contents
+
+- [Remnawave Panel Installer](#remnawave-panel-installer)
+- [RemnaNode Installer](#remnanode-installer)
+- [Remnawave Backup Script](#remnawave-backup-script)
+- [Remnawave Restore Script (BETA)](#remnawave-restore-script-beta)
+- [Contributing](#contributing)
+- [License](#license)
+- [Join My Community OpeNode.XYZ & NeoNode.cc !](#join-my-community)
 
 ---
 
