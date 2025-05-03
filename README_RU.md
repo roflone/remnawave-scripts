@@ -82,8 +82,8 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 | `down`       | Остановка контейнеров                     |
 | `restart`    | Перезапуск панели                         |
 | `status`     | Проверка статуса                          |
-| `install-script`     | Проверка статуса                          |
-| `uninstall-script`     | Проверка статуса                          |
+| `install-script`     | Установка скрипта в систему по пути `/usr/local/bin`|
+| `uninstall-script`     | Удаление только скрипта из системы |
 | `logs`       | Просмотр логов                            |
 | `edit`       | Редактирование `docker-compose.yml`       |
 | `edit-env`   | Редактирование `.env` файла               |
