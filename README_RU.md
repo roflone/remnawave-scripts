@@ -54,13 +54,13 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 Вы также можете установить только скрипт для управления панелью, если у вас установка выполнена в `/opt/remnawave`:
 
-```
+```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install-script --name remnawave
 ```
 
 Удалить только скрипт из системы.
 
-```
+```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ uninstall-script --name remnawave
 ```
 
