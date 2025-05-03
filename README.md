@@ -1,199 +1,296 @@
 # Remnawave Scripts
 
-A collection of bash scripts to simplify the installation, backup, and restoration of Remnawave and RemnaNode setups. These scripts streamline configuration and maintenance for Remnawave users.
-
-# 🚀 Remnawave Panel Installer
-
-Универсальный Bash-скрипт для установки и управления [Remnawave Panel](https://github.com/remnawave/), включающий:
-- удобный CLI-интерфейс (`up`, `down`, `logs`, `console` и др.);
-- автогенерацию токенов, паролей и портов;
-- поддержку Telegram-уведомлений;
-- автоматическую установку зависимостей (`docker`, `docker compose`, `openssl` и др.);
-- настройку конфигурации и `docker-compose.yml` в папке `/opt/<название>`.
-
-> ✅ Поддерживает установку **как production, так и dev версии** панели через флаг `--dev`.
+A collection of Bash scripts to simplify the installation, backup, and restoration of **Remnawave Panel** and **RemnaNode** setups. These scripts are designed for system administrators and technical users who want a clean, CLI-based approach to configuring proxy panels and nodes.
 
 ---
 
-## 📦 Быстрый старт
+## 🚀 Remnawave Panel Installer
+
+A universal Bash script to install and manage the [Remnawave Panel](https://github.com/remnawave/). It offers an all-in-one setup experience with full automation and CLI control.
+
+### ✅ Key Features
+
+* CLI interface with commands like `install`, `up`, `down`, `restart`, `logs`, `status`, `edit`, etc.
+* Auto-generation of `.env`, secrets, ports, and `docker-compose.yml`
+* Optional `--dev` mode for development builds
+* Telegram bot notifications
+* Secure environment with reverse proxy readiness
+
+---
+
+### 📦 Quick Start
 
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install
-````
-
-По умолчанию установка происходит в `/opt/remnawave`.
-Скрипт предложит ввести домены, токен бота (если нужен), мета-данные и сгенерирует `.env` и `docker-compose.yml`.
-
----
-
-## ⚙️ Параметры установки
-
-| Флаг     | Описание                                        |
-| -------- | ----------------------------------------------- |
-| `--name` | Задать имя установки (по умолчанию `remnawave`) |
-| `--dev`  | Установить dev-версию (`remnawave/backend:dev`) |
-
-Пример:
-
-```bash
-remnawave install --name remnawave --dev
 ```
 
 ---
 
-## 🛠 Поддерживаемые команды
+### ⚙️ Installation Flags
 
-| Команда     | Описание                                            |
-| ----------- | --------------------------------------------------- |
-| `install`   | Установка панели Remnawave                          |
-| `update`    | Обновление скрипта и образов docker                 |
-| `uninstall` | Удаление панели с возможностью очистки volumes      |
-| `up`        | Запуск панели                                       |
-| `down`      | Остановка панели                                    |
-| `restart`   | Перезапуск                                          |
-| `status`    | Проверка текущего статуса                           |
-| `logs`      | Просмотр логов всех контейнеров                     |
-| `edit`      | Редактирование `docker-compose.yml` через `$EDITOR` |
-| `edit-env`  | Редактирование `.env` через `$EDITOR`               |
-| `console`   | Вход в CLI-интерфейс панели внутри контейнера       |
+| Flag     | Description                                       |
+| -------- | ------------------------------------------------- |
+| `--name` | Set custom installation name (default: remnawave) |
+| `--dev`  | Install dev version of the panel                  |
+
+Example:
+
+```bash
+remnawave install --name vpn-panel --dev
+```
 
 ---
 
-## 🔐 Telegram уведомления
+### 🛠 Supported Commands
 
-При установке будет предложено включить поддержку Telegram:
+| Command     | Description                                 |
+| ----------- | ------------------------------------------- |
+| `install`   | Install the panel                           |
+| `update`    | Update script and docker images             |
+| `uninstall` | Fully remove the panel                      |
+| `up`        | Start containers                            |
+| `down`      | Stop containers                             |
+| `restart`   | Restart panel                               |
+| `status`    | Show running status                         |
+| `logs`      | View logs                                   |
+| `edit`      | Edit `docker-compose.yml` with `$EDITOR`    |
+| `edit-env`  | Edit `.env` file with `$EDITOR`             |
+| `console`   | Open Remnawave panel's internal CLI console |
+
+---
+
+### 🔐 Telegram Notifications
+
+Optionally configure Telegram alerts during installation:
 
 * `IS_TELEGRAM_ENABLED=true`
 * `TELEGRAM_BOT_TOKEN`
 * `TELEGRAM_ADMIN_ID`
-* `NODES_NOTIFY_CHAT_ID` (можно оставить как `TELEGRAM_ADMIN_ID`)
-* `*_THREAD_ID` — опционально
+* `NODES_NOTIFY_CHAT_ID`
+* `*_THREAD_ID` (optional)
 
-> 📌 Рекомендуется использовать [BotFather](https://t.me/BotFather) и каналы с включёнными уведомлениями.
+> Recommended: Use [@BotFather](https://t.me/BotFather) to create your bot.
 
 ---
 
-## 🌍 Обратный прокси
+### 🌍 Reverse Proxy Setup
 
-По умолчанию все порты проброшены на `127.0.0.1`, и доступны только локально.
-
-Настрой Nginx, Caddy или другой обратный прокси:
+Ports are bound to `127.0.0.1` by default. Set up your proxy like:
 
 ```text
-panel.example.com        → 127.0.0.1:3000
-sub.example.com/sub      → 127.0.0.1:3010
+panel.example.com       → 127.0.0.1:3000
+sub.example.com/sub     → 127.0.0.1:3010
 ```
 
 ---
 
-## 📂 Структура установки
+### 📂 File Structure
 
 ```text
 /opt/remnawave/
 ├── .env
 ├── docker-compose.yml
-└── app-config.json      # (опционально)
+└── app-config.json      # Optional
 ```
 
 ---
 
-## 🧩 Требования
+### 🧩 Requirements
 
-Скрипт сам установит всё, что нужно:
+The script automatically installs required packages:
 
 * `curl`
 * `docker`
 * `docker compose`
 * `openssl`
-* `nano` или `vi`
+* `nano` or `vi`
 
 ---
 
-## 📋 Пример команды установки
-
-```bash
-remnawave install --name vpn-panel
-```
-
----
-
-## 🧼 Удаление панели
+### 🧼 Uninstall Panel
 
 ```bash
 remnawave uninstall
 ```
 
-> ⚠️ Скрипт спросит, удалять ли volumes с данными базы.
+> ⚠️ You will be asked whether to remove database volumes.
 
+---
 
+## 🛰 RemnaNode Installer
 
+A universal Bash script to install and manage a **RemnaNode** — a proxy node designed to securely connect to Remnawave Panel using **Xray-core**.
 
-# RemnaNode Install
+---
 
-Installs a RemnaNode with Xray Core, enabling quick setup of a proxy node compatible with Remnawave for secure and efficient connections.
+### 📦 Quick Start
 
-## Install and Run
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
 ```
 
-The script sets up:
-- RemnaNode in the working directory `/opt/remnanode`
-- Custom Xray Core in `/var/lib/remnanode`
-- Command-line interface for management:
-  - Run `remnanode help` for available commands
-- Optional development branch installation with `--dev` flag
+---
 
-![RemnaNode Install](https://github.com/user-attachments/assets/7f351b1e-0980-4301-8db4-cb922ee7dc48)
+### ✅ Features
 
-## Remnawave Backup Script
+* CLI interface (`install`, `up`, `down`, `restart`, `logs`, `status`, etc.)
+* Auto-detects and avoids port conflicts
+* Installs optional latest Xray-core
+* Auto-generates `.env` and `docker-compose.yml`
+* Full support for `--dev` branch deployments
 
-Creates backups of the Remnawave database and configuration files, with options to back up specific files or an entire folder. Backups are sent to a Telegram chat for easy access.
+---
 
-### Install and Run
+### ⚙️ Installation Flags
+
+| Flag     | Description                                        |
+| -------- | -------------------------------------------------- |
+| `--name` | Custom node name (default: remnanode)              |
+| `--dev`  | Use `remnawave/node:dev` image instead of `latest` |
+
+---
+
+### 🛠 Supported Commands
+
+| Command       | Description                                       |
+| ------------- | ------------------------------------------------- |
+| `install`     | Installs RemnaNode                                |
+| `update`      | Updates the script and Docker image               |
+| `uninstall`   | Removes the node and optionally its data          |
+| `up`          | Starts the node                                   |
+| `down`        | Stops the node                                    |
+| `restart`     | Restarts the node                                 |
+| `status`      | Displays if the node is running                   |
+| `logs`        | Shows logs                                        |
+| `core-update` | Update/change Xray-core interactively             |
+| `edit`        | Open `docker-compose.yml` in your terminal editor |
+
+---
+
+### 📂 File Structure
+
+```text
+/opt/remnanode/
+├── .env
+└── docker-compose.yml
+
+/var/lib/remnanode/
+└── xray               # Xray-core binary if installed
+```
+
+---
+
+### 🔐 Xray-core Support
+
+* Downloads and installs latest or chosen version
+* Places it under `/var/lib/remnanode/xray`
+* Binds it into container at runtime
+
+---
+
+### 🌐 Reverse Proxy Example
+
+```text
+node.example.com → 127.0.0.1:3000
+```
+
+---
+
+### 🧼 Uninstall Node
+
+```bash
+remnanode uninstall
+```
+
+> ⚠️ You will be asked whether to delete core data.
+
+---
+
+## 💾 Remnawave Backup Script
+
+Creates backups of the Remnawave database and configuration files, with optional Telegram delivery.
+
+---
+
+### 📦 Quick Start
+
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave-backup.sh)"
 ```
 
-The script backs up:
-- The Remnawave database as `db_backup.sql`
-- Either the entire specified folder (e.g., `/opt/remnawave` or user-defined) or specific files:
-  - `docker-compose.yml`
-  - `.env`
-  - `app-config.json` (custom file for the subscription page, see [instructions](https://remna.st/subscription-templating/client-configuration))
+---
 
-![Remnawave Backup](https://github.com/user-attachments/assets/44b10d68-c292-48dc-8131-e3481504d273)
+### 📂 What It Backs Up
 
-## Remnawave Restore Script (BETA)
+* `db_backup.sql` from the Remnawave database
+* One of the following:
 
-Restores Remnawave backups from a `.tar.gz` archive, supporting full restoration (files and database) or database-only. **Warning: This is a beta version. Use with extreme caution, especially on a live Remnawave panel, as it may overwrite critical data or cause instability.**
+  * Entire install directory (e.g., `/opt/remnawave`)
+  * Specific files: `docker-compose.yml`, `.env`, `app-config.json`
 
-### Install and Run
+---
+
+### 🔔 Telegram Integration
+
+You’ll be prompted to enter:
+
+* Bot Token
+* Chat or Channel ID
+* (Optional) Topic ID
+
+> Files are automatically split if exceeding Telegram size limits.
+
+---
+
+## 🧙‍♂️ Remnawave Restore Script (BETA)
+
+Restores Remnawave from a `.tar.gz` archive. **Use with caution on live systems.**
+
+---
+
+### 📦 Quick Start
+
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/restore.sh)"
 ```
 
-The script performs the following:
-- Clears all existing data in the specified database and restores it from `db_backup.sql`
-- Restores files to the chosen directory (e.g., `/opt/remnawave` or user-defined), including:
-  - `docker-compose.yml`
-  - `.env`
-  - `app-config.json` (custom file for the subscription page, see [instructions](https://remna.st/subscription-templating/client-configuration))
-- Starts containers to ensure the restored setup is operational
+---
 
-![Remnawave Restore](https://github.com/user-attachments/assets/34ddcde7-ec22-41ee-8ec5-dd10cc3f4d81)
+### 🧩 Restore Modes
 
-## Contributing
+* **Full restore:**
 
-Feel free to open issues or submit pull requests to improve these scripts. Ensure your contributions are compatible with Remnawave and follow the existing script structure.
+  * Extracts all files into destination
+  * Drops and replaces PostgreSQL data
+* **Database-only restore:**
 
-## License
+  * Keeps your current files intact
+  * Overwrites DB contents from `db_backup.sql`
+
+---
+
+### ✅ Requirements
+
+* `docker`
+* `docker compose`
+* Archive must contain `db_backup.sql`
+* PostgreSQL credentials must be in `.env` or entered manually
+
+---
+
+## 🤝 Contributing
+
+PRs and suggestions are welcome. Stick to Bash and ensure compatibility with Docker.
+
+---
+
+## 🪪 License
 
 MIT License
 
-## Join My Community!
+---
 
-Explore my **forum community** at [Openode.xyz](https://openode.xyz), where paid subscription clubs offer in-depth resources on configuring VPNs, proxies, panels, and more. The guides are highly detailed, packed with screenshots and comprehensive explanations to help you not just set up but truly master the tools. The most popular clubs cover **Marzban** and **Remnawave**, with a dedicated premium club for setting up the **SHM panel** (perfect for selling subscriptions via Telegram).
+## 🔗 Community
 
-Also, check out my **open blog** at [Neonode.cc](https://neonode.cc) for free tips, tricks, and insights on various tech topics!
-
+* Forum: [https://openode.xyz](https://openode.xyz) — premium clubs for Marzban, SHM, and Remnawave
+* Blog: [https://neonode.cc](https://neonode.cc) — tech articles, guides, and project updates
