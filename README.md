@@ -51,15 +51,27 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 ### ⚙️ Installation Flags
 
-| Flag     | Description                                       |
-| -------- | ------------------------------------------------- |
-| `--name` | Set custom installation name (default: remnawave) |
-| `--dev`  | Install dev version of the panel                  |
+| Flag | Description |
+| --- | --- |
+| `--name` | Set the name of the installation directory (default: `remnawave`) |
+| `--dev` | Install the dev version (`remnawave/backend:dev`) |
 
-Example:
+You can also install **only the script**, without starting the full panel installation:
+
+```
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install-script --name remnawave
+```
+
+To remove only the script:
+
+```
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ uninstall-script --name remnawave
+```
+
+Full example installing the `dev` version under the name `remnawave-2`:
 
 ```bash
-remnawave install --name vpn-panel --dev
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install --name remnawave-2 --dev
 ```
 
 ---
