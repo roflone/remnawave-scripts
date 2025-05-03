@@ -204,9 +204,21 @@ install_docker() {
 install_remnawave_script() {
     colorized_echo blue "Installing remnawave script"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
+    
+    if [ ! -d "/usr/local/bin" ]; then
+        mkdir -p /usr/local/bin
+    fi
+    
     curl -sSL $SCRIPT_URL -o $TARGET_PATH
+
     chmod 755 $TARGET_PATH
-    colorized_echo green "Remnawave script installed successfully at $TARGET_PATH"
+    
+    if [ -f "$TARGET_PATH" ]; then
+        colorized_echo green "Remnawave script installed successfully at $TARGET_PATH"
+    else
+        colorized_echo red "Failed to install remnawave script at $TARGET_PATH"
+        exit 1
+    fi
 }
 
 generate_random_string() {
