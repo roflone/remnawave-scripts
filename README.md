@@ -1,5 +1,7 @@
 # Remnawave Scripts
 
+![remna-scripts](https://github.com/user-attachments/assets/51caaf9c-50a0-4aa9-86ab-ef6346526685)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/language-Bash-blue.svg)](#)
 [![Remnawave Panel](https://img.shields.io/badge/Installer-Remnawave-brightgreen)](#-remnawave-panel-installer)
