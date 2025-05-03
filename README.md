@@ -58,13 +58,13 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 You can also install **only the script**, without starting the full panel installation:
 
-```
+```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install-script --name remnawave
 ```
 
 To remove only the script:
 
-```
+```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ uninstall-script --name remnawave
 ```
 
