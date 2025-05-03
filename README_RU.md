@@ -23,7 +23,7 @@
 - [👥 Сообщество](#-сообщество)
 
 
-## [Readme on English](README.MD)
+## [Readme on English](README.md)
 ---
 
 # 🚀 Установщик панели Remnawave
