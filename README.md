@@ -19,7 +19,7 @@ A collection of Bash scripts to simplify the installation, backup, and restorati
 * [🚀 Remnawave Panel Installer](#-remnawave-panel-installer)
 * [🛰 RemnaNode Installer](#-remnanode-installer)
 * [💾 Remnawave Backup Script](#-remnawave-backup-script)
-* [🔄 Remnawave Restore Script (BETA)](#-remnawave-restore-script-beta)
+* [🔄 Remnawave Restore Script (BETA)](#%EF%B8%8F-remnawave-restore-script-beta)
 * [🤝 Contributing](#-contributing)
 * [📜 License](#-license)
 * [👥 Join My Community OpeNode.XYZ & NeoNode.cc !](#-community)
