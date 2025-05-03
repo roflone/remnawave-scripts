@@ -1,7 +1,4 @@
 # Remnawave Scripts
-
-![remna-scripts](https://github.com/user-attachments/assets/51caaf9c-50a0-4aa9-86ab-ef6346526685)
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/language-Bash-blue.svg)](#)
 [![Remnawave Panel](https://img.shields.io/badge/Installer-Remnawave-brightgreen)](#-remnawave-panel-installer)
@@ -9,6 +6,7 @@
 [![Backup](https://img.shields.io/badge/Tool-Backup-orange)](#-remnawave-backup-script)
 [![Restore](https://img.shields.io/badge/Tool-Restore-red)](#-remnawave-restore-script-beta)
 
+![remna-scripts-dark](https://github.com/user-attachments/assets/8edf7e60-7675-4727-8d8b-ff15ec0f85ae)
 A collection of Bash scripts to simplify the installation, backup, and restoration of **Remnawave Panel** and **RemnaNode** setups. These scripts are designed for system administrators and technical users who want a clean, CLI-based approach to configuring proxy panels and nodes.
 
 ## [Readme на русском](/README_RU.md)
