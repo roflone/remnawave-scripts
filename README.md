@@ -4,7 +4,7 @@
 [![Remnawave Panel](https://img.shields.io/badge/Installer-Remnawave-brightgreen)](#-remnawave-panel-installer)
 [![RemnaNode](https://img.shields.io/badge/Installer-RemnaNode-lightgrey)](#-remnanode-installer)
 [![Backup](https://img.shields.io/badge/Tool-Backup-orange)](#-remnawave-backup-script)
-[![Restore](https://img.shields.io/badge/Tool-Restore-red)](#-remnawave-restore-script-beta)
+[![Restore](https://img.shields.io/badge/Tool-Restore-red)](#%EF%B8%8F-remnawave-restore-script-beta)
 
 ![remna-scripts-dark](https://github.com/user-attachments/assets/8edf7e60-7675-4727-8d8b-ff15ec0f85ae)
 
