@@ -68,18 +68,12 @@ colorized_echo() {
     local style=${3:-0}  # Default style is normal
 
     case $color in
-        "red") printf "\e[${style};91m${text}\e[0m
-" ;;
-        "green") printf "\e[${style};92m${text}\e[0m
-" ;;
-        "yellow") printf "\e[${style};93m${text}\e[0m
-" ;;
-        "blue") printf "\e[${style};94m${text}\e[0m
-" ;;
-        "magenta") printf "\e[${style};95m${text}\e[0m
-" ;;
-        "cyan") printf "\e[${style};96m${text}\e[0m
-" ;;
+        "red") printf "\e[${style};91m${text}\e[0m\n" ;;
+        "green") printf "\e[${style};92m${text}\e[0m\n" ;;
+        "yellow") printf "\e[${style};93m${text}\e[0m\n" ;;
+        "blue") printf "\e[${style};94m${text}\e[0m\n" ;;
+        "magenta") printf "\e[${style};95m${text}\e[0m\n" ;;
+        "cyan") printf "\e[${style};96m${text}\e[0m\n" ;;
         *) echo "${text}" ;;
     esac
 }
