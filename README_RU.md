@@ -52,11 +52,24 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 | `--name` | Установить имя директории установки (по умолчанию `remnawave`) |
 | `--dev`  | Установить dev-версию панели (`remnawave/backend:dev`)         |
 
-Пример:
+Вы также можете установить только скрипт для управления панелью, если у вас установка выполнена в `/opt/remnawave`:
+
+```
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install-script --name remnawave
+```
+
+Удалить только скрипт из системы.
+
+```
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ uninstall-script --name remnawave
+```
+
+Полный пример установки ветки `dev` с другим именем сервиса в системе `remnawave-2`:
 
 ```bash
-remnawave install --name remnawave --dev
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install --name remnawave-2 --dev
 ```
+
 
 ---
 
