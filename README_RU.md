@@ -19,6 +19,7 @@
 * [📜 Лицензия](#-лицензия)
 * [👥 Присоединяйся к сообществу OpeNode.XYZ и NeoNode.cc!](#-сообщество)
 
+[Readme on ENGLISH](README.md)
 ---
 
 ## 🚀 Установщик Remnawave Panel
