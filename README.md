@@ -93,6 +93,7 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 | `edit`      | Edit `docker-compose.yml` with `$EDITOR`    |
 | `edit-env`  | Edit `.env` file with `$EDITOR`             |
 | `console`   | Open Remnawave panel's internal CLI console |
+| `backup`    | Make DB dump in the /opt/remnawave/backup (--data-only) |
 
 ---
 
