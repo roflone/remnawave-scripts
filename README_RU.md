@@ -88,6 +88,7 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 | `edit`       | Редактирование `docker-compose.yml`       |
 | `edit-env`   | Редактирование `.env` файла               |
 | `console`    | Внутренняя CLI-консоль панели Remnawave   |
+| `backup`    | Создаст бэкап базы в /opt/remnawave/backup ( с флагом --data-only) |
 
 ---
 
