@@ -1235,14 +1235,32 @@ backup_remnawave() {
         exit 1
     fi
 
+    # Получаем параметры из .env
+    if [ ! -f "$ENV_FILE" ]; then
+        colorized_echo red ".env file not found!"
+        exit 1
+    fi
+
+    local POSTGRES_USER=$(grep "^POSTGRES_USER=" "$ENV_FILE" | cut -d '=' -f2)
+    local POSTGRES_PASSWORD=$(grep "^POSTGRES_PASSWORD=" "$ENV_FILE" | cut -d '=' -f2)
+    local POSTGRES_DB=$(grep "^POSTGRES_DB=" "$ENV_FILE" | cut -d '=' -f2)
+
+    POSTGRES_USER=${POSTGRES_USER:-postgres}
+    POSTGRES_DB=${POSTGRES_DB:-postgres}
+
+    if [ -z "$POSTGRES_PASSWORD" ]; then
+        colorized_echo red "POSTGRES_PASSWORD not found in .env file!"
+        exit 1
+    fi
+
     local BACKUP_DIR="$APP_DIR/backup"
     local BACKUP_NAME="pg_backup_data_only_$(date +%F_%H-%M-%S).sql"
-
     mkdir -p "$BACKUP_DIR"
 
     colorized_echo blue "Creating PostgreSQL data-only backup..."
 
-    docker exec "${APP_NAME}-db" pg_dump -U postgres -d postgres --data-only -F p > "$BACKUP_DIR/$BACKUP_NAME"
+    docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "${APP_NAME}-db" \
+        pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --data-only -F p > "$BACKUP_DIR/$BACKUP_NAME"
 
     if [ $? -eq 0 ]; then
         colorized_echo green "Data-only backup created at: $BACKUP_DIR/$BACKUP_NAME"
