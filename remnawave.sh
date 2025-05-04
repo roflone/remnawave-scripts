@@ -1257,11 +1257,18 @@ check_editor() {
     fi
 }
 
+warn_already_installed() {
+    colorized_echo red "⚠️ Remnawave is already installed at: \e[1m$APP_DIR\e[0m"
+    colorized_echo yellow "To install another instance, use the \e[1m--name <custom_name>\e[0m flag."
+    colorized_echo cyan "Example: remnawave install --name mypanel"
+}
+
+
 install_command() {
     check_running_as_root
     if is_remnawave_installed; then
-        colorized_echo red "Remnawave is already installed at $APP_DIR"
-        read -p "Do you want to override the previous installation? (y/n) "
+        warn_already_installed
+        read -r -p "Do you want to override the previous installation? (y/n) "
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             colorized_echo red "Aborted installation"
             exit 1
