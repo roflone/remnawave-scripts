@@ -1235,7 +1235,7 @@ backup_remnawave() {
         exit 1
     fi
 
-    # Получаем параметры из .env
+    
     if [ ! -f "$ENV_FILE" ]; then
         colorized_echo red ".env file not found!"
         exit 1
