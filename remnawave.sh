@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=1.1
+# VERSION=1.2
 
 set -e
 
