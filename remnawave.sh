@@ -1228,6 +1228,30 @@ update_remnawave() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" pull
 }
 
+backup_remnawave() {
+    check_running_as_root
+    if ! is_remnawave_installed; then
+        colorized_echo red "Remnawave not installed!"
+        exit 1
+    fi
+
+    local BACKUP_DIR="$APP_DIR/backup"
+    local BACKUP_NAME="pg_backup_data_only_$(date +%F_%H-%M-%S).sql"
+
+    mkdir -p "$BACKUP_DIR"
+
+    colorized_echo blue "Creating PostgreSQL data-only backup..."
+
+    docker exec "${APP_NAME}-db" pg_dump -U postgres -d postgres --data-only -F p > "$BACKUP_DIR/$BACKUP_NAME"
+
+    if [ $? -eq 0 ]; then
+        colorized_echo green "Data-only backup created at: $BACKUP_DIR/$BACKUP_NAME"
+    else
+        colorized_echo red "Backup failed."
+        exit 1
+    fi
+}
+
 is_remnawave_installed() {
     if [ -d "$APP_DIR" ]; then
         return 0
@@ -1555,6 +1579,7 @@ usage() {
     colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnawave script"
     colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml"
     colorized_echo yellow "  edit-env            $(tput sgr0)– Edit .env file"
+    colorized_echo yellow "  backup              $(tput sgr0)– Make PostgreDB (data-only) backup dump file in /opt/remnawave/backup"    
     colorized_echo yellow "  console             $(tput sgr0)– Access Remnawave CLI console"
 
     echo
@@ -1602,5 +1627,6 @@ case "$COMMAND" in
     edit) edit_command ;;
     edit-env) edit_env_command ;;
     console) console_command ;;
+    backup) backup_remnawave ;;
     *) usage ;;
 esac
