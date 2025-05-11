@@ -408,23 +408,26 @@ install_remnawave() {
 
     # Ask about Telegram integration
     read -p "Do you want to enable Telegram notifications? (y/n): " -r enable_telegram
-    IS_TELEGRAM_ENABLED=false
+    IS_TELEGRAM_NOTIFICATIONS_ENABLED=false
     TELEGRAM_BOT_TOKEN=""
-    TELEGRAM_ADMIN_ID=""
-    NODES_NOTIFY_CHAT_ID=""
+    TELEGRAM_NOTIFY_USERS_CHAT_ID=""
+    TELEGRAM_NOTIFY_NODES_CHAT_ID=""
     NODES_NOTIFY_THREAD_ID=""
-    TELEGRAM_ADMIN_THREAD_ID=""
+    TELEGRAM_NOTIFY_USERS_CHAT_ID=""
 
     if [[ "$enable_telegram" =~ ^[Yy]$ ]]; then
-        IS_TELEGRAM_ENABLED=true
+        IS_TELEGRAM_NOTIFICATIONS_ENABLED=true
         read -p "Enter your Telegram Bot Token: " -r TELEGRAM_BOT_TOKEN
-        read -p "Enter your Telegram Admin Chat ID: " -r TELEGRAM_ADMIN_ID
-        read -p "Enter your Nodes Notify Chat ID (default: same as Admin ID): " -r NODES_NOTIFY_CHAT_ID
-        if [[ -z "$NODES_NOTIFY_CHAT_ID" ]]; then
-            NODES_NOTIFY_CHAT_ID="$TELEGRAM_ADMIN_ID"
+        read -p "Enter your Users Notify Chat ID: " -r TELEGRAM_NOTIFY_USERS_CHAT_ID
+        read -p "Enter your Nodes Notify Chat ID (default: same as Admin ID): " -r TELEGRAM_NOTIFY_NODES_CHAT_ID
+        if [[ -z "$TELEGRAM_NOTIFY_NODES_CHAT_ID" ]]; then
+            TELEGRAM_NOTIFY_NODES_CHAT_ID="$TELEGRAM_NOTIFY_USERS_CHAT_ID"
         fi
-        read -p "Enter your Nodes Notify Thread ID (optional): " -r NODES_NOTIFY_THREAD_ID
-        read -p "Enter your Admin Thread ID (optional): " -r TELEGRAM_ADMIN_THREAD_ID
+        read -p "Enter your Users Notify Thread ID (optional): " -r TELEGRAM_NOTIFY_USERS_THREAD_ID
+        read -p "Enter your Nodes Notify Thread ID (optional): " -r TELEGRAM_NOTIFY_NODES_THREAD_ID
+        if [[ -z "$TELEGRAM_NOTIFY_NODES_THREAD_ID" ]]; then
+            TELEGRAM_NOTIFY_NODES_THREAD_ID="$TELEGRAM_NOTIFY_USERS_THREAD_ID"
+        fi
     fi
 
     # Determine image tag based on --dev flag
@@ -458,12 +461,12 @@ JWT_AUTH_SECRET=$JWT_AUTH_SECRET
 JWT_API_TOKENS_SECRET=$JWT_API_TOKENS_SECRET
 
 ### TELEGRAM ###
-IS_TELEGRAM_ENABLED=$IS_TELEGRAM_ENABLED
+IS_TELEGRAM_NOTIFICATIONS_ENABLED=$IS_TELEGRAM_NOTIFICATIONS_ENABLED
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-TELEGRAM_ADMIN_ID=$TELEGRAM_ADMIN_ID
-NODES_NOTIFY_CHAT_ID=$NODES_NOTIFY_CHAT_ID
-NODES_NOTIFY_THREAD_ID=$NODES_NOTIFY_THREAD_ID
-TELEGRAM_ADMIN_THREAD_ID=$TELEGRAM_ADMIN_THREAD_ID
+TELEGRAM_NOTIFY_USERS_CHAT_ID=$TELEGRAM_ADMIN_ID
+TELEGRAM_NOTIFY_NODES_CHAT_ID=$TELEGRAM_NOTIFY_NODES_CHAT_ID
+TELEGRAM_NOTIFY_NODES_THREAD_ID=$TELEGRAM_NOTIFY_NODES_THREAD_ID
+TELEGRAM_NOTIFY_USERS_THREAD_ID=$TELEGRAM_NOTIFY_USERS_THREAD_ID
 
 ### FRONT_END ###
 # Domain for panel access. Can be set to * to accept any domain
@@ -512,15 +515,29 @@ SUB_ENV_FILE="$APP_DIR/.env.subscription"
 
 colorized_echo blue "Generating .env.subscription for subscription-page"
 cat > "$SUB_ENV_FILE" <<EOL
+### Remnawave Panel URL, can be http://remnawave:3000 or https://panel.example.com
+REMNAWAVE_PANEL_URL=http://${APP_NAME}:${APP_PORT}
+
+APP_PORT=${SUB_PAGE_PORT}
+
+# Serve at custom root path, for example, this value can be: CUSTOM_SUB_PREFIX=sub
+# Do not place / at the start/end
+CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
+
+# Support Marzban links
+#MARZBAN_LEGACY_LINK_ENABLED=false
+#MARZBAN_LEGACY_SECRET_KEY=
+#REMNAWAVE_API_TOKEN=
+
 ### META FOR SUBSCRIPTION PAGE ###
 META_TITLE="$META_TITLE"
 META_DESCRIPTION="$META_DESCRIPTION"
-REMNAWAVE_PLAIN_DOMAIN=remnawave:${APP_PORT}
-REQUEST_REMNAWAVE_SCHEME=http
-SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}
-CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
+
+# If you use "Caddy with security" addon, you can place here X-Api-Key, which will be applied to requests to Remnawave Panel.
+#CADDY_AUTH_API_TOKEN=
+
 EOL
-colorized_echo green "Subscription .env saved in $SUB_ENV_FILE"
+colorized_echo green "Subscription environment saved in $SUB_ENV_FILE"
 
     # Create app-config.json for subscription page with app and instruction links
 colorized_echo blue "Generating static app-config.json file"
@@ -1046,7 +1063,7 @@ services:
     remnawave-db:
         image: postgres:17
         container_name: '${APP_NAME}-db'
-        hostname: remnawave-db
+        hostname: ${APP_NAME}-db
         restart: always
         env_file:
             - .env
@@ -1076,7 +1093,7 @@ services:
     remnawave:
         image: remnawave/backend:${BACKEND_IMAGE_TAG}
         container_name: '${APP_NAME}'
-        hostname: remnawave
+        hostname: ${APP_NAME}
         restart: always
         ports:
             - '127.0.0.1:${APP_PORT}:${APP_PORT}'
@@ -1100,17 +1117,17 @@ services:
     remnawave-subscription-page:
         image: remnawave/subscription-page:latest
         container_name: ${APP_NAME}-subscription-page
-        hostname: remnawave-subscription-page
+        hostname: ${APP_NAME}-subscription-page
         restart: always
         env_file:
             - .env.subscription
-        environment:
-            - REMNAWAVE_PLAIN_DOMAIN=remnawave:${APP_PORT}
-            - REQUEST_REMNAWAVE_SCHEME=http
-            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}
-            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
-            - META_TITLE=${META_TITLE}
-            - META_DESCRIPTION=${META_DESCRIPTION}
+# Picked up from file .env.subscription
+#        environment:
+#            - REMNAWAVE_PLAIN_DOMAIN=http://${APP_NAME}:${APP_PORT}
+#            - SUBSCRIPTION_PAGE_PORT=${SUB_PAGE_PORT}
+#            - CUSTOM_SUB_PREFIX=${CUSTOM_SUB_PREFIX}
+#            - META_TITLE=${META_TITLE}
+#            - META_DESCRIPTION=${META_DESCRIPTION}
         ports:
             - '127.0.0.1:${SUB_PAGE_PORT}:${SUB_PAGE_PORT}'
         networks:
@@ -1127,7 +1144,7 @@ services:
     remnawave-redis:
         image: valkey/valkey:8.0.2-alpine
         container_name: ${APP_NAME}-redis
-        hostname: remnawave-redis
+        hostname: ${APP_NAME}-redis
         restart: always
         networks:
             - ${APP_NAME}-network
