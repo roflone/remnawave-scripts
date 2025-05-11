@@ -412,8 +412,8 @@ install_remnawave() {
     TELEGRAM_BOT_TOKEN=""
     TELEGRAM_NOTIFY_USERS_CHAT_ID=""
     TELEGRAM_NOTIFY_NODES_CHAT_ID=""
-    NODES_NOTIFY_THREAD_ID=""
-    TELEGRAM_NOTIFY_USERS_CHAT_ID=""
+    TELEGRAM_NOTIFY_NODES_THREAD_ID=""
+    TELEGRAM_NOTIFY_USERS_THREAD_ID=""
 
     if [[ "$enable_telegram" =~ ^[Yy]$ ]]; then
         IS_TELEGRAM_NOTIFICATIONS_ENABLED=true
@@ -427,6 +427,36 @@ install_remnawave() {
         read -p "Enter your Nodes Notify Thread ID (optional): " -r TELEGRAM_NOTIFY_NODES_THREAD_ID
         if [[ -z "$TELEGRAM_NOTIFY_NODES_THREAD_ID" ]]; then
             TELEGRAM_NOTIFY_NODES_THREAD_ID="$TELEGRAM_NOTIFY_USERS_THREAD_ID"
+        fi
+    fi
+    
+    # Ask about Telegram OAuth authorization
+    read -p "Do you want to enable Telegram OAuth login for admin panel? (y/n): " -r enable_telegram_oauth
+    TELEGRAM_OAUTH_ENABLED=false
+    TELEGRAM_OAUTH_ADMIN_IDS=""
+    
+    if [[ "$enable_telegram_oauth" =~ ^[Yy]$ ]]; then
+        TELEGRAM_OAUTH_ENABLED=true
+
+        while true; do
+            read -p "Enter Telegram Admin IDs (comma-separated, digits only, e.g. 123456789,987654321): " -r input_ids
+            input_ids=$(echo "$input_ids" | tr -d ' ')
+            if [[ "$input_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+                TELEGRAM_OAUTH_ADMIN_IDS="[$input_ids]"
+                break
+            else
+                colorized_echo red "Invalid format! Please enter comma-separated numeric IDs only (no spaces)."
+            fi
+        done
+
+        if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
+            colorized_echo yellow "You have not provided a Telegram Bot Token yet. Enter Bot Token for OAuth to work (leave empty to skip): " -r TELEGRAM_BOT_TOKEN
+        fi
+
+        if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
+            colorized_echo red "Bot token is required for Telegram OAuth. OAuth will be disabled."
+            TELEGRAM_OAUTH_ENABLED=false
+            TELEGRAM_OAUTH_ADMIN_IDS=""
         fi
     fi
 
