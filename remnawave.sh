@@ -9,7 +9,7 @@ while [[ $# -gt 0 ]]; do
     key="$1"  
       
     case $key in  
-        install|install-script|uninstall-script|update|uninstall|up|down|restart|status|logs|edit|edit-env|console|backup)  
+        install|install-script|uninstall-script|update|uninstall|up|down|restart|status|logs|edit|edit-env|pm2-monitor|console|backup)  
             COMMAND="$1"  
             shift # past argument  
         ;;  
