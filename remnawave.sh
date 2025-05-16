@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=1.2
+# VERSION=1.3
 
 set -e
 
@@ -1681,7 +1681,7 @@ usage() {
     if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
         APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         METRICS_PORT=$(grep "METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
-        SUB_PAGE_PORT=$(grep -A 10 "remnawave-subscription-page:" "$COMPOSE_FILE" | grep "SUBSCRIPTION_PAGE_PORT=" | grep -o '[0-9]*' | head -1)
+        SUB_PAGE_PORT=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
         FRONT_END_DOMAIN=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
         SUB_PUBLIC_DOMAIN=$(grep "SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
 
