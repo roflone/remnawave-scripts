@@ -792,6 +792,38 @@ check_editor() {
     fi
 }
 
+xray-log-out() {
+        if ! is_remnanode_installed; then
+            colorized_echo red "RemnaNode not installed!"
+            exit 1
+        fi
+    
+     detect_compose
+ 
+        if ! is_remnanode_up; then
+            colorized_echo red "RemnaNode is not running. Start it first with 'remnanode up'"
+            exit 1
+        fi
+
+    docker exec -it $APP_NAME remnanode tail -n +1 -f /var/log/supervisor/xray.out.log
+}
+
+xray-log-err() {
+        if ! is_remnanode_installed; then
+            colorized_echo red "RemnaNode not installed!"
+            exit 1
+        fi
+    
+     detect_compose
+ 
+        if ! is_remnanode_up; then
+            colorized_echo red "RemnaNode is not running. Start it first with 'remnanode up'"
+            exit 1
+        fi
+
+    docker exec -it $APP_NAME remnanode tail -n +1 -f /var/log/supervisor/xray.err.log
+}
+
 edit_command() {
     detect_os
     check_editor
@@ -824,6 +856,10 @@ usage() {
     colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnanode script"
     colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
     colorized_echo yellow "  core-update         $(tput sgr0)– Update/Change Xray core"
+    echo
+    colorized_echo yellow "  xray-log-out        $(tput sgr0)– Access Xray Core logs - OUT"
+    colorized_echo yellow "  xray-log-err        $(tput sgr0)– Access Xray Core logs - ERR"
+    
     
     echo
     colorized_echo cyan "Options for install:"
@@ -861,5 +897,7 @@ case "$COMMAND" in
     install-script) install_remnanode_script ;;
     uninstall-script) uninstall_remnanode_script ;;
     edit) edit_command ;;
+    xray-log-out) xray-log-out ;;
+    xray-log-err) xray-log-err ;;
     *) usage ;;
 esac
