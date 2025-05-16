@@ -805,7 +805,7 @@ xray-log-out() {
             exit 1
         fi
 
-    docker exec -it $APP_NAME remnanode tail -n +1 -f /var/log/supervisor/xray.out.log
+    docker exec -it $APP_NAME tail -n +1 -f /var/log/supervisor/xray.out.log
 }
 
 xray-log-err() {
@@ -821,7 +821,7 @@ xray-log-err() {
             exit 1
         fi
 
-    docker exec -it $APP_NAME remnanode tail -n +1 -f /var/log/supervisor/xray.err.log
+    docker exec -it $APP_NAME tail -n +1 -f /var/log/supervisor/xray.err.log
 }
 
 edit_command() {
