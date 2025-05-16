@@ -62,6 +62,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 APP_CONFIG_FILE="$APP_DIR/app-config.json"
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/remnawave.sh"  # Update with actual URL
+SUB_ENV_FILE="$APP_DIR/.env.subscription"
 
 colorized_echo() {
     local color=$1
@@ -1681,7 +1682,14 @@ usage() {
     if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
         APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         METRICS_PORT=$(grep "METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
-        SUB_PAGE_PORT=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
+        if [ -f "$SUB_ENV_FILE" ]; then
+            SUB_PAGE_PORT=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
+            if [ -z "$SUB_PAGE_PORT" ]; then
+                SUB_PAGE_PORT="unknown (APP_PORT not found in $SUB_ENV_FILE)"
+            fi
+        else
+            SUB_PAGE_PORT="unknown (env file not found: $SUB_ENV_FILE)"
+        fi
         FRONT_END_DOMAIN=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
         SUB_PUBLIC_DOMAIN=$(grep "SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
 
