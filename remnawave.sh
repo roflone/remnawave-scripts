@@ -1627,6 +1627,22 @@ console_command() {
     docker exec -it $APP_NAME remnawave
 }
 
+pm2_monitor() {
+        if ! is_remnawave_installed; then
+            colorized_echo red "Remnawave not installed!"
+            exit 1
+        fi
+    
+     detect_compose
+ 
+        if ! is_remnawave_up; then
+            colorized_echo red "Remnawave is not running. Start it first with 'remnawave up'"
+            exit 1
+        fi
+
+    docker exec -it $APP_NAME pm2 monit
+}
+
 usage() {
     colorized_echo blue "================================"
     colorized_echo magenta "       $APP_NAME CLI Help"
@@ -1649,7 +1665,8 @@ usage() {
     colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml"
     colorized_echo yellow "  edit-env            $(tput sgr0)– Edit .env file"
     colorized_echo yellow "  backup              $(tput sgr0)– Make PostgreDB (data-only) backup dump file in /opt/remnawave/backup"    
-    colorized_echo yellow "  console             $(tput sgr0)– Access Remnawave CLI console"
+    colorized_echo yellow "  console             $(tput sgr0)– Access Remnawave Rescue CLI console"
+    colorized_echo yellow "  pm2-monitor         $(tput sgr0)– Access PM2 monitor"
 
     echo
     colorized_echo cyan "Options for install:"
@@ -1696,6 +1713,7 @@ case "$COMMAND" in
     edit) edit_command ;;
     edit-env) edit_env_command ;;
     console) console_command ;;
+    pm2-monitor) pm2_monitor;;
     backup) backup_remnawave ;;
     *) usage ;;
 esac
