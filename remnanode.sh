@@ -5,7 +5,7 @@ while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|uninstall-script|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|xray-log-out|xray-log-err|uninstall-script|edit)
             COMMAND="$1"
             shift # past argument
         ;;
