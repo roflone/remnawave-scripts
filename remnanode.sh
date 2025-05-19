@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Version: 1.2
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -323,6 +324,8 @@ EOL
     fi
 
     colorized_echo blue "Generating docker-compose.yml file"
+    
+    # Create docker-compose.yml with commented volumes section
     cat > "$COMPOSE_FILE" <<EOL
 services:
   remnanode:
@@ -335,11 +338,20 @@ services:
     restart: always
 EOL
 
-    # Add volumes only if Xray-core was installed
+    # Add volumes section (commented by default)
     if [ "$INSTALL_XRAY" == "true" ]; then
+        # If Xray is installed, add uncommented volumes section
         cat >> "$COMPOSE_FILE" <<EOL
     volumes:
       - $XRAY_FILE:/usr/local/bin/xray
+      # - $DATA_DIR:$DATA_DIR
+EOL
+    else
+        # If Xray is not installed, add commented volumes section
+        cat >> "$COMPOSE_FILE" <<EOL
+    # volumes:
+    #   - $XRAY_FILE:/usr/local/bin/xray
+    #   - $DATA_DIR:$DATA_DIR
 EOL
     fi
 
@@ -764,15 +776,39 @@ get_xray_core() {
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
 }
-
 update_core_command() {
     check_running_as_root
     get_xray_core
     colorized_echo blue "Updating docker-compose.yml with Xray-core volume..."
-    if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-        echo "    volumes:" >> "$COMPOSE_FILE"
-        echo "      - $XRAY_FILE:/usr/local/bin/xray" >> "$COMPOSE_FILE"
+    
+    # Check if the file exists
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        colorized_echo red "Docker Compose file not found at $COMPOSE_FILE"
+        exit 1
     fi
+    
+    if grep -q "^[[:space:]]*volumes:" "$COMPOSE_FILE"; then
+        if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
+            sed -i "/[[:space:]]*volumes:/a\\      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+            colorized_echo green "Added Xray volume to existing volumes section"
+        else
+            colorized_echo yellow "Xray volume already exists in volumes section"
+        fi
+    elif grep -q "^[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
+        sed -i 's/# volumes:/volumes:/g' "$COMPOSE_FILE"
+        
+        if grep -q "#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
+            sed -i "s|#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray|      - $XRAY_FILE:/usr/local/bin/xray|g" "$COMPOSE_FILE"
+            colorized_echo green "Uncommented volumes section and Xray volume line"
+        else
+            sed -i "/volumes:/a\\      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+            colorized_echo green "Uncommented volumes section and added Xray volume line"
+        fi
+    else
+        sed -i "/restart: always/a\\    volumes:\\n      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+        colorized_echo green "Added new volumes section with Xray volume"
+    fi
+    
     colorized_echo red "Restarting Remnanode..."
     $APP_NAME restart -n
     colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
