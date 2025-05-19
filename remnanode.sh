@@ -576,7 +576,45 @@ install_command() {
     install_remnanode
     up_remnanode
     follow_remnanode_logs
-    echo "Use your IP: $NODE_IP and port: $APP_PORT to setup your Remnawave Panel"
+
+    # final message
+    clear
+    colorized_echo blue "=================================="
+    colorized_echo green "  RemnaNode successfully installed!"
+    colorized_echo blue "=================================="
+    echo
+    colorized_echo cyan "🌐 Connection Information:"
+    colorized_echo magenta "  IP address: $NODE_IP"
+    colorized_echo magenta "  Port: $APP_PORT"
+    echo
+    colorized_echo cyan "📋 Next Steps:"
+    echo "  1. Use the IP and port above to set up your Remnawave Panel"
+    echo "  2. Configure log rotation: sudo $APP_NAME setup-logs"
+    
+    if [ "$INSTALL_XRAY" == "true" ]; then
+        echo "  3. Xray-core is already installed and ready to use"
+    else
+        echo "  3. Install Xray-core if needed: sudo $APP_NAME core-update"
+    fi
+    printf "  4. Secure your connection with UFW: \033[48;5;236m\033[38;5;214m sudo ufw allow from \033[38;5;227mPANEL_IP_ADDRESS\033[38;5;214m to any port %s \033[0m\n" "$APP_PORT"
+    printf "     Note: Make sure UFW is enabled with: \033[48;5;236m\033[38;5;214m sudo ufw enable \033[0m\n"
+    echo
+    colorized_echo cyan "🛠️ Useful Commands:"
+    echo "  sudo $APP_NAME status      - Check service status"
+    echo "  sudo $APP_NAME logs        - View container logs"
+    echo "  sudo $APP_NAME restart     - Restart the service"
+    echo "  sudo $APP_NAME xray-log-out - View Xray logs (if installed)"
+    echo
+    colorized_echo cyan "📁 File Locations:"
+    echo "  Configuration: $APP_DIR"
+    echo "  Data: $DATA_DIR"
+    echo
+    colorized_echo cyan "🔄 Updates:"
+    echo "  sudo $APP_NAME update      - Update RemnaNode to the latest version"
+    echo
+    colorized_echo blue "=================================="
+    echo "To view all available commands, type: sudo $APP_NAME"
+    colorized_echo blue "=================================="
 }
 
 uninstall_command() {
