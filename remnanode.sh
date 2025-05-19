@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Version: 1.2
+# Version: 1.3
 set -e
 
 while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|xray-log-out|xray-log-err|uninstall-script|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|xray-log-out|xray-log-err|setup-logs|uninstall-script|edit)
             COMMAND="$1"
             shift # past argument
         ;;
@@ -264,6 +264,126 @@ install_latest_xray_core() {
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
     colorized_echo green "Latest Xray-core (${latest_release}) installed at $XRAY_FILE"
+}
+
+setup_log_rotation() {
+    check_running_as_root
+    
+    # Check if the directory exists
+    if [ ! -d "$DATA_DIR" ]; then
+        colorized_echo blue "Creating directory $DATA_DIR"
+        mkdir -p "$DATA_DIR"
+    else
+        colorized_echo green "Directory $DATA_DIR already exists"
+    fi
+    
+    # Check if logrotate is installed
+    if ! command -v logrotate &> /dev/null; then
+        colorized_echo blue "Installing logrotate"
+        detect_os
+        install_package logrotate
+    else
+        colorized_echo green "Logrotate is already installed"
+    fi
+    
+    # Check if logrotate config already exists
+    LOGROTATE_CONFIG="/etc/logrotate.d/remnanode"
+    if [ -f "$LOGROTATE_CONFIG" ]; then
+        colorized_echo yellow "Logrotate configuration already exists at $LOGROTATE_CONFIG"
+        read -p "Do you want to overwrite it? (y/n): " -r overwrite
+        if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Keeping existing logrotate configuration"
+            return
+        fi
+    fi
+    
+    # Create logrotate configuration
+    colorized_echo blue "Creating logrotate configuration at $LOGROTATE_CONFIG"
+    cat > "$LOGROTATE_CONFIG" <<EOL
+$DATA_DIR/*.log {
+    size 50M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOL
+    
+    # Set proper permissions
+    chmod 644 "$LOGROTATE_CONFIG"
+    
+    # Test logrotate configuration
+    colorized_echo blue "Testing logrotate configuration"
+    if logrotate -d "$LOGROTATE_CONFIG" &> /dev/null; then
+        colorized_echo green "Logrotate configuration test successful"
+        
+        # Ask if user wants to run logrotate now
+        read -p "Do you want to run logrotate now? (y/n): " -r run_now
+        if [[ $run_now =~ ^[Yy]$ ]]; then
+            colorized_echo blue "Running logrotate"
+            if logrotate -vf "$LOGROTATE_CONFIG"; then
+                colorized_echo green "Logrotate executed successfully"
+            else
+                colorized_echo red "Error running logrotate"
+            fi
+        fi
+    else
+        colorized_echo red "Logrotate configuration test failed"
+        logrotate -d "$LOGROTATE_CONFIG"
+    fi
+    
+    # Update docker-compose.yml to mount logs directory
+    if [ -f "$COMPOSE_FILE" ]; then
+        colorized_echo blue "Updating docker-compose.yml to mount logs directory"
+        
+        # Check if volumes section exists and is uncommented
+        if grep -q "^[[:space:]]*volumes:" "$COMPOSE_FILE"; then
+            # Check if logs volume already exists
+            if ! grep -q "$DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"; then
+                # Add logs volume to existing volumes section
+                sed -i "/[[:space:]]*volumes:/a\\      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+                colorized_echo green "Added logs volume to existing volumes section"
+            else
+                colorized_echo yellow "Logs volume already exists in volumes section"
+            fi
+        # Check if volumes section exists but is commented
+        elif grep -q "^[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
+            # Uncomment the volumes section
+            sed -i 's/# volumes:/volumes:/g' "$COMPOSE_FILE"
+            
+            # Check if logs volume exists but is commented
+            if grep -q "#[[:space:]]*-[[:space:]]*$DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"; then
+                # Uncomment the logs volume line
+                sed -i "s|#[[:space:]]*-[[:space:]]*$DATA_DIR:$DATA_DIR|      - $DATA_DIR:$DATA_DIR|g" "$COMPOSE_FILE"
+                colorized_echo green "Uncommented volumes section and logs volume line"
+            else
+                # Add logs volume line
+                sed -i "/volumes:/a\\      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+                colorized_echo green "Uncommented volumes section and added logs volume line"
+            fi
+        else
+            # No volumes section found, add it with logs volume
+            sed -i "/restart: always/a\\    volumes:\\n      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+            colorized_echo green "Added new volumes section with logs volume"
+        fi
+        
+        # Ask if user wants to restart the service
+        if is_remnanode_up; then
+            read -p "Do you want to restart RemnaNode to apply changes? (y/n): " -r restart_now
+            if [[ $restart_now =~ ^[Yy]$ ]]; then
+                colorized_echo blue "Restarting RemnaNode"
+                $APP_NAME restart -n
+                colorized_echo green "RemnaNode restarted successfully"
+            else
+                colorized_echo yellow "Remember to restart RemnaNode to apply changes"
+            fi
+        fi
+    else
+        colorized_echo yellow "Docker Compose file not found. Log directory will be mounted on next installation."
+    fi
+    
+    colorized_echo green "Log rotation setup completed successfully"
 }
 
 install_remnanode() {
@@ -892,6 +1012,7 @@ usage() {
     colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnanode script"
     colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
     colorized_echo yellow "  core-update         $(tput sgr0)– Update/Change Xray core"
+    colorized_echo yellow "  setup-logs          $(tput sgr0)– Setup log rotation for RemnaNode logs"
     echo
     colorized_echo yellow "  xray-log-out        $(tput sgr0)– Access Xray Core logs - OUT"
     colorized_echo yellow "  xray-log-err        $(tput sgr0)– Access Xray Core logs - ERR"
@@ -933,6 +1054,7 @@ case "$COMMAND" in
     install-script) install_remnanode_script ;;
     uninstall-script) uninstall_remnanode_script ;;
     edit) edit_command ;;
+    setup-logs) setup_log_rotation ;;
     xray-log-out) xray-log-out ;;
     xray-log-err) xray-log-err ;;
     *) usage ;;
