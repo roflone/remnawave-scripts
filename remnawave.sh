@@ -1168,7 +1168,7 @@ services:
         networks:
             - ${APP_NAME}-network
         volumes:
-            - ${APP_DIR}/app-config.json:/app/dist/assets/app-config.json
+            - ${APP_DIR}/app-config.json:/opt/app/frontend/assets/app-config.json
         logging:
           driver: json-file
           options:
