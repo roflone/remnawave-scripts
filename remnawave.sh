@@ -296,6 +296,7 @@ install_remnawave() {
     DEFAULT_APP_PORT=3000
     DEFAULT_METRICS_PORT=3001
     DEFAULT_SUB_PAGE_PORT=3010
+    DEFAULT_DB_PORT=6767
 
     # Check if default ports are occupied and ask for alternatives if needed
     APP_PORT=$DEFAULT_APP_PORT
@@ -349,6 +350,23 @@ install_remnawave() {
         done
     fi
 
+    DB_PORT=$DEFAULT_DB_PORT
+    if is_port_occupied "$DB_PORT"; then
+        colorized_echo yellow "Default DB_PORT $DB_PORT is already in use."
+        while true; do
+            read -p "Enter an alternative DB_PORT: " -r DB_PORT
+            if [[ "$DB_PORT" -ge 1 && "$DB_PORT" -le 65535 ]]; then
+                if is_port_occupied "$DB_PORT"; then
+                    colorized_echo red "Port $DB_PORT is already in use. Please enter another port."
+                else
+                    break
+                fi
+            else
+                colorized_echo red "Invalid port. Please enter a port between 1 and 65535."
+            fi
+        done
+    fi
+
     # Ask for domain names
     while true; do
         read -p "Enter the panel domain (e.g., panel.example.com or * for any domain): " -r FRONT_END_DOMAIN
@@ -365,20 +383,20 @@ install_remnawave() {
     done
 
     # Ask for subscription page domain and prefix
-    while true; do  
-        read -p "Enter the subscription page domain (e.g., sub-link.example.com): " -r SUB_DOMAIN  
-        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")  
-        if [[ "$SUB_DOMAIN" == http* ]]; then  
-            colorized_echo red "Please enter only the domain without http:// or https://"  
-        elif [[ -z "$SUB_DOMAIN" ]]; then  
-            colorized_echo red "Domain cannot be empty"  
-        elif [[ "$SUB_DOMAIN" == */* ]]; then  
-            colorized_echo red "Invalid domain format. Domain should not contain slashes."  
-        elif ! validate_domain "$SUB_DOMAIN"; then  
-            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."  
-        else  
-            break  
-        fi  
+    while true; do
+        read -p "Enter the subscription page domain (e.g., sub-link.example.com): " -r SUB_DOMAIN
+        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")
+        if [[ "$SUB_DOMAIN" == http* ]]; then
+            colorized_echo red "Please enter only the domain without http:// or https://"
+        elif [[ -z "$SUB_DOMAIN" ]]; then
+            colorized_echo red "Domain cannot be empty"
+        elif [[ "$SUB_DOMAIN" == */* ]]; then
+            colorized_echo red "Invalid domain format. Domain should not contain slashes."
+        elif ! validate_domain "$SUB_DOMAIN"; then
+            colorized_echo red "Invalid domain format. Domain should not contain slashes or spaces."
+        else
+            break
+        fi
     done
 
     while true; do
@@ -430,15 +448,14 @@ install_remnawave() {
             TELEGRAM_NOTIFY_NODES_THREAD_ID="$TELEGRAM_NOTIFY_USERS_THREAD_ID"
         fi
     fi
-    
+
     # Ask about Telegram OAuth authorization
     read -p "Do you want to enable Telegram OAuth login for admin panel? (y/n): " -r enable_telegram_oauth
     TELEGRAM_OAUTH_ENABLED=false
     TELEGRAM_OAUTH_ADMIN_IDS=""
-    
+
     if [[ "$enable_telegram_oauth" =~ ^[Yy]$ ]]; then
         TELEGRAM_OAUTH_ENABLED=true
-
         while true; do
             read -p "Enter Telegram Admin IDs (comma-separated, digits only, e.g. 123456789,987654321): " -r input_ids
             input_ids=$(echo "$input_ids" | tr -d ' ')
