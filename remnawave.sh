@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=1.3
+# VERSION=1.4 (fixed container depends if using --name)
 
 set -e
 
@@ -1138,9 +1138,9 @@ services:
         networks:
             - ${APP_NAME}-network
         depends_on:
-          ${APP_NAME}-db:
+          remnawave-db:
             condition: service_healthy
-          ${APP_NAME}-redis:
+          remnawave-redis:
             condition: service_healthy
         logging:
           driver: json-file
