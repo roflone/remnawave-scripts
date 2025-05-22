@@ -84,7 +84,12 @@ fi
 if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
     cd "$RESTORE_PATH" || { echo -e "${RED}✖ Error: Could not change to $RESTORE_PATH${NC}"; exit 1; }
     if [ "$mode" = "2" ]; then
-        tar -xzf "$BACKUP_ARCHIVE" -C "$RESTORE_PATH" ./db_backup.sql --strip-components=1
+        if tar -tzf "$BACKUP_ARCHIVE" | grep -q "db_backup.sql.gz"; then
+            tar -xzf "$BACKUP_ARCHIVE" -C "$RESTORE_PATH" ./db_backup.sql.gz --strip-components=1
+            gunzip "$RESTORE_PATH/db_backup.sql.gz"
+        else
+            tar -xzf "$BACKUP_ARCHIVE" -C "$RESTORE_PATH" ./db_backup.sql --strip-components=1
+        fi
         if [ $? -ne 0 ]; then
             echo -e "${RED}✖ Error: Failed to extract db_backup.sql from archive${NC}"
             exit 1
@@ -111,22 +116,15 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
         prompt_input "${BLUE}Enter PostgreSQL database name${NC}" POSTGRES_DB "remnawave"
     fi
 
-    echo -e "${BLUE}Starting all containers to initialize databases...${NC}"
-    docker compose up -d
+    echo -e "${BLUE}Starting database container...${NC}"
+    docker compose up -d remnawave-db
     if [ $? -ne 0 ]; then
-        echo -e "${RED}✖ Error: Failed to start containers${NC}"
+        echo -e "${RED}✖ Error: Failed to start remnawave-db${NC}"
         exit 1
     fi
 
-    echo -e "${BLUE}Waiting for containers to fully start (20 seconds)...${NC}"
-    sleep 20
-
-    echo -e "${BLUE}Stopping all containers...${NC}"
-    docker compose down
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}✖ Error: Failed to stop containers${NC}"
-        exit 1
-    fi
+    echo -e "${BLUE}Waiting for database container to be ready (10 seconds)...${NC}"
+    sleep 10
 
     if [ -f "$RESTORE_PATH/db_backup.sql" ]; then
         echo -e "${YELLOW}⚠ Warning: This will replace all data in the database '$POSTGRES_DB' as user '$POSTGRES_USER'.${NC}"
@@ -137,20 +135,10 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
             exit 1
         fi
 
-        echo -e "${BLUE}Starting database container...${NC}"
-        docker compose up -d remnawave-db
+        echo -e "${BLUE}Dropping existing schema in database '$POSTGRES_DB'...${NC}"
+        docker exec remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
         if [ $? -ne 0 ]; then
-            echo -e "${RED}✖ Error: Failed to start remnawave-db${NC}"
-            exit 1
-        fi
-
-        echo -e "${BLUE}Waiting for database container to be ready (10 seconds)...${NC}"
-        sleep 10
-
-        echo -e "${BLUE}Clearing existing data from database '$POSTGRES_DB'...${NC}"
-        docker exec remnawave-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE;'; END LOOP; END \$\$;"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}✖ Error: Failed to clear database tables${NC}"
+            echo -e "${RED}✖ Error: Failed to drop schema${NC}"
             docker compose logs remnawave-db
             exit 1
         fi
@@ -167,14 +155,14 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
         echo -e "${BLUE}Stopping database container...${NC}"
         docker compose down
         if [ $? -ne 0 ]; then
-            echo -e "${RED}✖ Error: Failed to stop remnawave-db${NC}"
+            echo -e "${RED}✖ Error: Failed to stop containers${NC}"
             exit 1
         fi
     else
         echo -e "${YELLOW}⚠ No db_backup.sql found, skipping database restore${NC}"
     fi
 
-    echo -e "${BLUE}Starting all containers...${NC}"
+    echo -e "${BLUE}Starting all containers (migrations will be applied automatically if needed)...${NC}"
     docker compose up -d
     if [ $? -ne 0 ]; then
         echo -e "${RED}✖ Error: Failed to start containers${NC}"
