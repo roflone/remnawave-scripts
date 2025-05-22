@@ -118,7 +118,7 @@ POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
 POSTGRES_DB="$POSTGRES_DB"
 mkdir -p "\$BACKUP_DIR"
 export PGPASSWORD="\$POSTGRES_PASSWORD"
-docker exec "\$DB_CONTAINER" pg_dump --data-only -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
+docker exec "\$DB_CONTAINER" pg_dump -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" > "\$BACKUP_DIR/db_backup.sql"
 if [ \$? -ne 0 ]; then
     echo "Error: Failed to create database backup"
     unset PGPASSWORD
