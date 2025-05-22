@@ -110,11 +110,13 @@ if [ -f "$RESTORE_PATH/docker-compose.yml" ]; then
         echo -e "${YELLOW}⚠ No .env file found in $RESTORE_PATH${NC}"
     fi
 
-    if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_DB" ]; then
-        echo -e "${YELLOW}⚠ Database credentials not found in .env or environment.${NC}"
-        prompt_input "${BLUE}Enter PostgreSQL username${NC}" POSTGRES_USER "postgres"
-        prompt_input "${BLUE}Enter PostgreSQL database name${NC}" POSTGRES_DB "remnawave"
+    if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_DB" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+        echo -e "${YELLOW}⚠ Database credentials not fully found in .env or environment. Please provide them.${NC}"
+        prompt_input "${BLUE}Enter PostgreSQL username${NC}" POSTGRES_USER "${POSTGRES_USER:-postgres}"
+        prompt_input "${BLUE}Enter PostgreSQL database name${NC}" POSTGRES_DB "${POSTGRES_DB:-remnawave}"
+        prompt_input "${BLUE}Enter PostgreSQL password${NC}" POSTGRES_PASSWORD ""
     fi
+    export PGPASSWORD="$POSTGRES_PASSWORD"
 
     echo -e "${BLUE}Starting database container...${NC}"
     docker compose up -d remnawave-db
