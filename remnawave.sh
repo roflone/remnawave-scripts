@@ -438,7 +438,7 @@ install_remnawave() {
         IS_TELEGRAM_NOTIFICATIONS_ENABLED=true
         read -p "Enter your Telegram Bot Token: " -r TELEGRAM_BOT_TOKEN
         read -p "Enter your Users Notify Chat ID: " -r TELEGRAM_NOTIFY_USERS_CHAT_ID
-        read -p "Enter your Nodes Notify Chat ID (default: same as Admin ID): " -r TELEGRAM_NOTIFY_NODES_CHAT_ID
+        read -p "Enter your Nodes Notify Chat ID (default: same as Users Notify Chat ID): " -r TELEGRAM_NOTIFY_NODES_CHAT_ID
         if [[ -z "$TELEGRAM_NOTIFY_NODES_CHAT_ID" ]]; then
             TELEGRAM_NOTIFY_NODES_CHAT_ID="$TELEGRAM_NOTIFY_USERS_CHAT_ID"
         fi
