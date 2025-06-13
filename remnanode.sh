@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 2.1
+# Version: 2.2
 set -e
-SCRIPT_VERSION="2.1"
+SCRIPT_VERSION="2.2"
 while [[ $# -gt 0 ]]; do
     key="$1"
     
@@ -663,42 +663,50 @@ install_command() {
 
     # final message
     clear
-    colorized_echo blue "=================================="
-    colorized_echo green "  RemnaNode successfully installed!"
-    colorized_echo blue "=================================="
     echo
-    colorized_echo cyan "🌐 Connection Information:"
-    colorized_echo magenta "  IP address: $NODE_IP"
-    colorized_echo magenta "  Port: $APP_PORT"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[1;38;5;82m🎉 RemnaNode Successfully Installed!\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
-    colorized_echo cyan "📋 Next Steps:"
-    echo "  1. Use the IP and port above to set up your Remnawave Panel"
-    echo "  2. Configure log rotation: sudo $APP_NAME setup-logs"
+    echo -e "\033[1;38;5;33m🌐 Connection Information:\033[0m"
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "IP Address:" "$NODE_IP"
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Port:" "$APP_PORT"
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$APP_PORT"
+    echo
+    echo -e "\033[1;38;5;214m📋 Next Steps:\033[0m"
+    echo -e "   \033[38;5;220m1.\033[0m Use the IP and port above to set up your Remnawave Panel"
+    echo -e "   \033[38;5;220m2.\033[0m Configure log rotation: \033[38;5;226msudo $APP_NAME setup-logs\033[0m"
     
     if [ "$INSTALL_XRAY" == "true" ]; then
-        echo "  3. Xray-core is already installed and ready to use"
+        echo -e "   \033[38;5;220m3.\033[0m \033[38;5;82mXray-core is already installed and ready! ✅\033[0m"
     else
-        echo "  3. Install Xray-core if needed: sudo $APP_NAME core-update"
+        echo -e "   \033[38;5;220m3.\033[0m Install Xray-core: \033[38;5;226msudo $APP_NAME core-update\033[0m"
     fi
-    printf "  4. Secure your connection with UFW: \033[48;5;236m\033[38;5;214m sudo ufw allow from \033[38;5;227mPANEL_IP_ADDRESS\033[38;5;214m to any port %s \033[0m\n" "$APP_PORT"
-    printf "     Note: Make sure UFW is enabled with: \033[48;5;236m\033[38;5;214m sudo ufw enable \033[0m\n"
+    
+    echo -e "   \033[38;5;220m4.\033[0m Secure with UFW: \033[38;5;226msudo ufw allow from \033[38;5;255mPANEL_IP\033[38;5;226m to any port $APP_PORT\033[0m"
+    echo -e "      \033[38;5;244m(Enable UFW: \033[38;5;226msudo ufw enable\033[38;5;244m)\033[0m"
     echo
-    colorized_echo cyan "🛠️ Useful Commands:"
-    echo "  sudo $APP_NAME status      - Check service status"
-    echo "  sudo $APP_NAME logs        - View container logs"
-    echo "  sudo $APP_NAME restart     - Restart the service"
-    echo "  sudo $APP_NAME xray_log_out - View Xray logs (if installed)"
+    echo -e "\033[1;38;5;165m🛠️  Quick Commands:\033[0m"
+    printf "   \033[38;5;171m%-15s\033[0m %s\n" "status" "📊 Check service status"
+    printf "   \033[38;5;171m%-15s\033[0m %s\n" "logs" "📋 View container logs"
+    printf "   \033[38;5;171m%-15s\033[0m %s\n" "restart" "🔄 Restart the service"
+    if [ "$INSTALL_XRAY" == "true" ]; then
+        printf "   \033[38;5;171m%-15s\033[0m %s\n" "xray_log_out" "📤 View Xray logs"
+    fi
     echo
-    colorized_echo cyan "📁 File Locations:"
-    echo "  Configuration: $APP_DIR"
-    echo "  Data: $DATA_DIR"
+echo -e "\033[1;38;5;201m📁 File Locations:\033[0m"
+    printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Configuration:" "$APP_DIR"
+    printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Data:" "$DATA_DIR"
+    if [ "$INSTALL_XRAY" == "true" ]; then
+        printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Binary:" "$XRAY_FILE"
+    fi
     echo
-    colorized_echo cyan "🔄 Updates:"
-    echo "  sudo $APP_NAME update      - Update RemnaNode to the latest version"
+    
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[38;5;244m💡 For all commands: \033[38;5;226msudo $APP_NAME\033[0m"
+    echo -e "\033[38;5;244m📚 Project: \033[38;5;39mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
-    colorized_echo blue "=================================="
-    echo "To view all available commands, type: sudo $APP_NAME"
-    colorized_echo blue "=================================="
 }
 
 uninstall_command() {
@@ -818,22 +826,38 @@ restart_command() {
 }
 
 status_command() {
+    echo -e "\033[1;38;5;33m📊 RemnaNode Status Check:\033[0m"
+    echo
+    
     if ! is_remnanode_installed; then
-        echo -n "Status: "
-        colorized_echo red "Not Installed"
+        printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;196m❌ Not Installed\033[0m\n" "Status:"
+        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME install\033[38;5;244m' to install\033[0m"
         exit 1
     fi
     
     detect_compose
     
     if ! is_remnanode_up; then
-        echo -n "Status: "
-        colorized_echo blue "Down"
+        printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;214m⏹️  Down\033[0m\n" "Status:"
+        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME up\033[38;5;244m' to start\033[0m"
         exit 1
     fi
     
-    echo -n "Status: "
-    colorized_echo green "Up"
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;82m✅ Running\033[0m\n" "Status:"
+    
+    # Дополнительная информация
+    if [ -f "$ENV_FILE" ]; then
+        local app_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        if [ -n "$app_port" ]; then
+            printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Port:" "$app_port"
+        fi
+    fi
+    
+    # Проверяем Xray
+    local xray_version=$(get_current_xray_core_version)
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Core:" "$xray_version"
+    
+    echo
 }
 
 logs_command() {
@@ -876,21 +900,33 @@ logs_command() {
 update_command() {
     check_running_as_root
     if ! is_remnanode_installed; then
-        colorized_echo red "Remnanode not installed!"
+        echo -e "\033[1;38;5;196m❌ RemnaNode not installed!\033[0m"
+        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME install\033[38;5;244m' first\033[0m"
         exit 1
     fi
     
     detect_compose
     
-    update_remnanode_script
-    colorized_echo blue "Pulling latest version"
-    update_remnanode
+    echo -e "\033[1;38;5;51m🔄 Starting RemnaNode Update...\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
     
-    colorized_echo blue "Restarting Remnanode services"
+    echo -e "\033[1;38;5;39m📝 Step 1:\033[0m Updating script..."
+    update_remnanode_script
+    echo -e "\033[1;38;5;82m✅ Script updated\033[0m"
+    
+    echo -e "\033[1;38;5;39m📝 Step 2:\033[0m Pulling latest version..."
+    update_remnanode
+    echo -e "\033[1;38;5;82m✅ Image updated\033[0m"
+    
+    echo -e "\033[1;38;5;39m📝 Step 3:\033[0m Restarting services..."
     down_remnanode
     up_remnanode
+    echo -e "\033[1;38;5;82m✅ Services restarted\033[0m"
     
-    colorized_echo blue "Remnanode updated successfully"
+    echo
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[1;38;5;82m🎉 RemnaNode updated successfully!\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
 }
 
 identify_the_operating_system_and_architecture() {
@@ -946,58 +982,116 @@ get_xray_core() {
     
     print_menu() {
         clear
-        echo -e "\033[1;32m==============================\033[0m"
-        echo -e "\033[1;32m      Xray-core Installer     \033[0m"
-        echo -e "\033[1;32m==============================\033[0m"
+        
+        # Заголовок в стиле usage()
+        echo -e "\033[1;38;5;51m⚡ Xray-core Installer\033[0m \033[38;5;249mVersion Manager\033[0m \033[1;38;5;196mv$SCRIPT_VERSION\033[0m"
+        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo
+        
+        # Текущая версия в красивом стиле
         current_version=$(get_current_xray_core_version)
-        echo -e "\033[1;33m>>>> Current Xray-core version: \033[1;1m$current_version\033[0m"
-        echo -e "\033[1;32m==============================\033[0m"
-        echo -e "\033[1;33mAvailable Xray-core versions:\033[0m"
+        echo -e "\033[1;38;5;33m🌐 Current Status:\033[0m"
+        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Version:" "$current_version"
+        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Architecture:" "$ARCH"
+        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+        echo
+        
+        # Доступные версии
+        echo -e "\033[1;38;5;82m🚀 Available Versions:\033[0m"
         for ((i=0; i<${#versions[@]}; i++)); do
-            echo -e "\033[1;34m$((i + 1)):\033[0m ${versions[i]}"
+            local version_num=$((i + 1))
+            local version_name="${versions[i]}"
+            
+            # Выделяем latest версию особым цветом
+            if [ $i -eq 0 ]; then
+                printf "   \033[38;5;46m%-3s\033[0m \033[38;5;255m%s\033[0m \033[1;38;5;226m(Latest)\033[0m\n" "$version_num:" "$version_name"
+            else
+                printf "   \033[38;5;46m%-3s\033[0m \033[38;5;255m%s\033[0m\n" "$version_num:" "$version_name"
+            fi
         done
-        echo -e "\033[1;32m==============================\033[0m"
-        echo -e "\033[1;35mM:\033[0m Enter a version manually"
-        echo -e "\033[1;31mQ:\033[0m Quit"
-        echo -e "\033[1;32m==============================\033[0m"
+        echo
+        
+        # Опции в стиле usage()
+        echo -e "\033[1;38;5;165m🔧 Options:\033[0m"
+        printf "   \033[38;5;171m%-3s\033[0m %s\n" "M:" "📝 Enter version manually"
+        printf "   \033[38;5;171m%-3s\033[0m %s\n" "Q:" "❌ Quit installer"
+        echo
+        
+        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo -e "\033[1;38;5;39m📖 Usage:\033[0m"
+        echo -e "   Choose a number \033[38;5;226m(1-${#versions[@]})\033[0m, \033[38;5;171mM\033[0m for manual, or \033[38;5;171mQ\033[0m to quit"
+        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
     }
     
+    # Получаем доступные версии
+    echo -e "\033[1;38;5;51m🔍 Fetching available Xray-core versions...\033[0m"
     latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5")
     versions=($(echo "$latest_releases" | grep -oP '"tag_name": "\K(.*?)(?=")'))
     
+    if [ ${#versions[@]} -eq 0 ]; then
+        echo -e "\033[1;38;5;196m❌ Failed to fetch versions. Please check your internet connection.\033[0m"
+        exit 1
+    fi
+    
     while true; do
         print_menu
-        read -p "Choose a version to install (1-${#versions[@]}), or press M to enter manually, Q to quit: " choice
+        echo -n -e "\033[1;38;5;39m> \033[0m"
+        read choice
         
         if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#versions[@]}" ]; then
             choice=$((choice - 1))
             selected_version=${versions[choice]}
+            echo
+            echo -e "\033[1;38;5;82m✅ Selected version: \033[1;38;5;226m$selected_version\033[0m"
             break
         elif [ "$choice" == "M" ] || [ "$choice" == "m" ]; then
+            echo
+            echo -e "\033[1;38;5;39m📝 Manual Version Entry:\033[0m"
             while true; do
-                read -p "Enter the version manually (e.g., v1.2.3): " custom_version
+                echo -n -e "\033[38;5;244mEnter version (e.g., v1.8.4): \033[0m"
+                read custom_version
+                
+                if [ -z "$custom_version" ]; then
+                    echo -e "\033[1;38;5;196m❌ Version cannot be empty. Please try again.\033[0m"
+                    continue
+                fi
+                
+                echo -e "\033[1;38;5;51m🔍 Validating version $custom_version...\033[0m"
                 if [ "$(validate_version "$custom_version")" == "valid" ]; then
                     selected_version="$custom_version"
+                    echo -e "\033[1;38;5;82m✅ Version $custom_version is valid!\033[0m"
                     break 2
                 else
-                    echo -e "\033[1;31mInvalid version or version does not exist. Please try again.\033[0m"
+                    echo -e "\033[1;38;5;196m❌ Version $custom_version not found. Please try again.\033[0m"
+                    echo -e "\033[38;5;244m   Hint: Check https://github.com/XTLS/Xray-core/releases\033[0m"
+                    echo
                 fi
             done
         elif [ "$choice" == "Q" ] || [ "$choice" == "q" ]; then
-            echo -e "\033[1;31mExiting.\033[0m"
+            echo
+            echo -e "\033[1;38;5;196m❌ Installation cancelled by user.\033[0m"
             exit 0
         else
-            echo -e "\033[1;31mInvalid choice. Please try again.\033[0m"
-            sleep 2
+            echo
+            echo -e "\033[1;38;5;196m❌ Invalid choice: '$choice'\033[0m"
+            echo -e "\033[38;5;244m   Please enter a number between 1-${#versions[@]}, M for manual, or Q to quit.\033[0m"
+            echo
+            echo -n -e "\033[38;5;244mPress Enter to continue...\033[0m"
+            read
         fi
     done
     
-    echo -e "\033[1;32mSelected version $selected_version for installation.\033[0m"
+    echo
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;38;5;82m🚀 Starting Installation\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
     
+    # Проверка и установка unzip
     if ! dpkg -s unzip >/dev/null 2>&1; then
-        echo -e "\033[1;33mInstalling required packages...\033[0m"
+        echo -e "\033[1;38;5;51m📦 Installing required packages...\033[0m"
         detect_os
         install_package unzip
+        echo -e "\033[1;38;5;82m✅ Packages installed successfully\033[0m"
     fi
     
     mkdir -p "$DATA_DIR"
@@ -1006,22 +1100,57 @@ get_xray_core() {
     xray_filename="Xray-linux-$ARCH.zip"
     xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${selected_version}/${xray_filename}"
     
-    echo -e "\033[1;33mDownloading Xray-core version ${selected_version}...\033[0m"
-    wget "${xray_download_url}" -q
-    if [ $? -ne 0 ]; then
-        echo -e "\033[1;31mError: Failed to download Xray-core. Please check your internet connection or the version.\033[0m"
+    # Скачивание с прогрессом
+    echo -e "\033[1;38;5;51m📥 Downloading Xray-core $selected_version...\033[0m"
+    echo -e "\033[38;5;244m   URL: $xray_download_url\033[0m"
+    
+    if wget "${xray_download_url}" -q --show-progress; then
+        echo -e "\033[1;38;5;82m✅ Download completed successfully\033[0m"
+    else
+        echo -e "\033[1;38;5;196m❌ Download failed!\033[0m"
+        echo -e "\033[38;5;244m   Please check your internet connection or try a different version.\033[0m"
         exit 1
     fi
     
-    echo -e "\033[1;33mExtracting Xray-core...\033[0m"
-    unzip -o "${xray_filename}" -d "$DATA_DIR" >/dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo -e "\033[1;31mError: Failed to extract Xray-core. Please check the downloaded file.\033[0m"
+    # Извлечение
+    echo -e "\033[1;38;5;51m📦 Extracting Xray-core...\033[0m"
+    if unzip -o "${xray_filename}" -d "$DATA_DIR" >/dev/null 2>&1; then
+        echo -e "\033[1;38;5;82m✅ Extraction completed successfully\033[0m"
+    else
+        echo -e "\033[1;38;5;196m❌ Extraction failed!\033[0m"
+        echo -e "\033[38;5;244m   The downloaded file may be corrupted.\033[0m"
         exit 1
     fi
     
+    # Очистка и настройка прав
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
+    
+    # Финальное сообщение
+    echo
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;38;5;82m🎉 Installation Complete!\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    
+    # Информация об установке
+    echo -e "\033[1;38;5;33m📋 Installation Details:\033[0m"
+    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Version:" "$selected_version"
+    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Architecture:" "$ARCH"
+    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "File Size:" "$(du -h "$XRAY_FILE" | cut -f1)"
+    echo
+    
+    # Проверка версии
+    echo -e "\033[1;38;5;51m🔍 Verifying installation...\033[0m"
+    if installed_version=$("$XRAY_FILE" -version 2>/dev/null | head -n1 | awk '{print $2}'); then
+        echo -e "\033[1;38;5;82m✅ Xray-core is working correctly\033[0m"
+        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Running Version:" "$installed_version"
+    else
+        echo -e "\033[1;38;5;196m⚠️  Installation completed but verification failed\033[0m"
+        echo -e "\033[38;5;244m   The binary may not be compatible with your system\033[0m"
+    fi
+    
+
 }
 
 
