@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.3
+# Version: 1.5.4
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -964,6 +964,11 @@ update_core_command() {
         exit 1
     fi
 
+    # Проверка смешанных отступов
+    if echo "$indent" | grep -q $'\t' && echo "$indent" | grep -q '[[:space:]]'; then
+        colorized_echo yellow "Warning: Mixed tabs and spaces detected in indent. Using detected indent style."
+    fi
+
     # Отладка: вывод типа отступа
     if echo "$indent" | grep -q $'\t'; then
         colorized_echo blue "Detected indent: tabs (length: $indent_length)"
@@ -999,19 +1004,27 @@ update_core_command() {
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
         awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v indent_length="$indent_length" '
-        BEGIN { in_remnanode = 0; remnanode_indent = indent_length }
+        BEGIN { in_remnanode = 0 }
         /^[[:space:]]*remnanode:/ { in_remnanode = 1; print; next }
         in_remnanode && /^[[:space:]]*$/ { print; next } # Сохраняем пустые строки
         in_remnanode {
             current_indent = length(gensub(/^[[:space:]]+/, "", 1, $0)) > 0 ? length(gensub(/^([[:space:]]*).*/, "\\1", 1, $0)) : 0
-            if (current_indent <= remnanode_indent && $0 !~ /^[[:space:]]*$/) {
+            # Выходим из remnanode, если отступ меньше или равен indent_length и строка не пустая
+            if (current_indent < indent_length && $0 !~ /^[[:space:]]*$/) {
                 print volumes_section
                 in_remnanode = 0
             }
         }
         { print }
-        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не вышли из секции
+        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не вышли
         ' "$COMPOSE_FILE" > "$temp_file"
+
+        # Отладка: вывод содержимого временного файла
+        colorized_echo yellow "Debug: Contents of modified docker-compose.yml:"
+        cat "$temp_file" | while IFS= read -r line; do
+            colorized_echo yellow "$line"
+        done
+
         mv "$temp_file" "$COMPOSE_FILE"
         colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
     fi
