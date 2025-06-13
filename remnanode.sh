@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Version: 1.5.8
+# Version: 2.1
 set -e
-
+SCRIPT_VERSION="2.1"
 while [[ $# -gt 0 ]]; do
     key="$1"
     
     case $key in
-        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|xray-log-out|xray-log-err|setup-logs|uninstall-script|edit)
+        install|update|uninstall|up|down|restart|status|logs|core-update|install-script|xray_log_out|xray_log_err|setup-logs|uninstall-script|edit)
             COMMAND="$1"
             shift # past argument
         ;;
@@ -81,6 +81,32 @@ check_running_as_root() {
         colorized_echo red "This command must be run as root."
         exit 1
     fi
+}
+
+
+check_system_requirements() {
+    local errors=0
+    
+    # Проверяем свободное место (минимум 1GB)
+    local available_space=$(df / | awk 'NR==2 {print $4}')
+    if [ "$available_space" -lt 1048576 ]; then  # 1GB в KB
+        colorized_echo red "Error: Insufficient disk space. At least 1GB required."
+        errors=$((errors + 1))
+    fi
+    
+    # Проверяем RAM (минимум 512MB)
+    local available_ram=$(free -m | awk 'NR==2{print $7}')
+    if [ "$available_ram" -lt 256 ]; then
+        colorized_echo yellow "Warning: Low available RAM (${available_ram}MB). Performance may be affected."
+    fi
+    
+    # Проверяем архитектуру
+    if ! identify_the_operating_system_and_architecture 2>/dev/null; then
+        colorized_echo red "Error: Unsupported system architecture."
+        errors=$((errors + 1))
+    fi
+    
+    return $errors
 }
 
 detect_os() {
@@ -197,28 +223,47 @@ install_remnanode_script() {
     colorized_echo green "Remnanode script installed successfully at $TARGET_PATH"
 }
 
-get_occupied_ports() {
-    if command -v ss &>/dev/null; then
-        OCCUPIED_PORTS=$(ss -tuln | awk '{print $5}' | grep -Eo '[0-9]+$' | sort | uniq)
-    elif command -v netstat &>/dev/null; then
-        OCCUPIED_PORTS=$(netstat -tuln | awk '{print $4}' | grep -Eo '[0-9]+$' | sort | uniq)
-    else
-        colorized_echo yellow "Neither ss nor netstat found. Attempting to install net-tools."
-        detect_os
-        if [[ "$OS" == "Amazon"* ]]; then
-            yum install -y net-tools >/dev/null 2>&1
-        else
-            install_package net-tools
-        fi
-        if command -v netstat &>/dev/null; then
-            OCCUPIED_PORTS=$(netstat -tuln | awk '{print $4}' | grep -Eo '[0-9]+$' | sort | uniq)
-        else
-            colorized_echo red "Failed to install net-tools. Please install it manually."
-            exit 1
-        fi
+# Улучшенная функция проверки доступности портов
+validate_port() {
+    local port="$1"
+    
+    # Проверяем диапазон портов
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
     fi
+    
+    # Проверяем, что порт не зарезервирован системой
+    if [ "$port" -lt 1024 ] && [ "$(id -u)" != "0" ]; then
+        colorized_echo yellow "Warning: Port $port requires root privileges"
+    fi
+    
+    return 0
 }
 
+# Улучшенная функция получения занятых портов с fallback
+get_occupied_ports() {
+    local ports=""
+    
+    if command -v ss &>/dev/null; then
+        ports=$(ss -tuln 2>/dev/null | awk 'NR>1 {print $5}' | grep -Eo '[0-9]+$' | sort -n | uniq)
+    elif command -v netstat &>/dev/null; then
+        ports=$(netstat -tuln 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eo '[0-9]+$' | sort -n | uniq)
+    else
+        colorized_echo yellow "Neither ss nor netstat found. Installing net-tools..."
+        detect_os
+        if install_package net-tools; then
+            if command -v netstat &>/dev/null; then
+                ports=$(netstat -tuln 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eo '[0-9]+$' | sort -n | uniq)
+            fi
+        else
+            colorized_echo yellow "Could not install net-tools. Skipping port conflict check."
+            return 1
+        fi
+    fi
+    
+    OCCUPIED_PORTS="$ports"
+    return 0
+}
 is_port_occupied() {
     if echo "$OCCUPIED_PORTS" | grep -q -w "$1"; then
         return 0
@@ -309,8 +354,7 @@ $DATA_DIR/*.log {
     copytruncate
 }
 EOL
-    
-    # Set proper permissions
+
     chmod 644 "$LOGROTATE_CONFIG"
     
     # Test logrotate configuration
@@ -337,47 +381,80 @@ EOL
     if [ -f "$COMPOSE_FILE" ]; then
         colorized_echo blue "Updating docker-compose.yml to mount logs directory"
         
-        # Check if volumes section exists and is uncommented
-        if grep -q "^[[:space:]]*volumes:" "$COMPOSE_FILE"; then
-            # Check if logs volume already exists
+
+        colorized_echo blue "Creating backup of docker-compose.yml..."
+        backup_file=$(create_backup "$COMPOSE_FILE")
+        if [ $? -eq 0 ]; then
+            colorized_echo green "Backup created: $backup_file"
+        else
+            colorized_echo red "Failed to create backup"
+            return
+        fi
+        
+
+        local service_indent=$(get_service_property_indentation "$COMPOSE_FILE")
+        local indent_type=""
+        if [[ "$service_indent" =~ $'\t' ]]; then
+            indent_type=$'\t'
+        else
+            indent_type="  "
+        fi
+        local volume_item_indent="${service_indent}${indent_type}"
+        
+
+        local escaped_service_indent=$(escape_for_sed "$service_indent")
+        local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
+        
+
+        if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
             if ! grep -q "$DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"; then
-                # Add logs volume to existing volumes section
-                sed -i "/[[:space:]]*volumes:/a\\      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+                sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
                 colorized_echo green "Added logs volume to existing volumes section"
             else
                 colorized_echo yellow "Logs volume already exists in volumes section"
             fi
-        # Check if volumes section exists but is commented
-        elif grep -q "^[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
-            # Uncomment the volumes section
-            sed -i 's/# volumes:/volumes:/g' "$COMPOSE_FILE"
+        elif grep -q "^${escaped_service_indent}# volumes:" "$COMPOSE_FILE"; then
+            sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$COMPOSE_FILE"
             
-            # Check if logs volume exists but is commented
-            if grep -q "#[[:space:]]*-[[:space:]]*$DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"; then
-                # Uncomment the logs volume line
-                sed -i "s|#[[:space:]]*-[[:space:]]*$DATA_DIR:$DATA_DIR|      - $DATA_DIR:$DATA_DIR|g" "$COMPOSE_FILE"
+            if grep -q "^${escaped_volume_item_indent}#.*$DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"; then
+                sed -i "s|^${escaped_volume_item_indent}#.*$DATA_DIR:$DATA_DIR|${volume_item_indent}- $DATA_DIR:$DATA_DIR|g" "$COMPOSE_FILE"
                 colorized_echo green "Uncommented volumes section and logs volume line"
             else
-                # Add logs volume line
-                sed -i "/volumes:/a\\      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+                sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
                 colorized_echo green "Uncommented volumes section and added logs volume line"
             fi
         else
-            # No volumes section found, add it with logs volume
-            sed -i "/restart: always/a\\    volumes:\\n      - $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
+            sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_item_indent}- $DATA_DIR:$DATA_DIR" "$COMPOSE_FILE"
             colorized_echo green "Added new volumes section with logs volume"
         fi
         
-        # Ask if user wants to restart the service
-        if is_remnanode_up; then
-            read -p "Do you want to restart RemnaNode to apply changes? (y/n): " -r restart_now
-            if [[ $restart_now =~ ^[Yy]$ ]]; then
-                colorized_echo blue "Restarting RemnaNode"
-                $APP_NAME restart -n
-                colorized_echo green "RemnaNode restarted successfully"
-            else
-                colorized_echo yellow "Remember to restart RemnaNode to apply changes"
+
+        colorized_echo blue "Validating docker-compose.yml..."
+        if validate_compose_file "$COMPOSE_FILE"; then
+            colorized_echo green "Docker-compose.yml validation successful"
+            cleanup_old_backups "$COMPOSE_FILE"
+
+            if is_remnanode_up; then
+                read -p "Do you want to restart RemnaNode to apply changes? (y/n): " -r restart_now
+                if [[ $restart_now =~ ^[Yy]$ ]]; then
+                    colorized_echo blue "Restarting RemnaNode"
+                    if $APP_NAME restart -n; then
+                        colorized_echo green "RemnaNode restarted successfully"
+                    else
+                        colorized_echo red "Failed to restart RemnaNode"
+                    fi
+                else
+                    colorized_echo yellow "Remember to restart RemnaNode to apply changes"
+                fi
             fi
+        else
+            colorized_echo red "Docker-compose.yml validation failed! Restoring backup..."
+            if restore_backup "$backup_file" "$COMPOSE_FILE"; then
+                colorized_echo green "Backup restored successfully"
+            else
+                colorized_echo red "Failed to restore backup!"
+            fi
+            return
         fi
     else
         colorized_echo yellow "Docker Compose file not found. Log directory will be mounted on next installation."
@@ -387,7 +464,16 @@ EOL
 }
 
 install_remnanode() {
+
+    if ! check_system_requirements; then
+        colorized_echo red "System requirements check failed. Installation aborted."
+        exit 1
+    fi
+
+    colorized_echo blue "Creating directory $APP_DIR"
     mkdir -p "$APP_DIR"
+
+    colorized_echo blue "Creating directory $DATA_DIR"
     mkdir -p "$DATA_DIR"
 
     # Prompt the user to input the SSL certificate
@@ -401,16 +487,14 @@ install_remnanode() {
     done
 
     get_occupied_ports
-
-    # Prompt the user to enter the port
     while true; do
         read -p "Enter the APP_PORT (default 3000): " -r APP_PORT
-        if [[ -z "$APP_PORT" ]]; then
-            APP_PORT=3000
-        fi
-        if [[ "$APP_PORT" -ge 1 && "$APP_PORT" -le 65535 ]]; then
+        APP_PORT=${APP_PORT:-3000}
+        
+        if validate_port "$APP_PORT"; then
             if is_port_occupied "$APP_PORT"; then
                 colorized_echo red "Port $APP_PORT is already in use. Please enter another port."
+                colorized_echo blue "Occupied ports: $(echo $OCCUPIED_PORTS | tr '\n' ' ')"
             else
                 break
             fi
@@ -603,7 +687,7 @@ install_command() {
     echo "  sudo $APP_NAME status      - Check service status"
     echo "  sudo $APP_NAME logs        - View container logs"
     echo "  sudo $APP_NAME restart     - Restart the service"
-    echo "  sudo $APP_NAME xray-log-out - View Xray logs (if installed)"
+    echo "  sudo $APP_NAME xray_log_out - View Xray logs (if installed)"
     echo
     colorized_echo cyan "📁 File Locations:"
     echo "  Configuration: $APP_DIR"
@@ -726,6 +810,11 @@ restart_command() {
     
     down_remnanode
     up_remnanode
+    
+    # Добавляем поддержку флага --no-logs
+    if [ "$no_logs" = false ]; then
+        follow_remnanode_logs
+    fi
 }
 
 status_command() {
@@ -934,114 +1023,282 @@ get_xray_core() {
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
 }
+
+
+
+# Функция для создания резервной копии файла
+create_backup() {
+    local file="$1"
+    local backup_file="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+    
+    if [ -f "$file" ]; then
+        cp "$file" "$backup_file"
+        echo "$backup_file"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Функция для восстановления из резервной копии
+restore_backup() {
+    local backup_file="$1"
+    local original_file="$2"
+    
+    if [ -f "$backup_file" ]; then
+        cp "$backup_file" "$original_file"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Функция для проверки валидности docker-compose файла
+validate_compose_file() {
+    local compose_file="$1"
+    
+    if [ ! -f "$compose_file" ]; then
+        return 1
+    fi
+    
+
+    local current_dir=$(pwd)
+    
+
+    cd "$(dirname "$compose_file")"
+    
+
+    if command -v docker >/dev/null 2>&1; then
+
+        detect_compose
+        
+        # Проверяем синтаксис файла
+        if $COMPOSE config >/dev/null 2>&1; then
+            cd "$current_dir"
+            return 0
+        else
+
+            colorized_echo red "Docker Compose validation errors:"
+            $COMPOSE config 2>&1 | head -10
+            cd "$current_dir"
+            return 1
+        fi
+    else
+
+        if grep -q "services:" "$compose_file" && grep -q "remnanode:" "$compose_file"; then
+            cd "$current_dir"
+            return 0
+        else
+            cd "$current_dir"
+            return 1
+        fi
+    fi
+}
+
+# Функция для удаления старых резервных копий (оставляем только последние 5)
+cleanup_old_backups() {
+    local file_pattern="$1"
+    local keep_count=5
+    
+    # Найти все файлы резервных копий и удалить старые
+    ls -t ${file_pattern}.backup.* 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
+}
+
+# Обновленная функция для определения отступов из docker-compose.yml
+get_indentation_from_compose() {
+    local compose_file="$1"
+    local indentation=""
+    
+    if [ -f "$compose_file" ]; then
+        # Сначала ищем строку с "remnanode:" (точное совпадение)
+        local service_line=$(grep -n "remnanode:" "$compose_file" | head -1)
+        if [ -n "$service_line" ]; then
+            local line_content=$(echo "$service_line" | cut -d':' -f2-)
+            indentation=$(echo "$line_content" | sed 's/remnanode:.*//' | grep -o '^[[:space:]]*')
+        fi
+        
+        # Если не нашли точное совпадение, ищем любой сервис с "remna"
+        if [ -z "$indentation" ]; then
+            local remna_service_line=$(grep -E "^[[:space:]]*[a-zA-Z0-9_-]*remna[a-zA-Z0-9_-]*:" "$compose_file" | head -1)
+            if [ -n "$remna_service_line" ]; then
+                indentation=$(echo "$remna_service_line" | sed 's/[a-zA-Z0-9_-]*remna[a-zA-Z0-9_-]*:.*//' | grep -o '^[[:space:]]*')
+            fi
+        fi
+        
+        # Если не нашли сервис с "remna", пробуем найти любой сервис
+        if [ -z "$indentation" ]; then
+            local any_service_line=$(grep -E "^[[:space:]]*[a-zA-Z0-9_-]+:" "$compose_file" | head -1)
+            if [ -n "$any_service_line" ]; then
+                indentation=$(echo "$any_service_line" | sed 's/[a-zA-Z0-9_-]*:.*//' | grep -o '^[[:space:]]*')
+            fi
+        fi
+    fi
+    
+    # Если ничего не нашли, используем 2 пробела по умолчанию
+    if [ -z "$indentation" ]; then
+        indentation="  "
+    fi
+    
+    echo "$indentation"
+}
+
+# Обновленная функция для получения отступа для свойств сервиса
+get_service_property_indentation() {
+    local compose_file="$1"
+    local base_indent=$(get_indentation_from_compose "$compose_file")
+    local indent_type=""
+    if [[ "$base_indent" =~ $'\t' ]]; then
+        indent_type=$'\t'
+    else
+        indent_type="  "
+    fi
+    local property_indent=""
+    if [ -f "$compose_file" ]; then
+        local in_remna_service=false
+        local current_service=""
+        
+        while IFS= read -r line; do
+
+            if [[ "$line" =~ ^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$ ]]; then
+                current_service=$(echo "$line" | sed 's/^[[:space:]]*//' | sed 's/:[[:space:]]*$//')
+                
+
+                if [[ "$current_service" =~ remna ]]; then
+                    in_remna_service=true
+                else
+                    in_remna_service=false
+                fi
+                continue
+            fi
+            
+
+            if [ "$in_remna_service" = true ]; then
+                local line_indent=$(echo "$line" | grep -o '^[[:space:]]*')
+                
+
+                if [[ "$line" =~ ^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$ ]] && [ ${#line_indent} -le ${#base_indent} ]; then
+                    break
+                fi
+                
+
+                if [[ "$line" =~ ^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]] ]] && [[ ! "$line" =~ ^[[:space:]]*- ]]; then
+                    property_indent=$(echo "$line" | sed 's/[a-zA-Z0-9_-]*:.*//' | grep -o '^[[:space:]]*')
+                    break
+                fi
+            fi
+        done < "$compose_file"
+    fi
+    
+    # Если не нашли свойство, добавляем один уровень отступа к базовому
+    if [ -z "$property_indent" ]; then
+        property_indent="${base_indent}${indent_type}"
+    fi
+    
+    echo "$property_indent"
+}
+
+
+escape_for_sed() {
+    local text="$1"
+    echo "$text" | sed 's/[[\.*^$()+?{|]/\\&/g' | sed 's/\t/\\t/g'
+}
+
+
 update_core_command() {
     check_running_as_root
     get_xray_core
     colorized_echo blue "Updating docker-compose.yml with Xray-core volume..."
+    
 
-    # Проверка наличия файла
     if [ ! -f "$COMPOSE_FILE" ]; then
         colorized_echo red "Docker Compose file not found at $COMPOSE_FILE"
         exit 1
     fi
+    
 
-    # Создание резервной копии
-    cp "$COMPOSE_FILE" "${COMPOSE_FILE}.bak"
-    colorized_echo blue "Created backup of $COMPOSE_FILE at ${COMPOSE_FILE}.bak"
-
-    # Определение отступа для сервиса remnanode
-    indent_line=$(grep -E "^[[:space:]]*remnanode:" "$COMPOSE_FILE" | head -n 1)
-    if [ -z "$indent_line" ]; then
-        colorized_echo red "Cannot find remnanode service in $COMPOSE_FILE"
-        exit 1
-    fi
-
-    # Извлечение отступа (пробелы или табуляция)
-    indent=$(echo "$indent_line" | sed -E 's/^([[:space:]]*).*/\1/')
-    indent_length=$(echo -n "$indent" | wc -c)
-    if [ "$indent_length" -eq 0 ]; then
-        colorized_echo red "Cannot determine indent level for remnanode service"
-        exit 1
-    fi
-
-    # Проверка смешанных отступов
-    if echo "$indent" | grep -q $'\t' && echo "$indent" | grep -q '[[:space:]]'; then
-        colorized_echo yellow "Warning: Mixed tabs and spaces detected in indent. Using detected indent style."
-    fi
-
-    # Отладка: вывод типа отступа
-    if echo "$indent" | grep -q $'\t'; then
-        colorized_echo blue "Detected indent: tabs (length: $indent_length)"
-        volumes_indent="${indent}$(printf '\t')"
-        sub_indent="$(printf '\t')"
+    colorized_echo blue "Creating backup of docker-compose.yml..."
+    backup_file=$(create_backup "$COMPOSE_FILE")
+    if [ $? -eq 0 ]; then
+        colorized_echo green "Backup created: $backup_file"
     else
-        colorized_echo blue "Detected indent: spaces (length: $indent_length)"
-        volumes_indent="${indent}  "
-        sub_indent="  "
+        colorized_echo red "Failed to create backup"
+        exit 1
     fi
+    
 
-    # Формирование строки volume с правильным отступом
-    volume_line="${volumes_indent}- $XRAY_FILE:/usr/local/bin/xray"
-    volumes_section="${indent}volumes:\n${volume_line}"
+    local service_indent=$(get_service_property_indentation "$COMPOSE_FILE")
+    
 
-    # Проверка и обновление секции volumes
-    if grep -q "^${indent}[[:space:]]*volumes:" "$COMPOSE_FILE"; then
+    local indent_type=""
+    if [[ "$service_indent" =~ $'\t' ]]; then
+        indent_type=$'\t'
+    else
+        indent_type="  "
+    fi
+    local volume_item_indent="${service_indent}${indent_type}"
+    
+
+    local escaped_service_indent=$(escape_for_sed "$service_indent")
+    local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
+    
+
+    if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
         if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "/^${indent}[[:space:]]*volumes:/a\\${volume_line}" "$COMPOSE_FILE"
+            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
             colorized_echo green "Added Xray volume to existing volumes section"
         else
             colorized_echo yellow "Xray volume already exists in volumes section"
         fi
-    elif grep -q "^${indent}[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
-        sed -i "s|^${indent}[[:space:]]*# volumes:|${indent}volumes:|" "$COMPOSE_FILE"
-        if grep -q "#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "s|#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray|${volume_line}|" "$COMPOSE_FILE"
+    elif grep -q "^${escaped_service_indent}# volumes:" "$COMPOSE_FILE"; then
+        sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$COMPOSE_FILE"
+        
+        if grep -q "^${escaped_volume_item_indent}#.*$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
+            sed -i "s|^${escaped_volume_item_indent}#.*$XRAY_FILE:/usr/local/bin/xray|${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray|g" "$COMPOSE_FILE"
             colorized_echo green "Uncommented volumes section and Xray volume line"
         else
-            sed -i "/^${indent}[[:space:]]*volumes:/a\\${volume_line}" "$COMPOSE_FILE"
+            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
             colorized_echo green "Uncommented volumes section and added Xray volume line"
         fi
     else
-        # Добавление новой секции volumes в конец сервиса remnanode
-        temp_file=$(mktemp)
-        # Находим последнюю строку с отступом indent_length+2 внутри remnanode
-        sed -E "/^${indent}remnanode:/,/^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
-            # Сохраняем строки с отступом indent_length+2
-            /^${indent}[[:space:]]{2}[a-zA-Z]/ { h; }
-            # После последней строки или перед строкой с меньшим отступом
-            /^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
-                g
-                a\\
-${volumes_section}
-            }
-            # Если это не конец секции, продолжаем
-            p
-        }" "$COMPOSE_FILE" | sed '/^$/d' > "$temp_file"
-
-        # Отладка: вывод содержимого временного файла
-        colorized_echo yellow "Debug: Contents of modified docker-compose.yml:"
-        cat "$temp_file" | while IFS= read -r line; do
-            colorized_echo yellow "$line"
-        done
-
-        mv "$temp_file" "$COMPOSE_FILE"
-        colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
+        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+        colorized_echo green "Added new volumes section with Xray volume"
     fi
+    
 
-    # Валидация YAML с выводом ошибки
-    if ! $COMPOSE -f "$COMPOSE_FILE" config --quiet >/dev/null 2>&1; then
-        colorized_echo red "Invalid YAML syntax in $COMPOSE_FILE after modification"
-        colorized_echo yellow "Error details:"
-        $COMPOSE -f "$COMPOSE_FILE" config 2>&1 | colorized_echo red
-        colorized_echo yellow "Restoring backup from ${COMPOSE_FILE}.bak"
-        cp "${COMPOSE_FILE}.bak" "$COMPOSE_FILE"
+    colorized_echo blue "Validating docker-compose.yml..."
+    if validate_compose_file "$COMPOSE_FILE"; then
+        colorized_echo green "Docker-compose.yml validation successful"
+        
+        colorized_echo blue "Restarting RemnaNode..."
+
+        restart_command -n
+        
+        colorized_echo green "Installation of XRAY-CORE version $selected_version completed."
+        
+
+        read -p "Operation completed successfully. Do you want to keep the backup file? (y/n): " -r keep_backup
+        if [[ ! $keep_backup =~ ^[Yy]$ ]]; then
+            rm "$backup_file"
+            colorized_echo blue "Backup file removed"
+        else
+            colorized_echo blue "Backup file kept at: $backup_file"
+        fi
+
+        cleanup_old_backups "$COMPOSE_FILE"
+        
+    else
+        colorized_echo red "Docker-compose.yml validation failed! Restoring backup..."
+        if restore_backup "$backup_file" "$COMPOSE_FILE"; then
+            colorized_echo green "Backup restored successfully"
+            colorized_echo red "Please check the docker-compose.yml file manually"
+        else
+            colorized_echo red "Failed to restore backup! Original file may be corrupted"
+            colorized_echo red "Backup location: $backup_file"
+        fi
         exit 1
     fi
-
-    colorized_echo red "Restarting Remnanode..."
-    $APP_NAME restart -n
-    colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
 }
+
 
 check_editor() {
     if [ -z "$EDITOR" ]; then
@@ -1057,14 +1314,13 @@ check_editor() {
     fi
 }
 
-xray-log-out() {
+xray_log_out() {
         if ! is_remnanode_installed; then
             colorized_echo red "RemnaNode not installed!"
             exit 1
         fi
-    
-     detect_compose
- 
+    detect_compose
+
         if ! is_remnanode_up; then
             colorized_echo red "RemnaNode is not running. Start it first with 'remnanode up'"
             exit 1
@@ -1073,7 +1329,7 @@ xray-log-out() {
     docker exec -it $APP_NAME tail -n +1 -f /var/log/supervisor/xray.out.log
 }
 
-xray-log-err() {
+xray_log_err() {
         if ! is_remnanode_installed; then
             colorized_echo red "RemnaNode not installed!"
             exit 1
@@ -1100,71 +1356,222 @@ edit_command() {
     fi
 }
 
+
 usage() {
-    colorized_echo blue "================================"
-    colorized_echo magenta "       $APP_NAME CLI Help"
-    colorized_echo blue "================================"
-    colorized_echo cyan "Usage:"
-    echo "  $APP_NAME [command]"
+    clear
+
+    echo -e "\033[1;38;5;51m⚡ $APP_NAME\033[0m \033[38;5;249mCommand Line Interface\033[0m \033[1;38;5;196m$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo
+    echo -e "\033[1;38;5;39m📖 Usage:\033[0m"
+    echo -e "   \033[38;5;226m$APP_NAME\033[0m \033[38;5;249m<command>\033[0m \033[38;5;244m[options]\033[0m"
     echo
 
-    colorized_echo cyan "Commands:"
-    colorized_echo yellow "  up                  $(tput sgr0)– Start services"
-    colorized_echo yellow "  down                $(tput sgr0)– Stop services"
-    colorized_echo yellow "  restart             $(tput sgr0)– Restart services"
-    colorized_echo yellow "  status              $(tput sgr0)– Show status"
-    colorized_echo yellow "  logs                $(tput sgr0)– Show logs"
-    colorized_echo yellow "  install             $(tput sgr0)– Install/reinstall Remnanode"
-    colorized_echo yellow "  update              $(tput sgr0)– Update to latest version"
-    colorized_echo yellow "  uninstall           $(tput sgr0)– Uninstall Remnanode"
-    colorized_echo yellow "  install-script      $(tput sgr0)– Install Remnanode script"
-    colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnanode script"
-    colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml (via nano or vi)"
-    colorized_echo yellow "  core-update         $(tput sgr0)– Update/Change Xray core"
-    colorized_echo yellow "  setup-logs          $(tput sgr0)– Setup log rotation for RemnaNode logs"
+    echo -e "\033[1;38;5;82m🚀 Core Commands:\033[0m"
+    printf "   \033[38;5;46m%-18s\033[0m %s\n" "install" "🛠️  Install/reinstall RemnaNode"
+    printf "   \033[38;5;46m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
+    printf "   \033[38;5;46m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove RemnaNode completely"
     echo
-    colorized_echo yellow "  xray-log-out        $(tput sgr0)– Access Xray Core logs - OUT"
-    colorized_echo yellow "  xray-log-err        $(tput sgr0)– Access Xray Core logs - ERR"
+
+    echo -e "\033[1;38;5;214m⚙️  Service Control:\033[0m"
+    printf "   \033[38;5;220m%-18s\033[0m %s\n" "up" "▶️  Start services"
+    printf "   \033[38;5;220m%-18s\033[0m %s\n" "down" "⏹️  Stop services"
+    printf "   \033[38;5;220m%-18s\033[0m %s\n" "restart" "🔄 Restart services"
+    printf "   \033[38;5;220m%-18s\033[0m %s\n" "status" "📊 Show service status"
+    echo
+
+    echo -e "\033[1;38;5;201m📊 Monitoring & Logs:\033[0m"
+    printf "   \033[38;5;207m%-18s\033[0m %s\n" "logs" "📋 Show container logs"
+    printf "   \033[38;5;207m%-18s\033[0m %s\n" "setup-logs" "🔄 Configure Xray-log rotation"
+    printf "   \033[38;5;207m%-18s\033[0m %s\n" "xray_log_out" "📤 View Xray output logs"
+    printf "   \033[38;5;207m%-18s\033[0m %s\n" "xray_log_err" "📥 View Xray error logs"
+    echo
+
+    echo -e "\033[1;38;5;165m🔧 Configuration:\033[0m"
+    printf "   \033[38;5;171m%-18s\033[0m %s\n" "core-update" "⚡ Update/change Xray core"
+    printf "   \033[38;5;171m%-18s\033[0m %s\n" "edit" "✏️  Edit docker-compose.yml"
+    echo
+
+    echo -e "\033[1;38;5;99m🛠️  Utilities:\033[0m"
+    printf "   \033[38;5;105m%-18s\033[0m %s\n" "install-script" "📥 Install script to system"
+    printf "   \033[38;5;105m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
+    echo
+
+    echo -e "\033[1;38;5;226m⚙️  Install Options:\033[0m"
+    printf "   \033[38;5;229m%-18s\033[0m %s\n" "--dev" "🧪 Use development version"
+    printf "   \033[38;5;229m%-18s\033[0m %s\n" "--name <name>" "🏷️  Set custom app name"
+    echo
+
+    echo -e "\033[1;38;5;33m🌐 System Information:\033[0m"
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Node IP:" "$NODE_IP"
     
-    
-    echo
-    colorized_echo cyan "Options for install:"
-    colorized_echo yellow "  --dev               $(tput sgr0)– Use remnawave/node:dev instead of latest"
-    
-    echo
-    colorized_echo cyan "Node Information:"
-    colorized_echo magenta "  Node IP: $NODE_IP"
-    echo
     current_version=$(get_current_xray_core_version)
-    colorized_echo cyan "Current Xray-core version: " 1
-    colorized_echo magenta "$current_version" 1
-    echo
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Core:" "$current_version"
+    
     DEFAULT_APP_PORT="3000"
     if [ -f "$ENV_FILE" ]; then
-        APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
+        APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
     fi
     APP_PORT=${APP_PORT:-$DEFAULT_APP_PORT}
-    colorized_echo cyan "Port:"
-    colorized_echo magenta "  App port: $APP_PORT"
-    colorized_echo blue "================================="
+    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "App Port:" "$APP_PORT"
+    echo
+    
+
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;244m📚 My Project:\033[0m \033[38;5;39mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;244m🐛 Issues:\033[0m        \033[38;5;39mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;244m💬 Support Remnawave:\033[0m       \033[38;5;39mhttps://t.me/remnawave\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
     echo
 }
+
+usage_compact() {
+    clear
+    echo -e "\033[1;38;5;51m⚡ $APP_NAME CLI\033[0m \033[38;5;244mv1.3\033[0m"
+    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    
+    echo -e "\033[1;38;5;82m🚀 Core:\033[0m"
+    printf "  \033[38;5;46m%-12s\033[0m %s\n" "install" "🛠️  Install RemnaNode"
+    printf "  \033[38;5;46m%-12s\033[0m %s\n" "update" "⬆️  Update version"
+    printf "  \033[38;5;46m%-12s\033[0m %s\n" "uninstall" "🗑️  Remove completely"
+    echo
+    
+    echo -e "\033[1;38;5;214m⚙️  Control:\033[0m"
+    printf "  \033[38;5;220m%-12s\033[0m %s\n" "up" "▶️  Start services"
+    printf "  \033[38;5;220m%-12s\033[0m %s\n" "down" "⏹️  Stop services"
+    printf "  \033[38;5;220m%-12s\033[0m %s\n" "restart" "🔄 Restart services"
+    printf "  \033[38;5;220m%-12s\033[0m %s\n" "status" "📊 Show status"
+    echo
+    
+    echo -e "\033[1;38;5;201m📊 Monitor:\033[0m"
+    printf "  \033[38;5;207m%-12s\033[0m %s\n" "logs" "📋 Container logs"
+    printf "  \033[38;5;207m%-12s\033[0m %s\n" "setup-logs" "🔄 Log rotation"
+    echo
+    
+    echo -e "\033[1;38;5;165m🔧 Config:\033[0m"
+    printf "  \033[38;5;171m%-12s\033[0m %s\n" "core-update" "⚡ Update Xray"
+    printf "  \033[38;5;171m%-12s\033[0m %s\n" "edit" "✏️  Edit compose"
+    echo
+    
+    echo -e "\033[38;5;244m💡 Example: \033[38;5;226m$APP_NAME\033[0m \033[38;5;46minstall\033[0m"
+    echo
+    echo -e "\033[38;5;244m📚 Help: \033[38;5;226m$APP_NAME\033[0m \033[38;5;39m--help\033[0m"
+}
+
+
+# Умная функция выбора версии help
+smart_usage() {
+    local terminal_width=$(tput cols 2>/dev/null || echo "80")
+    local terminal_height=$(tput lines 2>/dev/null || echo "24")
+    
+    # Если терминал очень узкий - минимальная версия
+    if [ "$terminal_width" -lt 50 ]; then
+        usage_minimal
+    # Если терминал узкий или низкий - компактная версия
+    elif [ "$terminal_width" -lt 70 ] || [ "$terminal_height" -lt 30 ]; then
+        usage_compact
+    # Иначе полная версия
+    else
+        usage
+    fi
+}
+
+# Альтернативная минималистичная версия
+usage_minimal() {
+    echo -e "\033[1;38;5;51m⚡ $APP_NAME CLI\033[0m"
+    echo
+    echo -e "\033[1;38;5;82mMain Commands:\033[0m"
+    echo -e "  \033[38;5;46minstall\033[0m     Install RemnaNode"
+    echo -e "  \033[38;5;46mup\033[0m          Start services"
+    echo -e "  \033[38;5;46mdown\033[0m        Stop services"
+    echo -e "  \033[38;5;46mrestart\033[0m     Restart services"
+    echo -e "  \033[38;5;46mstatus\033[0m      Show status"
+    echo -e "  \033[38;5;46mlogs\033[0m        Show logs"
+    echo -e "  \033[38;5;46mupdate\033[0m      Update version"
+    echo -e "  \033[38;5;46muninstall\033[0m   Remove completely"
+    echo
+    echo -e "\033[1;38;5;165mConfig:\033[0m"
+    echo -e "  \033[38;5;171mcore-update\033[0m Update Xray core"
+    echo -e "  \033[38;5;171medit\033[0m        Edit configuration"
+    echo -e "  \033[38;5;171msetup-logs\033[0m  Setup log rotation"
+    echo
+    echo -e "\033[38;5;244mFor detailed help: \033[38;5;226m$APP_NAME\033[0m \033[38;5;39m--help\033[0m"
+}
+
+show_version() {
+    echo -e "\033[1;38;5;51m"
+    echo "    ⚡ RemnaNode CLI"
+    echo -e "\033[0m\033[38;5;249m    Version: \033[1;38;5;226m$(grep "^# Version:" "$0" | awk '{print $3}')\033[0m"
+    echo -e "\033[38;5;249m    Author:  \033[38;5;255mDigneZzZ\033[0m"
+    echo -e "\033[38;5;249m    GitHub:  \033[38;5;39mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;249m    New Project:  \033[38;5;39mhttps://gig.ovh\033[0m"
+    echo
+}
+
+
+show_command_help() {
+    local cmd="$1"
+    
+    case "$cmd" in
+        "install")
+            echo -e "\033[1;38;5;46m🛠️  install\033[0m - Install or reinstall RemnaNode"
+            echo
+            echo -e "\033[1;38;5;226mUsage:\033[0m"
+            echo -e "  \033[38;5;226m$APP_NAME\033[0m \033[38;5;46minstall\033[0m [\033[38;5;229m--dev\033[0m] [\033[38;5;229m--name\033[0m \033[38;5;255m<name>\033[0m]"
+            echo
+            echo -e "\033[1;38;5;226mOptions:\033[0m"
+            echo -e "  \033[38;5;229m--dev\033[0m       Use development version instead of latest"
+            echo -e "  \033[38;5;229m--name\033[0m      Set custom application name"
+            ;;
+        "logs")
+            echo -e "\033[1;38;5;207m📋 logs\033[0m - Show container logs"
+            echo
+            echo -e "\033[1;38;5;226mUsage:\033[0m"
+            echo -e "  \033[38;5;226m$APP_NAME\033[0m \033[38;5;207mlogs\033[0m [\033[38;5;229m--no-follow\033[0m]"
+            echo
+            echo -e "\033[1;38;5;226mOptions:\033[0m"
+            echo -e "  \033[38;5;229m-n, --no-follow\033[0m   Show logs without following"
+            ;;
+        *)
+            echo -e "\033[38;5;196mUnknown command:\033[0m $cmd"
+            echo -e "Use '\033[38;5;226m$APP_NAME\033[0m' to see all available commands"
+            ;;
+    esac
+    echo
+}
+
 
 case "$COMMAND" in
     install) install_command ;;
     update) update_command ;;
     uninstall) uninstall_command ;;
-    up) up_command ;;
+    up) up_command "$@" ;;
     down) down_command ;;
-    restart) restart_command ;;
+    restart) restart_command "$@" ;;
     status) status_command ;;
-    logs) logs_command ;;
+    logs) logs_command "$@" ;;
     core-update) update_core_command ;;
     install-script) install_remnanode_script ;;
     uninstall-script) uninstall_remnanode_script ;;
     edit) edit_command ;;
     setup-logs) setup_log_rotation ;;
-    xray-log-out) xray-log-out ;;
-    xray-log-err) xray-log-err ;;
-    *) usage ;;
+    xray_log_out) xray_log_out ;;
+    xray_log_err) xray_log_err ;;
+    --version|-v) show_version ;;
+    --help|-h) smart_usage ;;
+    help) 
+        if [ -n "$2" ]; then
+            show_command_help "$2"
+        else
+            smart_usage
+        fi
+        ;;
+    *) 
+        if [ -n "$COMMAND" ]; then
+            echo -e "\033[38;5;196m❌ Unknown command:\033[0m \033[1m$COMMAND\033[0m"
+            echo
+        fi
+        smart_usage
+        ;;
 esac
