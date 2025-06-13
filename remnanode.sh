@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.2
+# Version: 1.5.3
 set -e
 
 while [[ $# -gt 0 ]]; do
