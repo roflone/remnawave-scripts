@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.1
+# Version: 1.5.2
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -934,6 +934,7 @@ get_xray_core() {
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
 }
+
 update_core_command() {
     check_running_as_root
     get_xray_core
@@ -994,16 +995,19 @@ update_core_command() {
     else
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
-        awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v remnanode="^${indent}remnanode:" '
+        awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v indent_length="$indent_length" '
         BEGIN { in_remnanode = 0 }
-        $0 ~ remnanode { in_remnanode = 1; print; next }
-        in_remnanode && /^[[:space:]]*$/ { next } # Пропускаем пустые строки внутри remnanode
-        in_remnanode && $0 !~ /^([[:space:]]*)[a-zA-Z]/ && $0 !~ /^[[:space:]]*$/ { print; next }
-        in_remnanode && ($0 ~ /^([[:space:]]*)[a-zA-Z]/ || $0 ~ /^[[:space:]]*$/) {
-            print volumes_section
-            in_remnanode = 0
+        /^[[:space:]]*remnanode:/ { in_remnanode = 1; print; next }
+        in_remnanode && /^[[:space:]]*$/ { print; next } # Сохраняем пустые строки
+        in_remnanode && length($0) > 0 && $0 ~ /^[[:space:]]{/ && length(gensub(/^[[:space:]]+/, "", 1, $0)) > 0 {
+            # Проверяем, что строка начинается с нужного уровня отступов
+            if (length(gensub(/^([[:space:]]*).*/, "\\1", 1, $0)) <= indent_length) {
+                print volumes_section
+                in_remnanode = 0
+            }
         }
         { print }
+        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не нашли выход из секции
         ' "$COMPOSE_FILE" > "$temp_file"
         mv "$temp_file" "$COMPOSE_FILE"
         colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
@@ -1020,20 +1024,6 @@ update_core_command() {
     colorized_echo red "Restarting Remnanode..."
     $APP_NAME restart -n
     colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
-}
-
-check_editor() {
-    if [ -z "$EDITOR" ]; then
-        if command -v nano >/dev/null 2>&1; then
-            EDITOR="nano"
-        elif command -v vi >/dev/null 2>&1; then
-            EDITOR="vi"
-        else
-            detect_os
-            install_package nano
-            EDITOR="nano"
-        fi
-    fi
 }
 
 xray-log-out() {
