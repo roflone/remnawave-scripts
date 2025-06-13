@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.4
+# Version: 1.5
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -939,20 +939,20 @@ update_core_command() {
     get_xray_core
     colorized_echo blue "Updating docker-compose.yml with Xray-core volume..."
 
-
+    # Проверка наличия файла
     if [ ! -f "$COMPOSE_FILE" ]; then
         colorized_echo red "Docker Compose file not found at $COMPOSE_FILE"
         exit 1
     fi
 
-
+    # Определение отступа для сервиса remnanode
     indent_line=$(grep -E "^[[:space:]]*remnanode:" "$COMPOSE_FILE" | head -n 1)
     if [ -z "$indent_line" ]; then
         colorized_echo red "Cannot find remnanode service in $COMPOSE_FILE"
         exit 1
     fi
 
-
+    # Извлечение отступа (пробелы или табуляция)
     indent=$(echo "$indent_line" | sed -E 's/^([[:space:]]*).*/\1/')
     indent_length=$(echo -n "$indent" | wc -c)
     if [ "$indent_length" -eq 0 ]; then
@@ -960,21 +960,21 @@ update_core_command() {
         exit 1
     fi
 
-
+    # Отладка: вывод типа отступа
     if echo "$indent" | grep -q $'\t'; then
-
+        colorized_echo blue "Detected indent: tabs (length: $indent_length)"
         volumes_indent="${indent}$(printf '\t')"
         sub_indent="$(printf '\t')"
     else
-
+        colorized_echo blue "Detected indent: spaces (length: $indent_length)"
         volumes_indent="${indent}  "
         sub_indent="  "
     fi
 
-
+    # Формирование строки volume с правильным отступом
     volume_line="${volumes_indent}- $XRAY_FILE:/usr/local/bin/xray"
 
-
+    # Проверка и обновление секции volumes
     if grep -q "^${indent}[[:space:]]*volumes:" "$COMPOSE_FILE"; then
         if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
             sed -i "/^${indent}[[:space:]]*volumes:/a\\${volume_line}" "$COMPOSE_FILE"
@@ -992,15 +992,28 @@ update_core_command() {
             colorized_echo green "Uncommented volumes section and added Xray volume line"
         fi
     else
-
-        volumes_section="${indent}volumes:\n${volume_line}"
-        sed -i "/^${indent}restart: always/a\\${volumes_section}" "$COMPOSE_FILE"
-        colorized_echo green "Added new volumes section with Xray volume"
+        # Проверяем наличие restart: always, если нет — ищем другой ключ (например, image:)
+        if grep -q "^${indent}restart: always" "$COMPOSE_FILE"; then
+            volumes_section="${indent}volumes:\n${volume_line}"
+            sed -i "/^${indent}restart: always/a\\${volumes_section}" "$COMPOSE_FILE"
+            colorized_echo green "Added new volumes section with Xray volume after restart: always"
+        elif grep -q "^${indent}image:" "$COMPOSE_FILE"; then
+            volumes_section="${indent}volumes:\n${volume_line}"
+            sed -i "/^${indent}image:/a\\${volumes_section}" "$COMPOSE_FILE"
+            colorized_echo green "Added new volumes section with Xray volume after image:"
+        else
+            # Если нет подходящего ключа, добавляем в конец сервиса remnanode
+            volumes_section="${indent}volumes:\n${volume_line}"
+            sed -i "/^${indent}remnanode:/,/^${indent}[[:space:]]*[a-zA-Z]/ {/^${indent}[[:space:]]*[a-zA-Z]/i\\${volumes_section}" "$COMPOSE_FILE"
+            colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
+        fi
     fi
 
-
+    # Валидация YAML с выводом ошибки
     if ! $COMPOSE -f "$COMPOSE_FILE" config --quiet >/dev/null 2>&1; then
         colorized_echo red "Invalid YAML syntax in $COMPOSE_FILE after modification"
+        colorized_echo yellow "Error details:"
+        $COMPOSE -f "$COMPOSE_FILE" config 2>&1 | colorized_echo red
         exit 1
     fi
 
