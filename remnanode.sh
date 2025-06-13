@@ -938,35 +938,72 @@ update_core_command() {
     check_running_as_root
     get_xray_core
     colorized_echo blue "Updating docker-compose.yml with Xray-core volume..."
-    
-    # Check if the file exists
+
+
     if [ ! -f "$COMPOSE_FILE" ]; then
         colorized_echo red "Docker Compose file not found at $COMPOSE_FILE"
         exit 1
     fi
-    
-    if grep -q "^[[:space:]]*volumes:" "$COMPOSE_FILE"; then
+
+
+    indent_line=$(grep -E "^[[:space:]]*remnanode:" "$COMPOSE_FILE" | head -n 1)
+    if [ -z "$indent_line" ]; then
+        colorized_echo red "Cannot find remnanode service in $COMPOSE_FILE"
+        exit 1
+    fi
+
+
+    indent=$(echo "$indent_line" | sed -E 's/^([[:space:]]*).*/\1/')
+    indent_length=$(echo -n "$indent" | wc -c)
+    if [ "$indent_length" -eq 0 ]; then
+        colorized_echo red "Cannot determine indent level for remnanode service"
+        exit 1
+    fi
+
+
+    if echo "$indent" | grep -q $'\t'; then
+
+        volumes_indent="${indent}$(printf '\t')"
+        sub_indent="$(printf '\t')"
+    else
+
+        volumes_indent="${indent}  "
+        sub_indent="  "
+    fi
+
+
+    volume_line="${volumes_indent}- $XRAY_FILE:/usr/local/bin/xray"
+
+
+    if grep -q "^${indent}[[:space:]]*volumes:" "$COMPOSE_FILE"; then
         if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "/[[:space:]]*volumes:/a\\      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+            sed -i "/^${indent}[[:space:]]*volumes:/a\\${volume_line}" "$COMPOSE_FILE"
             colorized_echo green "Added Xray volume to existing volumes section"
         else
             colorized_echo yellow "Xray volume already exists in volumes section"
         fi
-    elif grep -q "^[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
-        sed -i 's/# volumes:/volumes:/g' "$COMPOSE_FILE"
-        
+    elif grep -q "^${indent}[[:space:]]*# volumes:" "$COMPOSE_FILE"; then
+        sed -i "s|^${indent}[[:space:]]*# volumes:|${indent}volumes:|" "$COMPOSE_FILE"
         if grep -q "#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "s|#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray|      - $XRAY_FILE:/usr/local/bin/xray|g" "$COMPOSE_FILE"
+            sed -i "s|#[[:space:]]*-[[:space:]]*$XRAY_FILE:/usr/local/bin/xray|${volume_line}|" "$COMPOSE_FILE"
             colorized_echo green "Uncommented volumes section and Xray volume line"
         else
-            sed -i "/volumes:/a\\      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+            sed -i "/^${indent}[[:space:]]*volumes:/a\\${volume_line}" "$COMPOSE_FILE"
             colorized_echo green "Uncommented volumes section and added Xray volume line"
         fi
     else
-        sed -i "/restart: always/a\\    volumes:\\n      - $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+
+        volumes_section="${indent}volumes:\n${volume_line}"
+        sed -i "/^${indent}restart: always/a\\${volumes_section}" "$COMPOSE_FILE"
         colorized_echo green "Added new volumes section with Xray volume"
     fi
-    
+
+
+    if ! $COMPOSE -f "$COMPOSE_FILE" config --quiet >/dev/null 2>&1; then
+        colorized_echo red "Invalid YAML syntax in $COMPOSE_FILE after modification"
+        exit 1
+    fi
+
     colorized_echo red "Restarting Remnanode..."
     $APP_NAME restart -n
     colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
