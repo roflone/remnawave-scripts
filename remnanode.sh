@@ -934,7 +934,6 @@ get_xray_core() {
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
 }
-
 update_core_command() {
     check_running_as_root
     get_xray_core
@@ -1024,6 +1023,20 @@ update_core_command() {
     colorized_echo red "Restarting Remnanode..."
     $APP_NAME restart -n
     colorized_echo blue "Installation of XRAY-CORE version $selected_version completed."
+}
+
+check_editor() {
+    if [ -z "$EDITOR" ]; then
+        if command -v nano >/dev/null 2>&1; then
+            EDITOR="nano"
+        elif command -v vi >/dev/null 2>&1; then
+            EDITOR="vi"
+        else
+            detect_os
+            install_package nano
+            EDITOR="nano"
+        fi
+    fi
 }
 
 xray-log-out() {
