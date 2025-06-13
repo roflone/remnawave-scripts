@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.6
+# Version: 1.5.7
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -982,7 +982,7 @@ update_core_command() {
 
     # Формирование строки volume с правильным отступом
     volume_line="${volumes_indent}- $XRAY_FILE:/usr/local/bin/xray"
-    volumes_section="${indent}volumes:\n${volume_line}"
+    volumes_section="${indent}volumes:\\n${volume_line}"
 
     # Проверка и обновление секции volumes
     if grep -q "^${indent}[[:space:]]*volumes:" "$COMPOSE_FILE"; then
@@ -1004,36 +1004,33 @@ update_core_command() {
     else
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
-        in_remnanode=0
-        while IFS= read -r line; do
-            # Определяем текущий уровень отступа
-            current_indent=$(echo "$line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
-            current_indent=$((current_indent - 1)) # wc -c включает \n, убираем его
-
-            if echo "$line" | grep -q "^${indent}remnanode:"; then
-                in_remnanode=1
-                echo "$line" >> "$temp_file"
-                continue
-            fi
-
-            if [ "$in_remnanode" -eq 1 ]; then
-                # Если отступ меньше indent_length или строка начинается с другого сервиса
-                if [ "$current_indent" -lt "$indent_length" ] && [ -n "$line" ] && ! echo "$line" | grep -q '^[[:space:]]*$'; then
-                    echo "$volumes_section" >> "$temp_file"
-                    in_remnanode=0
-                elif echo "$line" | grep -q "^${indent}[a-zA-Z]"; then
-                    echo "$volumes_section" >> "$temp_file"
-                    in_remnanode=0
-                fi
-            fi
-
-            echo "$line" >> "$temp_file"
-        done < "$COMPOSE_FILE"
-
-        # Если дошли до конца файла и всё ещё в remnanode, добавляем volumes
-        if [ "$in_remnanode" -eq 1 ]; then
-            echo "$volumes_section" >> "$temp_file"
-        fi
+        # Находим последнюю строку секции remnanode с отступом indent_length+2
+        # и вставляем volumes_section после неё
+        sed -E "/^${indent}remnanode:/,/^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
+            /^${indent}[[:space:]]{2}[a-zA-Z]/ {
+                h
+                $ {
+                    g
+                    a\\
+${volumes_section}
+                }
+                /^${indent}[[:space:]]{2}[a-zA-Z]/! {
+                    /^${indent}[[:space:]]{2}[a-zA-Z]/ {
+                        g
+                        a\\
+${volumes_section}
+                    }
+                }
+            }
+            /^${indent}[[:space:]]{2}[a-zA-Z]/! {
+                /^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
+                    g
+                    a\\
+${volumes_section}
+                }
+            }
+            p
+        }" "$COMPOSE_FILE" > "$temp_file"
 
         # Отладка: вывод содержимого временного файла
         colorized_echo yellow "Debug: Contents of modified docker-compose.yml:"
