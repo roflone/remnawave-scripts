@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.7
+# Version: 1.5.8
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -982,7 +982,7 @@ update_core_command() {
 
     # Формирование строки volume с правильным отступом
     volume_line="${volumes_indent}- $XRAY_FILE:/usr/local/bin/xray"
-    volumes_section="${indent}volumes:\\n${volume_line}"
+    volumes_section="${indent}volumes:\n${volume_line}"
 
     # Проверка и обновление секции volumes
     if grep -q "^${indent}[[:space:]]*volumes:" "$COMPOSE_FILE"; then
@@ -1004,33 +1004,19 @@ update_core_command() {
     else
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
-        # Находим последнюю строку секции remnanode с отступом indent_length+2
-        # и вставляем volumes_section после неё
+        # Находим последнюю строку с отступом indent_length+2 внутри remnanode
         sed -E "/^${indent}remnanode:/,/^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
-            /^${indent}[[:space:]]{2}[a-zA-Z]/ {
-                h
-                $ {
-                    g
-                    a\\
+            # Сохраняем строки с отступом indent_length+2
+            /^${indent}[[:space:]]{2}[a-zA-Z]/ { h; }
+            # После последней строки или перед строкой с меньшим отступом
+            /^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
+                g
+                a\\
 ${volumes_section}
-                }
-                /^${indent}[[:space:]]{2}[a-zA-Z]/! {
-                    /^${indent}[[:space:]]{2}[a-zA-Z]/ {
-                        g
-                        a\\
-${volumes_section}
-                    }
-                }
             }
-            /^${indent}[[:space:]]{2}[a-zA-Z]/! {
-                /^([[:space:]]{0,$((indent_length-1))}[^[:space:]]|$)/ {
-                    g
-                    a\\
-${volumes_section}
-                }
-            }
+            # Если это не конец секции, продолжаем
             p
-        }" "$COMPOSE_FILE" > "$temp_file"
+        }" "$COMPOSE_FILE" | sed '/^$/d' > "$temp_file"
 
         # Отладка: вывод содержимого временного файла
         colorized_echo yellow "Debug: Contents of modified docker-compose.yml:"
