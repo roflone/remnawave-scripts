@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5
+# Version: 1.5.1
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -992,21 +992,21 @@ update_core_command() {
             colorized_echo green "Uncommented volumes section and added Xray volume line"
         fi
     else
-        # Проверяем наличие restart: always, если нет — ищем другой ключ (например, image:)
-        if grep -q "^${indent}restart: always" "$COMPOSE_FILE"; then
-            volumes_section="${indent}volumes:\n${volume_line}"
-            sed -i "/^${indent}restart: always/a\\${volumes_section}" "$COMPOSE_FILE"
-            colorized_echo green "Added new volumes section with Xray volume after restart: always"
-        elif grep -q "^${indent}image:" "$COMPOSE_FILE"; then
-            volumes_section="${indent}volumes:\n${volume_line}"
-            sed -i "/^${indent}image:/a\\${volumes_section}" "$COMPOSE_FILE"
-            colorized_echo green "Added new volumes section with Xray volume after image:"
-        else
-            # Если нет подходящего ключа, добавляем в конец сервиса remnanode
-            volumes_section="${indent}volumes:\n${volume_line}"
-            sed -i "/^${indent}remnanode:/,/^${indent}[[:space:]]*[a-zA-Z]/ {/^${indent}[[:space:]]*[a-zA-Z]/i\\${volumes_section}" "$COMPOSE_FILE"
-            colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
-        fi
+        # Добавление новой секции volumes в конец сервиса remnanode
+        temp_file=$(mktemp)
+        awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v remnanode="^${indent}remnanode:" '
+        BEGIN { in_remnanode = 0 }
+        $0 ~ remnanode { in_remnanode = 1; print; next }
+        in_remnanode && /^[[:space:]]*$/ { next } # Пропускаем пустые строки внутри remnanode
+        in_remnanode && $0 !~ /^([[:space:]]*)[a-zA-Z]/ && $0 !~ /^[[:space:]]*$/ { print; next }
+        in_remnanode && ($0 ~ /^([[:space:]]*)[a-zA-Z]/ || $0 ~ /^[[:space:]]*$/) {
+            print volumes_section
+            in_remnanode = 0
+        }
+        { print }
+        ' "$COMPOSE_FILE" > "$temp_file"
+        mv "$temp_file" "$COMPOSE_FILE"
+        colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
     fi
 
     # Валидация YAML с выводом ошибки
