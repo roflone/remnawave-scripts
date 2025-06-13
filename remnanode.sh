@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version: 1.5.4
+# Version: 1.5.5
 set -e
 
 while [[ $# -gt 0 ]]; do
@@ -1004,19 +1004,26 @@ update_core_command() {
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
         awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v indent_length="$indent_length" '
-        BEGIN { in_remnanode = 0 }
-        /^[[:space:]]*remnanode:/ { in_remnanode = 1; print; next }
-        in_remnanode && /^[[:space:]]*$/ { print; next } # Сохраняем пустые строки
+        BEGIN { in_remnanode = 0; last_remnanode_line = 0 }
+        /^[[:space:]]*remnanode:/ { in_remnanode = 1; print; last_remnanode_line = NR; next }
+        in_remnanode && /^[[:space:]]*$/ { print; last_remnanode_line = NR; next } # Сохраняем пустые строки
         in_remnanode {
             current_indent = length(gensub(/^[[:space:]]+/, "", 1, $0)) > 0 ? length(gensub(/^([[:space:]]*).*/, "\\1", 1, $0)) : 0
-            # Выходим из remnanode, если отступ меньше или равен indent_length и строка не пустая
-            if (current_indent < indent_length && $0 !~ /^[[:space:]]*$/) {
+            if (current_indent < indent_length || ($0 ~ /^[[:space:]]*[a-zA-Z]/ && current_indent == indent_length)) {
+                # Добавляем volumes перед строкой с меньшим отступом или новым сервисом
                 print volumes_section
                 in_remnanode = 0
+            } else {
+                last_remnanode_line = NR
             }
         }
         { print }
-        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не вышли
+        END {
+            if (in_remnanode && last_remnanode_line > 0) {
+                # Если дошли до конца файла, добавляем volumes после последней строки remnanode
+                print volumes_section
+            }
+        }
         ' "$COMPOSE_FILE" > "$temp_file"
 
         # Отладка: вывод содержимого временного файла
