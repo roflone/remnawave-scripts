@@ -945,6 +945,10 @@ update_core_command() {
         exit 1
     fi
 
+    # Создание резервной копии
+    cp "$COMPOSE_FILE" "${COMPOSE_FILE}.bak"
+    colorized_echo blue "Created backup of $COMPOSE_FILE at ${COMPOSE_FILE}.bak"
+
     # Определение отступа для сервиса remnanode
     indent_line=$(grep -E "^[[:space:]]*remnanode:" "$COMPOSE_FILE" | head -n 1)
     if [ -z "$indent_line" ]; then
@@ -995,18 +999,18 @@ update_core_command() {
         # Добавление новой секции volumes в конец сервиса remnanode
         temp_file=$(mktemp)
         awk -v indent="$indent" -v volumes_section="${indent}volumes:\n${volume_line}" -v indent_length="$indent_length" '
-        BEGIN { in_remnanode = 0 }
+        BEGIN { in_remnanode = 0; remnanode_indent = indent_length }
         /^[[:space:]]*remnanode:/ { in_remnanode = 1; print; next }
         in_remnanode && /^[[:space:]]*$/ { print; next } # Сохраняем пустые строки
-        in_remnanode && length($0) > 0 && $0 ~ /^[[:space:]]{/ && length(gensub(/^[[:space:]]+/, "", 1, $0)) > 0 {
-            # Проверяем, что строка начинается с нужного уровня отступов
-            if (length(gensub(/^([[:space:]]*).*/, "\\1", 1, $0)) <= indent_length) {
+        in_remnanode {
+            current_indent = length(gensub(/^[[:space:]]+/, "", 1, $0)) > 0 ? length(gensub(/^([[:space:]]*).*/, "\\1", 1, $0)) : 0
+            if (current_indent <= remnanode_indent && $0 !~ /^[[:space:]]*$/) {
                 print volumes_section
                 in_remnanode = 0
             }
         }
         { print }
-        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не нашли выход из секции
+        END { if (in_remnanode) print volumes_section } # Добавляем в конец, если не вышли из секции
         ' "$COMPOSE_FILE" > "$temp_file"
         mv "$temp_file" "$COMPOSE_FILE"
         colorized_echo green "Added new volumes section with Xray volume at the end of remnanode service"
@@ -1017,6 +1021,8 @@ update_core_command() {
         colorized_echo red "Invalid YAML syntax in $COMPOSE_FILE after modification"
         colorized_echo yellow "Error details:"
         $COMPOSE -f "$COMPOSE_FILE" config 2>&1 | colorized_echo red
+        colorized_echo yellow "Restoring backup from ${COMPOSE_FILE}.bak"
+        cp "${COMPOSE_FILE}.bak" "$COMPOSE_FILE"
         exit 1
     fi
 
