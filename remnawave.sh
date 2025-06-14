@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.71 
+# VERSION=2.72 
 
 set -e
-SCRIPT_VERSION="2.71"
+SCRIPT_VERSION="2.72"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -1382,6 +1382,7 @@ schedule_run_backup() {
 
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
+    fi
     mkdir -p "$(dirname "$BACKUP_LOG_FILE")"
     
     echo "" >> "$BACKUP_LOG_FILE"
