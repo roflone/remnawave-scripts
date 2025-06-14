@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.5 
+# VERSION=2.6 
 
 set -e
-SCRIPT_VERSION="2.5"
+SCRIPT_VERSION="2.6"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -2928,6 +2928,11 @@ monitor_command() {
     echo
     echo -e "\033[38;5;8m📊 Snapshot taken at $(date '+%H:%M:%S')\033[0m"
     echo -e "\033[38;5;8m💡 For continuous monitoring, use: docker stats\033[0m"
+
+        if [[ "${BASH_SOURCE[1]}" =~ "main_menu" ]] || [[ "$0" =~ "$APP_NAME" ]] && [[ "$1" != "--no-pause" ]]; then
+        echo
+        read -p "Press Enter to continue..."
+    fi
 }
 
 is_remnawave_installed() {
