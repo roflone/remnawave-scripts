@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.72 
+# VERSION=2.73 
 
 set -e
-SCRIPT_VERSION="2.72"
+SCRIPT_VERSION="2.73"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -1225,16 +1225,15 @@ schedule_status() {
     if [ "$status" = "enabled" ]; then
         echo -e "\033[1;32m✅ Status: ENABLED\033[0m"
         
-        # Показываем cron задачу
+
         local cron_line=$(crontab -l 2>/dev/null | grep "$BACKUP_SCRIPT_FILE")
         if [ -n "$cron_line" ]; then
             local schedule=$(echo "$cron_line" | awk '{print $1" "$2" "$3" "$4" "$5}')
             echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
         fi
         
-        
         if command -v crontab >/dev/null && [ -n "$cron_line" ]; then
-            
+
             local schedule_desc=""
             case "$schedule" in
                 "0 2 * * *") schedule_desc="Daily at 2:00 AM" ;;
@@ -1249,63 +1248,77 @@ schedule_status() {
         echo -e "\033[1;31m❌ Status: DISABLED\033[0m"
     fi
     
-    
+
     echo
     echo -e "\033[1;37m📦 Recent Backups:\033[0m"
     
+
+    local backup_directory="$APP_DIR/backups"
     
-    local backup_files=""
-    
-    
-    backup_files=$(ls -t "$BACKUP_DIR"/remnawave_scheduled_*.tar.gz "$BACKUP_DIR"/remnawave_scheduled_*.sql 2>/dev/null | head -5)
-    
-    
-    if [ -z "$backup_files" ]; then
-        backup_files=$(ls -t "$BACKUP_DIR"/remnawave_*.tar.gz "$BACKUP_DIR"/remnawave_*.sql* 2>/dev/null | head -5)
-    fi
-    
-    if [ -n "$backup_files" ]; then
-        echo "$backup_files" | while IFS= read -r file; do
-            if [ -f "$file" ]; then
-                local filename=$(basename "$file")
-                local file_size=$(du -sh "$file" 2>/dev/null | cut -f1)
-                local file_date=$(stat -c %y "$file" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
-                
-                
-                local backup_type="📦"
-                if [[ "$filename" =~ scheduled ]]; then
-                    backup_type="🤖"  # автоматический
-                elif [[ "$filename" =~ full ]]; then
-                    backup_type="📁"  # полный ручной
-                else
-                    backup_type="📊"  # обычный
-                fi
-                
-                printf "   %s \033[38;5;250m%-35s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\n" "$backup_type" "$filename" "$file_size" "$file_date"
-            fi
-        done
+
+    if [ ! -d "$backup_directory" ]; then
+        echo -e "\033[38;5;244m   Backup directory not found: $backup_directory\033[0m"
+        echo -e "\033[38;5;244m   Run a backup to create the directory\033[0m"
     else
-        echo -e "\033[38;5;244m   No backup files found\033[0m"
-        echo -e "\033[38;5;244m   Run a backup to see files here\033[0m"
+
+        local backup_files=""
+        
+
+        backup_files=$(ls -t "$backup_directory"/remnawave_scheduled_*.tar.gz "$backup_directory"/remnawave_scheduled_*.sql.gz "$backup_directory"/remnawave_scheduled_*.sql 2>/dev/null | head -5)
+        
+
+        if [ -z "$backup_files" ]; then
+            backup_files=$(ls -t "$backup_directory"/remnawave_*.tar.gz "$backup_directory"/remnawave_*.sql.gz "$backup_directory"/remnawave_*.sql 2>/dev/null | head -5)
+        fi
+        
+        if [ -n "$backup_files" ]; then
+            echo "$backup_files" | while IFS= read -r file; do
+                if [ -f "$file" ]; then
+                    local filename=$(basename "$file")
+                    local file_size=$(du -sh "$file" 2>/dev/null | cut -f1)
+                    local file_date=$(stat -c %y "$file" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+                    
+
+                    local backup_type="📦"
+                    if [[ "$filename" =~ scheduled ]]; then
+                        backup_type="🤖"  # автоматический
+                    elif [[ "$filename" =~ full ]]; then
+                        backup_type="📁"  # полный ручной
+                    else
+                        backup_type="📊"  # обычный
+                    fi
+                    
+                    printf "   %s \033[38;5;250m%-35s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\n" "$backup_type" "$filename" "$file_size" "$file_date"
+                fi
+            done
+        else
+            echo -e "\033[38;5;244m   No backup files found in $backup_directory\033[0m"
+            echo -e "\033[38;5;244m   Run a backup to see files here\033[0m"
+        fi
     fi
     
 
     echo
     echo -e "\033[1;37m📈 Statistics:\033[0m"
     
+    if [ -d "$backup_directory" ]; then
 
-    local total_backups=$(ls -1 "$BACKUP_DIR"/remnawave_*.{tar.gz,sql*} 2>/dev/null | wc -l)
-    local scheduled_backups=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.{tar.gz,sql} 2>/dev/null | wc -l)
-    local manual_backups=$(ls -1 "$BACKUP_DIR"/remnawave_full_*.{tar.gz,sql} "$BACKUP_DIR"/remnawave_db_*.{sql*} 2>/dev/null | wc -l)
-    
-    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backups:" "$total_backups"
-    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Scheduled backups:" "$scheduled_backups"
-    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Manual backups:" "$manual_backups"
-    
+        local total_backups=$(ls -1 "$backup_directory"/remnawave_*.tar.gz "$backup_directory"/remnawave_*.sql.gz "$backup_directory"/remnawave_*.sql 2>/dev/null | wc -l)
+        local scheduled_backups=$(ls -1 "$backup_directory"/remnawave_scheduled_*.tar.gz "$backup_directory"/remnawave_scheduled_*.sql.gz "$backup_directory"/remnawave_scheduled_*.sql 2>/dev/null | wc -l)
+        local manual_backups=$(ls -1 "$backup_directory"/remnawave_full_*.tar.gz "$backup_directory"/remnawave_full_*.sql.gz "$backup_directory"/remnawave_full_*.sql "$backup_directory"/remnawave_db_*.sql.gz "$backup_directory"/remnawave_db_*.sql 2>/dev/null | wc -l)
+        
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backups:" "$total_backups"
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Scheduled backups:" "$scheduled_backups"
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Manual backups:" "$manual_backups"
+        
 
-    if [ -d "$BACKUP_DIR" ]; then
-        local backup_dir_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+        local backup_dir_size=$(du -sh "$backup_directory" 2>/dev/null | cut -f1)
         printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total size:" "$backup_dir_size"
+    else
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backups:" "0"
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Scheduled backups:" "0"
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Manual backups:" "0"
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total size:" "0B"
     fi
     
     read -p "Press Enter to continue..."
