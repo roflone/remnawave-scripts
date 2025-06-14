@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.2 
+# VERSION=2.3 
 
 set -e
-SCRIPT_VERSION="2.2"
+SCRIPT_VERSION="2.3"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -854,32 +854,170 @@ main() {
     local max_file_size=$(jq -r '.telegram.max_file_size // 49' "$CONFIG_FILE")
     local use_custom_api=$(jq -r '.telegram.use_custom_api // false' "$CONFIG_FILE")
     
-    # Создаем резервную копию
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_name="remnawave_scheduled_${timestamp}"
+    # Получаем данные для подключения к БД
+    local POSTGRES_USER=$(grep "^POSTGRES_USER=" "$APP_DIR/.env" | cut -d'=' -f2)
+    local POSTGRES_PASSWORD=$(grep "^POSTGRES_PASSWORD=" "$APP_DIR/.env" | cut -d'=' -f2)
+    local POSTGRES_DB=$(grep "^POSTGRES_DB=" "$APP_DIR/.env" | cut -d'=' -f2)
     
-    if [ "$compression_enabled" = "true" ]; then
-        backup_name="${backup_name}.sql.gz"
-        local backup_path="$BACKUP_DIR/$backup_name"
-        
-        log "Creating compressed backup: $backup_name"
-        docker exec -e PGPASSWORD="$(grep POSTGRES_PASSWORD $APP_DIR/.env | cut -d'=' -f2)" \
-            "${APP_NAME:-remnawave}-db" \
-            pg_dump -U postgres -d postgres -F p | gzip -"$compression_level" > "$backup_path"
-    else
-        backup_name="${backup_name}.sql"
-        local backup_path="$BACKUP_DIR/$backup_name"
-        
-        log "Creating backup: $backup_name"
-        docker exec -e PGPASSWORD="$(grep POSTGRES_PASSWORD $APP_DIR/.env | cut -d'=' -f2)" \
-            "${APP_NAME:-remnawave}-db" \
-            pg_dump -U postgres -d postgres -F p > "$backup_path"
+    # Устанавливаем значения по умолчанию
+    POSTGRES_USER=${POSTGRES_USER:-postgres}
+    POSTGRES_DB=${POSTGRES_DB:-postgres}
+    
+    if [ -z "$POSTGRES_PASSWORD" ]; then
+        log "ERROR: POSTGRES_PASSWORD not found in .env file"
+        exit 1
     fi
     
-    if [ $? -eq 0 ] && [ -f "$backup_path" ] && [ -s "$backup_path" ]; then
-        local file_size=$(du -h "$backup_path" | cut -f1)
-        local file_size_mb=$(du -m "$backup_path" | cut -f1)
-        log "Backup created successfully: $backup_name ($file_size)"
+    # Создаем резервную копию (всегда полную с конфигами для scheduled backup)
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_name="remnawave_scheduled_${timestamp}"
+    local backup_dir="$BACKUP_DIR/$backup_name"
+    mkdir -p "$backup_dir"
+    
+    log "Creating full system backup: $backup_name"
+    
+    # Создаем дамп базы данных
+    log "Step 1: Exporting database..."
+    if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "${APP_NAME:-remnawave}-db" \
+        pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_dir/database.sql" 2>/dev/null; then
+        local db_size=$(du -sh "$backup_dir/database.sql" | cut -f1)
+        log "Database exported successfully ($db_size)"
+    else
+        log "ERROR: Database export failed"
+        rm -rf "$backup_dir"
+        exit 1
+    fi
+    
+    # Универсальное копирование конфигурационных файлов
+    log "Step 2: Including configuration files..."
+    mkdir -p "$backup_dir/configs"
+    
+    local config_count=0
+    
+    # Копируем основные конфигурационные файлы
+    log "Copying main configuration files..."
+    for config_file in "$APP_DIR/.env" "$APP_DIR/.env.subscription" "$APP_DIR/docker-compose.yml"; do
+        if [ -f "$config_file" ]; then
+            local filename=$(basename "$config_file")
+            cp "$config_file" "$backup_dir/configs/"
+            config_count=$((config_count + 1))
+            log "✓ $filename"
+        fi
+    done
+    
+    # Копируем дополнительные конфигурационные файлы по расширениям
+    log "Scanning for additional config files..."
+    local extensions=("json" "yml" "yaml" "toml" "ini" "conf" "config" "cfg")
+    
+    for ext in "${extensions[@]}"; do
+        for config_file in "$APP_DIR"/*."$ext"; do
+            if [ -f "$config_file" ]; then
+                local filename=$(basename "$config_file")
+                # Исключаем файлы, которые могут быть временными или логами
+                if [[ ! "$filename" =~ ^(temp|tmp|cache|log|debug) ]]; then
+                    cp "$config_file" "$backup_dir/configs/"
+                    config_count=$((config_count + 1))
+                    log "✓ $filename"
+                fi
+            fi
+        done
+    done
+    
+    # Копируем важные директории с конфигурациями
+    log "Checking for configuration directories..."
+    local config_dirs=("certs" "certificates" "ssl" "configs" "config" "custom" "themes" "plugins")
+    
+    for dir_name in "${config_dirs[@]}"; do
+        local config_dir="$APP_DIR/$dir_name"
+        if [ -d "$config_dir" ] && [ "$(ls -A "$config_dir" 2>/dev/null)" ]; then
+            cp -r "$config_dir" "$backup_dir/configs/"
+            local dir_files=$(find "$config_dir" -type f | wc -l)
+            config_count=$((config_count + dir_files))
+            log "✓ $dir_name/ ($dir_files files)"
+        fi
+    done
+    
+    # Создаем метаданные
+    log "Step 3: Creating backup metadata..."
+    cat > "$backup_dir/metadata.json" << METADATA_EOF
+{
+    "backup_type": "scheduled_full",
+    "timestamp": "$timestamp",
+    "app_name": "${APP_NAME:-remnawave}",
+    "script_version": "2.1",
+    "database_included": true,
+    "configs_included": true,
+    "config_files_count": $config_count,
+    "hostname": "$(hostname)",
+    "scheduled": true,
+    "compression": $compression_enabled,
+    "backup_size": "calculated_after_compression"
+}
+METADATA_EOF
+    
+    # Создаем информационный файл
+    cat > "$backup_dir/backup_info.txt" << INFO_EOF
+Remnawave Panel Scheduled Backup Information
+===========================================
+
+Backup Date: $(date)
+Backup Type: Scheduled Full System Backup
+Hostname: $(hostname)
+APP_NAME: ${APP_NAME:-remnawave}
+
+Included Components:
+✓ PostgreSQL Database (complete dump)
+✓ Environment Files (.env, .env.subscription)
+✓ Docker Compose Configuration
+✓ Additional Config Files ($config_count files)
+✓ Configuration Directories (if present)
+✓ SSL Certificates (if present)
+
+Restoration:
+1. Install Remnawave Panel on target system
+2. Stop services: sudo ${APP_NAME:-remnawave} down
+3. Extract this backup
+4. Restore database: cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres
+5. Copy configs to appropriate locations
+6. Start services: sudo ${APP_NAME:-remnawave} up
+
+Generated by Remnawave Scheduled Backup System v2.1
+INFO_EOF
+    
+    log "Configuration files included ($config_count items)"
+    
+    local backup_path=""
+    
+    # Компрессия (всегда применяется для scheduled backup если включена)
+    if [ "$compression_enabled" = "true" ]; then
+        log "Step 4: Compressing backup..."
+        cd "$BACKUP_DIR"
+        if tar -czf "${backup_name}.tar.gz" -C . "$(basename "$backup_dir")" 2>/dev/null; then
+            local compressed_size=$(du -sh "${backup_name}.tar.gz" | cut -f1)
+            log "Backup compressed successfully ($compressed_size)"
+            backup_path="$BACKUP_DIR/${backup_name}.tar.gz"
+            
+            # Удаляем некомпрессированную версию
+            rm -rf "$backup_dir"
+        else
+            log "ERROR: Compression failed, keeping uncompressed backup"
+            backup_path="$backup_dir"
+        fi
+    else
+        backup_path="$backup_dir"
+    fi
+    
+    if [ -f "$backup_path" ] || [ -d "$backup_path" ]; then
+        if [ -f "$backup_path" ]; then
+            local file_size=$(du -h "$backup_path" | cut -f1)
+            local file_size_mb=$(du -m "$backup_path" | cut -f1)
+        else
+            local file_size=$(du -sh "$backup_path" | cut -f1)
+            local file_size_mb=$(du -sm "$backup_path" | cut -f1)
+        fi
+        
+        log "Backup created successfully: $(basename "$backup_path") ($file_size)"
         
         # Отправка в Telegram
         if [ "$telegram_enabled" = "true" ]; then
@@ -887,9 +1025,11 @@ main() {
             
             local message="✅ Scheduled backup completed successfully!
 📅 Date: $(date '+%Y-%m-%d %H:%M:%S')
-📦 File: $backup_name
+📦 File: $(basename "$backup_path")
 📊 Size: $file_size
 🗄️ Database: Remnawave Panel
+📁 Configs: $config_count files included
+🗜️ Compression: $([ "$compression_enabled" = "true" ] && echo "Enabled" || echo "Disabled")
 🤖 API: $([ "$use_custom_api" = "true" ] && echo "Custom (2GB limit)" || echo "Official (49MB limit)")"
             
             local telegram_success=false
@@ -929,10 +1069,11 @@ main() {
         log "Cleaning up backups older than $retention_days days..."
         
         # Удаляем старые файлы, но оставляем минимальное количество
-        local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.sql* 2>/dev/null | wc -l)
+        local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.{sql*,tar.gz} 2>/dev/null | wc -l)
         
         if [ "$backup_count" -gt "$min_backups" ]; then
-            find "$BACKUP_DIR" -name "remnawave_scheduled_*.sql*" -type f -mtime +$retention_days -delete
+            find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type f -mtime +$retention_days -delete 2>/dev/null
+            find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type d -mtime +$retention_days -exec rm -rf {} + 2>/dev/null
             log "Old backups cleaned up"
         else
             log "Keeping all backups (count: $backup_count, minimum: $min_backups)"
@@ -2378,11 +2519,13 @@ backup_command() {
     fi
 
     local compress=false
+    local include_configs=false
     
     # Парсинг аргументов
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             --compress|-c) compress=true ;;
+            --include-configs) include_configs=true ;;
             -h|--help) 
                 echo -e "\033[1;37m💾 Remnawave Database Backup\033[0m"
                 echo
@@ -2390,13 +2533,15 @@ backup_command() {
                 echo -e "  \033[38;5;15m$APP_NAME backup\033[0m [\033[38;5;244moptions\033[0m]"
                 echo
                 echo -e "\033[1;37mOptions:\033[0m"
-                echo -e "  \033[38;5;244m--compress, -c\033[0m  Compress backup file with gzip"
-                echo -e "  \033[38;5;244m--help, -h\033[0m      Show this help"
+                echo -e "  \033[38;5;244m--compress, -c\033[0m      Compress backup file with gzip"
+                echo -e "  \033[38;5;244m--include-configs\033[0m   Include configuration files"
+                echo -e "  \033[38;5;244m--help, -h\033[0m          Show this help"
                 echo
                 echo -e "\033[1;37mExample:\033[0m"
-                echo -e "  \033[38;5;15m$APP_NAME backup --compress\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup --compress --include-configs\033[0m"
                 echo
                 echo -e "\033[38;5;8mBackup includes full database (schema + data)\033[0m"
+                echo -e "\033[38;5;8mWith --include-configs: also includes all config files\033[0m"
                 exit 0
                 ;;
             *) 
@@ -2447,71 +2592,237 @@ backup_command() {
 
     # Генерируем имя файла
     local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_name="remnawave_full_${timestamp}"
+    local backup_name=""
+    local backup_path=""
+    
+    if [ "$include_configs" = true ]; then
+        # Полный бэкап с конфигами
+        backup_name="remnawave_full_${timestamp}"
+        local backup_dir="$BACKUP_DIR/$backup_name"
+        mkdir -p "$backup_dir"
+        
+        echo -e "\033[1;37m💾 Creating full system backup...\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        
+        # Создаем дамп базы данных
+        echo -e "\033[38;5;250m📝 Step 1:\033[0m Exporting database..."
+        if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_dir/database.sql" 2>/dev/null; then
+            local db_size=$(du -sh "$backup_dir/database.sql" | cut -f1)
+            echo -e "\033[1;32m✅ Database exported successfully ($db_size)\033[0m"
+        else
+            echo -e "\033[1;31m❌ Database export failed!\033[0m"
+            rm -rf "$backup_dir"
+            exit 1
+        fi
+        
+        # Универсальное копирование конфигурационных файлов
+        echo -e "\033[38;5;250m📝 Step 2:\033[0m Including configuration files..."
+        mkdir -p "$backup_dir/configs"
+        
+        local config_count=0
+        
+        # Копируем основные конфигурационные файлы
+        echo -e "\033[38;5;244m   Copying main configuration files...\033[0m"
+        for config_file in "$ENV_FILE" "$SUB_ENV_FILE" "$COMPOSE_FILE"; do
+            if [ -f "$config_file" ]; then
+                local filename=$(basename "$config_file")
+                cp "$config_file" "$backup_dir/configs/"
+                config_count=$((config_count + 1))
+                echo -e "\033[38;5;244m   ✓ $filename\033[0m"
+            fi
+        done
+        
+        # Копируем дополнительные конфигурационные файлы по расширениям
+        echo -e "\033[38;5;244m   Scanning for additional config files...\033[0m"
+        local extensions=("json" "yml" "yaml" "toml" "ini" "conf" "config" "cfg")
+        
+        for ext in "${extensions[@]}"; do
+            for config_file in "$APP_DIR"/*."$ext"; do
+                if [ -f "$config_file" ]; then
+                    local filename=$(basename "$config_file")
+                    # Исключаем файлы, которые могут быть временными или логами
+                    if [[ ! "$filename" =~ ^(temp|tmp|cache|log|debug) ]]; then
+                        cp "$config_file" "$backup_dir/configs/"
+                        config_count=$((config_count + 1))
+                        echo -e "\033[38;5;244m   ✓ $filename\033[0m"
+                    fi
+                fi
+            done
+        done
+        
+        # Копируем важные директории с конфигурациями
+        echo -e "\033[38;5;244m   Checking for configuration directories...\033[0m"
+        local config_dirs=("certs" "certificates" "ssl" "configs" "config" "custom" "themes" "plugins")
+        
+        for dir_name in "${config_dirs[@]}"; do
+            local config_dir="$APP_DIR/$dir_name"
+            if [ -d "$config_dir" ] && [ "$(ls -A "$config_dir" 2>/dev/null)" ]; then
+                cp -r "$config_dir" "$backup_dir/configs/"
+                local dir_files=$(find "$config_dir" -type f | wc -l)
+                config_count=$((config_count + dir_files))
+                echo -e "\033[38;5;244m   ✓ $dir_name/ ($dir_files files)\033[0m"
+            fi
+        done
+        
+        # Создаем метаданные
+        echo -e "\033[38;5;250m📝 Step 3:\033[0m Creating backup metadata..."
+        cat > "$backup_dir/metadata.json" << EOF
+{
+    "backup_type": "full",
+    "timestamp": "$timestamp",
+    "app_name": "$APP_NAME",
+    "script_version": "$SCRIPT_VERSION",
+    "database_included": true,
+    "configs_included": true,
+    "config_files_count": $config_count,
+    "hostname": "$(hostname)",
+    "backup_size": "calculated_after_compression"
+}
+EOF
+        
+        # Создаем информационный файл
+        cat > "$backup_dir/backup_info.txt" << EOF
+Remnawave Panel Backup Information
+==================================
+
+Backup Date: $(date)
+Backup Type: Full System Backup
+Script Version: $SCRIPT_VERSION
+Hostname: $(hostname)
+
+Included Components:
+✓ PostgreSQL Database (complete dump)
+✓ Environment Files (.env, .env.subscription)
+✓ Docker Compose Configuration
+✓ Additional Config Files ($config_count files)
+✓ Configuration Directories
+✓ SSL Certificates (if present)
+
+Restoration:
+1. Install Remnawave Panel on target system
+2. Stop services: sudo $APP_NAME down
+3. Extract this backup
+4. Restore database: cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres
+5. Copy configs to appropriate locations
+6. Start services: sudo $APP_NAME up
+
+Generated by Remnawave Management CLI v$SCRIPT_VERSION
+EOF
+        
+        echo -e "\033[1;32m✅ Configuration files included ($config_count items)\033[0m"
+        
+        # Компрессия если требуется
+        if [ "$compress" = true ]; then
+            echo -e "\033[38;5;250m📝 Step 4:\033[0m Compressing backup..."
+            cd "$BACKUP_DIR"
+            if tar -czf "${backup_name}.tar.gz" -C . "$(basename "$backup_dir")" 2>/dev/null; then
+                local compressed_size=$(du -sh "${backup_name}.tar.gz" | cut -f1)
+                echo -e "\033[1;32m✅ Backup compressed successfully ($compressed_size)\033[0m"
+                backup_path="$BACKUP_DIR/${backup_name}.tar.gz"
+                
+                # Удаляем некомпрессированную версию
+                rm -rf "$backup_dir"
+            else
+                echo -e "\033[1;31m❌ Compression failed, keeping uncompressed backup\033[0m"
+                backup_path="$backup_dir"
+            fi
+        else
+            backup_path="$backup_dir"
+        fi
+        
+    else
+        # Простой бэкап только базы данных
+        if [ "$compress" = true ]; then
+            backup_name="remnawave_db_${timestamp}.sql.gz"
+            backup_path="$BACKUP_DIR/$backup_name"
+        else
+            backup_name="remnawave_db_${timestamp}.sql"
+            backup_path="$BACKUP_DIR/$backup_name"
+        fi
+        
+        echo -e "\033[1;37m💾 Creating database backup...\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo -e "\033[38;5;250mDatabase: $POSTGRES_DB\033[0m"
+        echo -e "\033[38;5;250mContainer: $db_container\033[0m"
+        echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
+        echo
+
+        # Создаем бэкап
+        if [ "$compress" = true ]; then
+            if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+                pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
+                gzip > "$backup_path"; then
+                local backup_size=$(du -sh "$backup_path" | cut -f1)
+                echo -e "\033[1;32m✅ Compressed database backup created successfully ($backup_size)!\033[0m"
+            else
+                echo -e "\033[1;31m❌ Database backup failed!\033[0m"
+                rm -f "$backup_path"
+                exit 1
+            fi
+        else
+            if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+                pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null; then
+                local backup_size=$(du -sh "$backup_path" | cut -f1)
+                echo -e "\033[1;32m✅ Database backup created successfully ($backup_size)!\033[0m"
+            else
+                echo -e "\033[1;31m❌ Database backup failed!\033[0m"
+                rm -f "$backup_path"
+                exit 1
+            fi
+        fi
+    fi
+
+    # Показываем итоговую информацию
+    echo
+    echo -e "\033[1;37m📋 Backup Information:\033[0m"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Location:" "$backup_path"
+    
+    if [ -f "$backup_path" ]; then
+        local file_size=$(du -sh "$backup_path" | cut -f1)
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Size:" "$file_size"
+    elif [ -d "$backup_path" ]; then
+        local dir_size=$(du -sh "$backup_path" | cut -f1)
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Size:" "$dir_size"
+    fi
+    
+    if [ "$include_configs" = true ]; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (database + configs)"
+    else
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Database only"
+    fi
     
     if [ "$compress" = true ]; then
-        backup_name="${backup_name}.sql.gz"
-        local backup_path="$BACKUP_DIR/$backup_name"
-    else
-        backup_name="${backup_name}.sql"
-        local backup_path="$BACKUP_DIR/$backup_name"
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Compression:" "gzip"
     fi
-
-    echo -e "\033[1;37m💾 Creating full database backup...\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
-    echo -e "\033[38;5;250mDatabase: $POSTGRES_DB\033[0m"
-    echo -e "\033[38;5;250mContainer: $db_container\033[0m"
-    echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
     echo
-
-    # Создаем бэкап
-    if [ "$compress" = true ]; then
-        docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
-            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
-            gzip > "$backup_path"
-    else
-        docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
-            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null
-    fi
-
-    # Проверяем результат
-    if [ $? -eq 0 ] && [ -f "$backup_path" ] && [ -s "$backup_path" ]; then
-        local file_size=$(du -h "$backup_path" | cut -f1)
-        echo -e "\033[1;32m✅ Database backup created successfully!\033[0m"
-        echo
-        echo -e "\033[1;37m📋 Backup Information:\033[0m"
-        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Location:" "$backup_path"
-        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Size:" "$file_size"
-        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (schema + data)"
+    
+    # Показываем как восстановить
+    echo -e "\033[1;37m🔄 To restore this backup:\033[0m"
+    if [ "$include_configs" = true ]; then
         if [ "$compress" = true ]; then
-            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Compression:" "gzip"
+            echo -e "\033[38;5;244m1. tar -xzf \"$backup_path\"\033[0m"
+            echo -e "\033[38;5;244m2. Copy configs to appropriate locations\033[0m"
+            echo -e "\033[38;5;244m3. cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
+        else
+            echo -e "\033[38;5;244m1. Copy configs from backup directory\033[0m"
+            echo -e "\033[38;5;244m2. cat \"$backup_path/database.sql\" | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
         fi
-        echo
-        
-        # Показываем как восстановить
-        echo -e "\033[1;37m🔄 To restore this backup:\033[0m"
+    else
         if [ "$compress" = true ]; then
             echo -e "\033[38;5;244mzcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
         else
             echo -e "\033[38;5;244mcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
         fi
-        echo
-        
-        # Автоматическая очистка старых бэкапов (оставляем последние 10)
-        local old_backups=$(ls -t "$BACKUP_DIR"/remnawave_full_*.sql* 2>/dev/null | tail -n +11)
-        if [ -n "$old_backups" ]; then
-            echo "$old_backups" | xargs rm -f
-            local removed_count=$(echo "$old_backups" | wc -l)
-            echo -e "\033[38;5;8m🧹 Cleaned up $removed_count old backup(s) (keeping last 10)\033[0m"
-        fi
-        
-    else
-        colorized_echo red "❌ Backup failed!"
-        echo -e "\033[38;5;8m   Check database connectivity and permissions\033[0m"
-        
-        # Удаляем поврежденный файл если он существует
-        [ -f "$backup_path" ] && rm -f "$backup_path"
-        exit 1
+    fi
+    echo
+    
+    # Автоматическая очистка старых бэкапов (оставляем последние 10)
+    local old_backups=$(ls -t "$BACKUP_DIR"/remnawave_*_*.{sql*,tar.gz} 2>/dev/null | tail -n +11)
+    if [ -n "$old_backups" ]; then
+        echo "$old_backups" | xargs rm -rf
+        local removed_count=$(echo "$old_backups" | wc -l)
+        echo -e "\033[38;5;8m🧹 Cleaned up $removed_count old backup(s) (keeping last 10)\033[0m"
     fi
 }
 
