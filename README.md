@@ -237,14 +237,6 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 ---
 
-## 🌐 Reverse Proxy Example
-
-```text
-node.example.com → 127.0.0.1:3000
-```
-
----
-
 ## 🛡 Security
 
 Recommended UFW setup after installation:
