@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=1.4 (fixed container depends if using --name)
+# VERSION=2.1 
 
 set -e
+SCRIPT_VERSION="2.1"
+
+if [ $# -gt 0 ]; then
+    COMMAND="$1"
+    shift
+fi
+
 
 while [[ $# -gt 0 ]]; do  
     key="$1"  
       
     case $key in  
-        install|install-script|uninstall-script|update|uninstall|up|down|restart|status|logs|edit|edit-env|pm2-monitor|console|backup)  
-            COMMAND="$1"  
-            shift # past argument  
-        ;;  
         --name)  
             if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]]; then  
                 APP_NAME="$2"  
@@ -33,10 +36,11 @@ while [[ $# -gt 0 ]]; do
             shift # past argument  
         ;;  
         *)  
-            shift # past unknown argument  
+            break
         ;;  
     esac  
 done
+
 
 # Fetch IP address from ipinfo.io API
 NODE_IP=$(curl -s -4 ifconfig.io)
@@ -63,6 +67,14 @@ ENV_FILE="$APP_DIR/.env"
 APP_CONFIG_FILE="$APP_DIR/app-config.json"
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/remnawave.sh"  # Update with actual URL
 SUB_ENV_FILE="$APP_DIR/.env.subscription"
+BACKUP_CONFIG_FILE="$APP_DIR/backup-config.json"
+BACKUP_SCRIPT_FILE="$APP_DIR/backup-scheduler.sh"
+BACKUP_LOG_FILE="$APP_DIR/logs/backup.log"
+
+
+
+
+
 
 colorized_echo() {
     local color=$1
@@ -78,6 +90,35 @@ colorized_echo() {
         "cyan") printf "\e[${style};96m${text}\e[0m\n" ;;
         *) echo "${text}" ;;
     esac
+}
+
+check_system_requirements() {
+    local errors=0
+    
+    # Проверяем свободное место (минимум 2GB для панели)
+    local available_space=$(df / | awk 'NR==2 {print $4}')
+    if [ "$available_space" -lt 2097152 ]; then  # 2GB в KB
+        colorized_echo red "Error: Insufficient disk space. At least 2GB required for Remnawave Panel."
+        errors=$((errors + 1))
+    fi
+    
+    # Проверяем RAM (минимум 1GB)
+    local available_ram=$(free -m | awk 'NR==2{print $7}')
+    if [ "$available_ram" -lt 512 ]; then
+        colorized_echo yellow "Warning: Low available RAM (${available_ram}MB). Panel performance may be affected."
+    fi
+    
+    # Проверяем архитектуру
+    local arch=$(uname -m)
+    case "$arch" in
+        'amd64'|'x86_64'|'aarch64'|'arm64') ;;
+        *) 
+            colorized_echo red "Error: Unsupported architecture: $arch"
+            errors=$((errors + 1))
+            ;;
+    esac
+    
+    return $errors
 }
 
 check_running_as_root() {
@@ -217,6 +258,1011 @@ install_remnawave_script() {
     fi  
 }
 
+
+
+
+ensure_backup_dirs() {
+    # Проверяем, что Remnawave установлен
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "\033[1;31m❌ Remnawave is not installed!\033[0m"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
+        return 1
+    fi
+    
+    # Создаем необходимые директории
+    mkdir -p "$APP_DIR/logs" 2>/dev/null || true
+    mkdir -p "$APP_DIR/backups" 2>/dev/null || true
+    mkdir -p "$APP_DIR/temp" 2>/dev/null || true
+    
+    return 0
+}
+
+
+schedule_command() {
+    if [ "$#" -eq 0 ]; then
+        schedule_menu
+        return
+    fi
+        if [ "$#" -eq 0 ]; then
+        schedule_menu  
+        return 0       
+    fi
+    
+    case "$1" in
+        setup|config) schedule_setup_menu ;;
+        enable) schedule_enable ;;
+        disable) schedule_disable ;;
+        status) schedule_status ;;
+        test) schedule_test_backup ;;
+        test-telegram) schedule_test_telegram ;;
+        run) schedule_run_backup ;;
+        logs) schedule_show_logs ;;
+        cleanup) schedule_cleanup ;;
+        help|-h|--help) schedule_help ;;
+        menu) schedule_menu ;;
+        *) 
+            echo -e "\033[1;31mUnknown command: $1\033[0m"
+            echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME schedule help\033[38;5;8m' for available commands\033[0m"
+            echo
+            echo -e "\033[1;37mAvailable commands:\033[0m"
+            echo -e "   \033[38;5;15msetup\033[0m           Configure backup settings"
+            echo -e "   \033[38;5;15menable\033[0m          Enable scheduler"
+            echo -e "   \033[38;5;15mdisable\033[0m         Disable scheduler"
+            echo -e "   \033[38;5;15mstatus\033[0m          Show scheduler status"
+            echo -e "   \033[38;5;15mtest\033[0m            Test backup creation"
+            echo -e "   \033[38;5;15mtest-telegram\033[0m   Test Telegram delivery"
+            echo -e "   \033[38;5;15mrun\033[0m             Run backup now"
+            echo -e "   \033[38;5;15mlogs\033[0m            View backup logs"
+            echo -e "   \033[38;5;15mcleanup\033[0m         Clean old backups"
+            echo -e "   \033[38;5;15mhelp\033[0m            Show this help"
+            ;;
+    esac
+}
+
+
+schedule_menu() {
+    if ! ensure_backup_dirs; then
+        return 1
+    fi
+    
+    while true; do
+        clear
+        echo -e "\033[1;37m📅 Backup Scheduler Management\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo
+        
+        local status=$(schedule_get_status)
+        if [ "$status" = "enabled" ]; then
+            echo -e "\033[1;32m✅ Scheduler Status: ENABLED\033[0m"
+        else
+            echo -e "\033[1;31m❌ Scheduler Status: DISABLED\033[0m"
+        fi
+        
+        if [ -f "$BACKUP_CONFIG_FILE" ]; then
+            local schedule=$(jq -r '.schedule // "Not configured"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local telegram_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local retention=$(jq -r '.retention.days // 7' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            
+            echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
+            echo -e "\033[38;5;250mTelegram: $([ "$telegram_enabled" = "true" ] && echo "✅ Enabled" || echo "❌ Disabled")\033[0m"
+            echo -e "\033[38;5;250mRetention: $retention days\033[0m"
+        else
+            echo -e "\033[38;5;244mNo configuration found\033[0m"
+        fi
+        
+        echo
+        echo -e "\033[1;37m📋 Available Actions:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 🔧 Configure backup settings"
+        echo -e "   \033[38;5;15m2)\033[0m ⚙️  Enable/Disable scheduler"
+        echo -e "   \033[38;5;15m3)\033[0m 🧪 Test backup creation"
+        echo -e "   \033[38;5;15m4)\033[0m 📱 Test Telegram delivery"
+        echo -e "   \033[38;5;15m5)\033[0m 📊 Show scheduler status"
+        echo -e "   \033[38;5;15m6)\033[0m 📋 View backup logs"
+        echo -e "   \033[38;5;15m7)\033[0m 🧹 Cleanup old backups"
+        echo -e "   \033[38;5;15m8)\033[0m ▶️  Run backup now"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
+        echo
+        
+        read -p "Select option [0-8]: " choice
+        
+        case "$choice" in
+            1) schedule_setup_menu ;;
+            2) schedule_toggle ;;
+            3) schedule_test_backup ;;
+            4) schedule_test_telegram ;;
+            5) schedule_status ;;
+            6) schedule_show_logs ;;
+            7) schedule_cleanup ;;
+            8) schedule_run_backup ;;
+            0) 
+                clear
+                return 0  
+                ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+
+
+schedule_setup_menu() {
+    while true; do
+        clear
+        echo -e "\033[1;37m🔧 Backup Configuration\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+        echo
+        
+        if [ -f "$BACKUP_CONFIG_FILE" ]; then
+            echo -e "\033[1;37m📋 Current Settings:\033[0m"
+            local schedule=$(jq -r '.schedule // "Not set"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local compression=$(jq -r '.compression.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local retention=$(jq -r '.retention.days // 7' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local telegram_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Schedule:" "$schedule"
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Compression:" "$([ "$compression" = "true" ] && echo "Enabled" || echo "Disabled")"
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s days\033[0m\n" "Retention:" "$retention"
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Telegram:" "$([ "$telegram_enabled" = "true" ] && echo "Enabled (49MB limit)" || echo "Disabled")"
+            echo
+        fi
+        
+        echo -e "\033[1;37m⚙️  Configuration Options:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m ⏰ Set backup schedule"
+        echo -e "   \033[38;5;15m2)\033[0m 🗜️  Configure compression"
+        echo -e "   \033[38;5;15m3)\033[0m 🗂️  Set retention policy"
+        echo -e "   \033[38;5;15m4)\033[0m 📱 Configure Telegram"
+        echo -e "   \033[38;5;15m5)\033[0m 🔄 Reset to defaults"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back"
+        echo
+        
+        read -p "Select option [0-6]: " choice
+        
+        case "$choice" in
+            1) schedule_configure_schedule ;;
+            2) schedule_configure_compression ;;
+            3) schedule_configure_retention ;;
+            4) schedule_configure_telegram ;;
+            5) schedule_reset_config ;;
+            0) 
+                return 0  
+                ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+schedule_configure_schedule() {
+    clear
+    echo -e "\033[1;37m⏰ Configure Backup Schedule\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
+    echo
+    echo -e "\033[1;37m📋 Predefined Schedules:\033[0m"
+    echo -e "   \033[38;5;15m1)\033[0m Daily at 2:00 AM"
+    echo -e "   \033[38;5;15m2)\033[0m Daily at 4:00 AM"
+    echo -e "   \033[38;5;15m3)\033[0m Every 12 hours"
+    echo -e "   \033[38;5;15m4)\033[0m Weekly (Sunday 2:00 AM)"
+    echo -e "   \033[38;5;15m5)\033[0m Custom cron expression"
+    echo
+    
+    read -p "Select schedule [1-5]: " choice
+    
+    local cron_expression=""
+    case "$choice" in
+        1) cron_expression="0 2 * * *" ;;
+        2) cron_expression="0 4 * * *" ;;
+        3) cron_expression="0 */12 * * *" ;;
+        4) cron_expression="0 2 * * 0" ;;
+        5) 
+            echo
+            echo -e "\033[1;37m⚙️  Custom Cron Expression\033[0m"
+            echo -e "\033[38;5;244mFormat: minute hour day month weekday\033[0m"
+            echo -e "\033[38;5;244mExample: 0 3 * * * (daily at 3:00 AM)\033[0m"
+            echo
+            read -p "Enter cron expression: " cron_expression
+            
+            if ! echo "$cron_expression" | grep -E '^[0-9\*\-\,\/]+ [0-9\*\-\,\/]+ [0-9\*\-\,\/]+ [0-9\*\-\,\/]+ [0-9\*\-\,\/]+$' >/dev/null; then
+                echo -e "\033[1;31m❌ Invalid cron expression!\033[0m"
+                sleep 2
+                return
+            fi
+            ;;
+        *) echo -e "\033[1;31mInvalid option!\033[0m"; sleep 1; return ;;
+    esac
+    
+    schedule_update_config ".schedule" "\"$cron_expression\""
+    echo -e "\033[1;32m✅ Schedule updated: $cron_expression\033[0m"
+    sleep 2
+}
+
+schedule_configure_compression() {
+    clear
+    echo -e "\033[1;37m🗜️  Configure Compression\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    echo -e "\033[38;5;250mCompression reduces backup size but increases CPU usage\033[0m"
+    echo
+    
+    read -p "Enable compression? [y/N]: " enable_compression
+    
+    if [[ $enable_compression =~ ^[Yy]$ ]]; then
+        schedule_update_config ".compression.enabled" "true"
+        
+        echo
+        echo -e "\033[1;37m📊 Compression Level:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m Fast (level 1)"
+        echo -e "   \033[38;5;15m2)\033[0m Balanced (level 6)"
+        echo -e "   \033[38;5;15m3)\033[0m Best (level 9)"
+        echo
+        
+        read -p "Select compression level [1-3]: " level_choice
+        
+        local compression_level=6
+        case "$level_choice" in
+            1) compression_level=1 ;;
+            2) compression_level=6 ;;
+            3) compression_level=9 ;;
+        esac
+        
+        schedule_update_config ".compression.level" "$compression_level"
+        echo -e "\033[1;32m✅ Compression enabled (level $compression_level)\033[0m"
+    else
+        schedule_update_config ".compression.enabled" "false"
+        echo -e "\033[1;32m✅ Compression disabled\033[0m"
+    fi
+    
+    sleep 2
+}
+
+schedule_configure_retention() {
+    clear
+    echo -e "\033[1;37m🗂️  Configure Retention Policy\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
+    echo
+    echo -e "\033[38;5;250mHow long to keep backup files before automatic deletion\033[0m"
+    echo
+    
+    read -p "Retention period in days [7]: " retention_days
+    retention_days=${retention_days:-7}
+    
+    if ! [[ "$retention_days" =~ ^[0-9]+$ ]] || [ "$retention_days" -lt 1 ]; then
+        echo -e "\033[1;31m❌ Invalid number!\033[0m"
+        sleep 2
+        return
+    fi
+    
+    schedule_update_config ".retention.days" "$retention_days"
+    
+    echo
+    read -p "Keep minimum number of backups regardless of age? [y/N]: " keep_minimum
+    if [[ $keep_minimum =~ ^[Yy]$ ]]; then
+        read -p "Minimum backups to keep [3]: " min_backups
+        min_backups=${min_backups:-3}
+        
+        if [[ "$min_backups" =~ ^[0-9]+$ ]] && [ "$min_backups" -ge 1 ]; then
+            schedule_update_config ".retention.min_backups" "$min_backups"
+        fi
+    fi
+    
+    echo -e "\033[1;32m✅ Retention policy updated: $retention_days days\033[0m"
+    sleep 2
+}
+
+# Настройка Telegram
+schedule_configure_telegram() {
+    clear
+    echo -e "\033[1;37m📱 Configure Telegram Integration\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo
+    
+    read -p "Enable Telegram notifications? [y/N]: " enable_telegram
+    
+    if [[ $enable_telegram =~ ^[Yy]$ ]]; then
+        schedule_update_config ".telegram.enabled" "true"
+        
+        # Устанавливаем параметры для официального API
+        schedule_update_config ".telegram.use_custom_api" "false"
+        schedule_update_config ".telegram.api_server" "\"https://api.telegram.org\""
+        schedule_update_config ".telegram.max_file_size" "49"
+        schedule_update_config ".telegram.split_large_files" "true"
+        
+        echo -e "\033[1;32m✅ Using official Telegram Bot API (49MB file limit)\033[0m"
+        
+        # Bot Token
+        echo
+        echo -e "\033[1;37m🤖 Bot Token Configuration\033[0m"
+        echo -e "\033[38;5;244mGet token from @BotFather on Telegram\033[0m"
+        
+        local current_token=$(jq -r '.telegram.bot_token // ""' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+        if [ -n "$current_token" ] && [ "$current_token" != "null" ]; then
+            echo -e "\033[38;5;250mCurrent token: ${current_token:0:10}...\033[0m"
+            read -p "Keep current token? [Y/n]: " keep_token
+            if [[ ! $keep_token =~ ^[Nn]$ ]]; then
+                current_token=""
+            fi
+        fi
+        
+        if [ -z "$current_token" ] || [ "$current_token" = "null" ]; then
+            read -p "Enter bot token: " bot_token
+            if [ -z "$bot_token" ]; then
+                echo -e "\033[1;31m❌ Token is required!\033[0m"
+                sleep 2
+                return
+            fi
+            schedule_update_config ".telegram.bot_token" "\"$bot_token\""
+        fi
+        
+        # Chat ID
+        echo
+        echo -e "\033[1;37m💬 Chat Configuration\033[0m"
+        echo -e "\033[38;5;244mFor groups: use negative ID (e.g., -1001234567890)\033[0m"
+        echo -e "\033[38;5;244mFor private: use positive ID (e.g., 123456789)\033[0m"
+        
+        read -p "Enter chat ID: " chat_id
+        if [ -z "$chat_id" ]; then
+            echo -e "\033[1;31m❌ Chat ID is required!\033[0m"
+            sleep 2
+            return
+        fi
+        schedule_update_config ".telegram.chat_id" "\"$chat_id\""
+        
+        # Thread ID (optional)
+        echo
+        echo -e "\033[1;37m🧵 Thread Configuration (Optional)\033[0m"
+        echo -e "\033[38;5;244mFor group threads/topics. Leave empty if not using threads.\033[0m"
+        
+        read -p "Enter thread ID (optional): " thread_id
+        if [ -n "$thread_id" ]; then
+            schedule_update_config ".telegram.thread_id" "\"$thread_id\""
+        else
+            schedule_update_config ".telegram.thread_id" "null"
+        fi
+        
+        echo -e "\033[1;32m✅ Telegram integration configured!\033[0m"
+        echo -e "\033[38;5;8m   Files larger than 49MB will be automatically split\033[0m"
+        echo -e "\033[38;5;8m   Use 'Test Telegram' to verify settings\033[0m"
+    else
+        schedule_update_config ".telegram.enabled" "false"
+        echo -e "\033[1;32m✅ Telegram notifications disabled\033[0m"
+    fi
+    
+    sleep 2
+}
+
+# Функция обновления конфигурации
+schedule_update_config() {
+    local key="$1"
+    local value="$2"
+    
+    # Создаем конфиг если не существует
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        echo '{}' > "$BACKUP_CONFIG_FILE"
+    fi
+    
+    # Обновляем значение
+    local temp_file=$(mktemp)
+    jq "$key = $value" "$BACKUP_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$BACKUP_CONFIG_FILE"
+}
+
+# Функция получения статуса
+schedule_get_status() {
+    if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT_FILE"; then
+        echo "enabled"
+    else
+        echo "disabled"
+    fi
+}
+
+# Включение/выключение планировщика
+schedule_toggle() {
+    local status=$(schedule_get_status)
+    
+    if [ "$status" = "enabled" ]; then
+        schedule_disable
+    else
+        schedule_enable
+    fi
+}
+
+# Включение планировщика
+schedule_enable() {
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        echo -e "\033[1;31m❌ No configuration found! Please configure backup settings first.\033[0m"
+        sleep 2
+        return
+    fi
+    
+    local schedule=$(jq -r '.schedule // ""' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    if [ -z "$schedule" ] || [ "$schedule" = "null" ]; then
+        echo -e "\033[1;31m❌ No schedule configured! Please set backup schedule first.\033[0m"
+        sleep 2
+        return
+    fi
+    
+    # Создаем скрипт планировщика
+    schedule_create_backup_script
+    
+    # Добавляем в crontab
+    local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
+    
+    # Удаляем старую запись если есть
+    (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE"; echo "$cron_entry") | crontab -
+    
+    echo -e "\033[1;32m✅ Backup scheduler enabled!\033[0m"
+    echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
+    sleep 2
+}
+
+# Отключение планировщика
+schedule_disable() {
+    crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab -
+    echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
+    sleep 2
+}
+
+
+
+schedule_create_backup_script() {
+    cat > "$BACKUP_SCRIPT_FILE" << 'EOF'
+#!/bin/bash
+# Автоматически сгенерированный скрипт резервного копирования
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/backup-config.json"
+APP_DIR="$SCRIPT_DIR"
+BACKUP_DIR="$APP_DIR/backups"
+TEMP_DIR="$APP_DIR/temp"
+
+# Функция логирования
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Функция отправки в Telegram
+send_telegram() {
+    local message="$1"
+    local file_path="$2"
+    
+    local bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE" 2>/dev/null)
+    local chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE" 2>/dev/null)
+    local thread_id=$(jq -r '.telegram.thread_id' "$CONFIG_FILE" 2>/dev/null)
+    local api_server=$(jq -r '.telegram.api_server // "https://api.telegram.org"' "$CONFIG_FILE" 2>/dev/null)
+    local use_custom_api=$(jq -r '.telegram.use_custom_api // false' "$CONFIG_FILE" 2>/dev/null)
+    
+    if [ -z "$bot_token" ] || [ "$bot_token" = "null" ] || [ -z "$chat_id" ] || [ "$chat_id" = "null" ]; then
+        log "ERROR: Telegram credentials not configured"
+        return 1
+    fi
+    
+    # Удаляем завершающий слеш если есть
+    api_server=${api_server%/}
+    
+    local api_url="$api_server/bot$bot_token"
+    local params="chat_id=$chat_id"
+    
+    if [ -n "$thread_id" ] && [ "$thread_id" != "null" ]; then
+        params="$params&message_thread_id=$thread_id"
+    fi
+    
+    if [ -n "$file_path" ] && [ -f "$file_path" ]; then
+        log "Sending file via Telegram API: $(basename "$file_path")"
+        
+        # Отправка файла
+        local response=$(curl -s -X POST "$api_url/sendDocument" \
+            -F "$params" \
+            -F "document=@$file_path" \
+            -F "caption=$message")
+        
+        # Проверяем ответ
+        if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
+            log "File sent successfully to Telegram"
+            return 0
+        else
+            local error_desc=$(echo "$response" | jq -r '.description // "Unknown error"')
+            log "ERROR: Failed to send file to Telegram: $error_desc"
+            
+            # Если файл слишком большой для официального API, предупреждаем
+            if echo "$error_desc" | grep -qi "file.*too.*large\|entity.*too.*large"; then
+                log "File too large for official API. Consider using custom Bot API server for files up to 2GB"
+            fi
+            
+            return 1
+        fi
+    else
+        # Отправка текста
+        local response=$(curl -s -X POST "$api_url/sendMessage" \
+            -d "$params" \
+            -d "text=$message")
+        
+        if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
+            log "Message sent successfully to Telegram"
+            return 0
+        else
+            local error_desc=$(echo "$response" | jq -r '.description // "Unknown error"')
+            log "ERROR: Failed to send message to Telegram: $error_desc"
+            return 1
+        fi
+    fi
+}
+
+# Функция разделения файла (только для официального API)
+split_file() {
+    local file_path="$1"
+    local max_size_mb="$2"
+    local base_name=$(basename "$file_path")
+    local split_dir="$TEMP_DIR/split_$$"
+    
+    log "Splitting file $base_name into ${max_size_mb}MB parts..."
+    
+    mkdir -p "$split_dir"
+    
+    # Разделяем файл на части
+    split -b "${max_size_mb}M" "$file_path" "$split_dir/${base_name}.part_"
+    
+    # Отправляем каждую часть
+    local part_num=1
+    local success=true
+    
+    for part_file in "$split_dir"/*; do
+        if [ -f "$part_file" ]; then
+            local part_name="${base_name}.part_${part_num}"
+            mv "$part_file" "$split_dir/$part_name"
+            
+            local part_message="📦 Backup part $part_num/${total_parts:-?}
+📁 Original file: $base_name"
+            
+            if ! send_telegram "$part_message" "$split_dir/$part_name"; then
+                success=false
+                break
+            fi
+            
+            part_num=$((part_num + 1))
+        fi
+    done
+    
+    # Очищаем временные файлы
+    rm -rf "$split_dir"
+    
+    if [ "$success" = true ]; then
+        log "All file parts sent successfully"
+        return 0
+    else
+        log "ERROR: Failed to send some file parts"
+        return 1
+    fi
+}
+
+# Основная функция резервного копирования
+main() {
+    log "Starting scheduled backup..."
+    
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log "ERROR: Configuration file not found"
+        exit 1
+    fi
+    
+    # Читаем конфигурацию
+    local compression_enabled=$(jq -r '.compression.enabled // false' "$CONFIG_FILE")
+    local compression_level=$(jq -r '.compression.level // 6' "$CONFIG_FILE")
+    local telegram_enabled=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
+    local split_files=$(jq -r '.telegram.split_large_files // true' "$CONFIG_FILE")
+    local max_file_size=$(jq -r '.telegram.max_file_size // 49' "$CONFIG_FILE")
+    local use_custom_api=$(jq -r '.telegram.use_custom_api // false' "$CONFIG_FILE")
+    
+    # Создаем резервную копию
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_name="remnawave_scheduled_${timestamp}"
+    
+    if [ "$compression_enabled" = "true" ]; then
+        backup_name="${backup_name}.sql.gz"
+        local backup_path="$BACKUP_DIR/$backup_name"
+        
+        log "Creating compressed backup: $backup_name"
+        docker exec -e PGPASSWORD="$(grep POSTGRES_PASSWORD $APP_DIR/.env | cut -d'=' -f2)" \
+            "${APP_NAME:-remnawave}-db" \
+            pg_dump -U postgres -d postgres -F p | gzip -"$compression_level" > "$backup_path"
+    else
+        backup_name="${backup_name}.sql"
+        local backup_path="$BACKUP_DIR/$backup_name"
+        
+        log "Creating backup: $backup_name"
+        docker exec -e PGPASSWORD="$(grep POSTGRES_PASSWORD $APP_DIR/.env | cut -d'=' -f2)" \
+            "${APP_NAME:-remnawave}-db" \
+            pg_dump -U postgres -d postgres -F p > "$backup_path"
+    fi
+    
+    if [ $? -eq 0 ] && [ -f "$backup_path" ] && [ -s "$backup_path" ]; then
+        local file_size=$(du -h "$backup_path" | cut -f1)
+        local file_size_mb=$(du -m "$backup_path" | cut -f1)
+        log "Backup created successfully: $backup_name ($file_size)"
+        
+        # Отправка в Telegram
+        if [ "$telegram_enabled" = "true" ]; then
+            log "Sending backup to Telegram..."
+            
+            local message="✅ Scheduled backup completed successfully!
+📅 Date: $(date '+%Y-%m-%d %H:%M:%S')
+📦 File: $backup_name
+📊 Size: $file_size
+🗄️ Database: Remnawave Panel
+🤖 API: $([ "$use_custom_api" = "true" ] && echo "Custom (2GB limit)" || echo "Official (49MB limit)")"
+            
+            local telegram_success=false
+            
+            # Проверяем нужно ли разделять файл
+            if [ "$use_custom_api" = "true" ]; then
+                # Для кастомного API отправляем файл целиком (до 2GB)
+                log "Using custom API, sending full file (${file_size_mb}MB)"
+                if send_telegram "$message" "$backup_path"; then
+                    telegram_success=true
+                fi
+            elif [ "$split_files" = "true" ] && [ "$file_size_mb" -gt "$max_file_size" ]; then
+                # Для официального API разделяем большие файлы
+                log "File size ($file_size_mb MB) exceeds limit ($max_file_size MB), splitting..."
+                send_telegram "$message"
+                if split_file "$backup_path" "$max_file_size"; then
+                    telegram_success=true
+                fi
+            else
+                # Отправляем файл целиком если он помещается
+                if send_telegram "$message" "$backup_path"; then
+                    telegram_success=true
+                fi
+            fi
+            
+            if [ "$telegram_success" = true ]; then
+                log "Backup sent to Telegram successfully"
+            else
+                log "WARNING: Failed to send backup to Telegram"
+            fi
+        fi
+        
+        # Очистка старых бэкапов
+        local retention_days=$(jq -r '.retention.days // 7' "$CONFIG_FILE")
+        local min_backups=$(jq -r '.retention.min_backups // 3' "$CONFIG_FILE")
+        
+        log "Cleaning up backups older than $retention_days days..."
+        
+        # Удаляем старые файлы, но оставляем минимальное количество
+        local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.sql* 2>/dev/null | wc -l)
+        
+        if [ "$backup_count" -gt "$min_backups" ]; then
+            find "$BACKUP_DIR" -name "remnawave_scheduled_*.sql*" -type f -mtime +$retention_days -delete
+            log "Old backups cleaned up"
+        else
+            log "Keeping all backups (count: $backup_count, minimum: $min_backups)"
+        fi
+        
+        log "Backup process completed successfully"
+    else
+        log "ERROR: Backup creation failed"
+        
+        if [ "$telegram_enabled" = "true" ]; then
+            send_telegram "❌ Scheduled backup FAILED!
+📅 Date: $(date '+%Y-%m-%d %H:%M:%S')
+⚠️ Please check the backup logs and system status."
+        fi
+        
+        exit 1
+    fi
+}
+
+main "$@"
+EOF
+
+    chmod +x "$BACKUP_SCRIPT_FILE"
+}
+
+# Тест создания резервной копии
+schedule_test_backup() {
+    clear
+    echo -e "\033[1;37m🧪 Testing Backup Creation\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    
+    if ! is_remnawave_up; then
+        echo -e "\033[1;31m❌ Remnawave services are not running!\033[0m"
+        echo -e "\033[38;5;8m   Start services first with 'sudo $APP_NAME up'\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "\033[38;5;250mCreating test backup...\033[0m"
+    
+    # Создаем скрипт если не существует
+    if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
+        schedule_create_backup_script
+    fi
+    
+    # Запускаем тест
+    if bash "$BACKUP_SCRIPT_FILE"; then
+        echo -e "\033[1;32m✅ Test backup completed successfully!\033[0m"
+        echo -e "\033[38;5;250mCheck $BACKUP_DIR for the backup file\033[0m"
+    else
+        echo -e "\033[1;31m❌ Test backup failed!\033[0m"
+        echo -e "\033[38;5;8m   Check logs: $BACKUP_LOG_FILE\033[0m"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+# Тест Telegram
+schedule_test_telegram() {
+    clear
+    echo -e "\033[1;37m📱 Testing Telegram Integration\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
+    echo
+    
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        echo -e "\033[1;31m❌ No configuration found!\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    local telegram_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    if [ "$telegram_enabled" != "true" ]; then
+        echo -e "\033[1;31m❌ Telegram integration is disabled!\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    local bot_token=$(jq -r '.telegram.bot_token' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    local chat_id=$(jq -r '.telegram.chat_id' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    local thread_id=$(jq -r '.telegram.thread_id' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    
+    echo -e "\033[38;5;250mSending test message...\033[0m"
+    
+    local api_url="https://api.telegram.org/bot$bot_token"
+    local message="🧪 Test message from Remnawave Backup System
+📅 $(date '+%Y-%m-%d %H:%M:%S')
+✅ Telegram integration is working correctly!"
+    
+    local params="chat_id=$chat_id&text=$(echo "$message" | sed 's/ /%20/g')"
+    
+    if [ -n "$thread_id" ] && [ "$thread_id" != "null" ]; then
+        params="$params&message_thread_id=$thread_id"
+    fi
+    
+    local response=$(curl -s -X POST "$api_url/sendMessage" -d "$params")
+    
+    if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Test message sent successfully!\033[0m"
+        echo -e "\033[38;5;250mCheck your Telegram for the test message\033[0m"
+    else
+        echo -e "\033[1;31m❌ Failed to send test message!\033[0m"
+        echo -e "\033[38;5;244mResponse: $(echo "$response" | jq -r '.description // "Unknown error"')\033[0m"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+# Показать статус
+schedule_status() {
+    clear
+    echo -e "\033[1;37m📊 Backup Scheduler Status\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
+    echo
+    
+    local status=$(schedule_get_status)
+    
+    if [ "$status" = "enabled" ]; then
+        echo -e "\033[1;32m✅ Status: ENABLED\033[0m"
+        
+        # Показываем cron задачу
+        local cron_line=$(crontab -l 2>/dev/null | grep "$BACKUP_SCRIPT_FILE")
+        if [ -n "$cron_line" ]; then
+            local schedule=$(echo "$cron_line" | awk '{print $1" "$2" "$3" "$4" "$5}')
+            echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
+        fi
+        
+        # Показываем следующий запуск
+        if command -v crontab >/dev/null && [ -n "$cron_line" ]; then
+            echo -e "\033[38;5;250mNext run: $(echo "$cron_line" | awk '{print $1" "$2" "$3" "$4" "$5}' | crontab -l | head -1)\033[0m"
+        fi
+    else
+        echo -e "\033[1;31m❌ Status: DISABLED\033[0m"
+    fi
+    
+    # Показываем последние бэкапы
+    echo
+    echo -e "\033[1;37m📦 Recent Backups:\033[0m"
+    if ls "$BACKUP_DIR"/remnawave_scheduled_*.sql* >/dev/null 2>&1; then
+        ls -lt "$BACKUP_DIR"/remnawave_scheduled_*.sql* | head -5 | while read line; do
+            local size=$(echo "$line" | awk '{print $5}')
+            local date=$(echo "$line" | awk '{print $6" "$7" "$8}')
+            local file=$(echo "$line" | awk '{print $9}')
+            local filename=$(basename "$file")
+            
+            # Конвертируем размер в читаемый формат
+            local human_size=""
+            if [ "$size" -gt 1073741824 ]; then
+                human_size="$(( size / 1073741824 ))GB"
+            elif [ "$size" -gt 1048576 ]; then
+                human_size="$(( size / 1048576 ))MB"
+            elif [ "$size" -gt 1024 ]; then
+                human_size="$(( size / 1024 ))KB"
+            else
+                human_size="${size}B"
+            fi
+            
+            printf "   \033[38;5;250m%-30s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\n" "$filename" "$human_size" "$date"
+        done
+    else
+        echo -e "\033[38;5;244m   No scheduled backups found\033[0m"
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+# Показать логи
+schedule_show_logs() {
+    clear
+    echo -e "\033[1;37m📋 Backup Logs\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 20))\033[0m"
+    echo
+    
+    if [ -f "$BACKUP_LOG_FILE" ]; then
+        echo -e "\033[38;5;250mLast 20 log entries:\033[0m"
+        echo
+        tail -20 "$BACKUP_LOG_FILE" | while read line; do
+            if echo "$line" | grep -q "ERROR"; then
+                echo -e "\033[1;31m$line\033[0m"
+            elif echo "$line" | grep -q "successfully"; then
+                echo -e "\033[1;32m$line\033[0m"
+            else
+                echo -e "\033[38;5;250m$line\033[0m"
+            fi
+        done
+    else
+        echo -e "\033[38;5;244mNo log file found\033[0m"
+    fi
+    
+    echo
+    read -p "Press Enter to continue..."
+}
+
+# Ручной запуск резервного копирования
+schedule_run_backup() {
+    clear
+    echo -e "\033[1;37m▶️  Manual Backup Run\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 25))\033[0m"
+    echo
+    
+    if ! is_remnawave_up; then
+        echo -e "\033[1;31m❌ Remnawave services are not running!\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "\033[38;5;250mRunning backup now...\033[0m"
+    echo
+    
+    # Создаем скрипт если не существует
+    if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
+        schedule_create_backup_script
+    fi
+    
+    # Запускаем с выводом в реальном времени
+    bash "$BACKUP_SCRIPT_FILE" 2>&1 | while read line; do
+        echo -e "\033[38;5;244m$line\033[0m"
+    done
+    
+    echo
+    read -p "Press Enter to continue..."
+}
+
+# Очистка старых бэкапов
+schedule_cleanup() {
+    clear
+    echo -e "\033[1;37m🧹 Cleanup Old Backups\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 25))\033[0m"
+    echo
+    
+    local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_*.sql* 2>/dev/null | wc -l)
+    echo -e "\033[38;5;250mFound $backup_count backup files\033[0m"
+    
+    if [ "$backup_count" -eq 0 ]; then
+        echo -e "\033[38;5;244mNo backup files to clean\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo
+    read -p "Delete backups older than how many days? [7]: " days
+    days=${days:-7}
+    
+    if ! [[ "$days" =~ ^[0-9]+$ ]] || [ "$days" -lt 1 ]; then
+        echo -e "\033[1;31m❌ Invalid number!\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    local files_to_delete=$(find "$BACKUP_DIR" -name "remnawave_*.sql*" -type f -mtime +$days)
+    local delete_count=$(echo "$files_to_delete" | wc -l)
+    
+    if [ -z "$files_to_delete" ]; then
+        echo -e "\033[38;5;250mNo files older than $days days found\033[0m"
+    else
+        echo -e "\033[38;5;250mFiles to delete ($delete_count):\033[0m"
+        echo "$files_to_delete" | while read file; do
+            echo -e "\033[38;5;244m   $(basename "$file")\033[0m"
+        done
+        
+        echo
+        read -p "Proceed with deletion? [y/N]: " confirm
+        if [[ $confirm =~ ^[Yy]$ ]]; then
+            echo "$files_to_delete" | xargs rm -f
+            echo -e "\033[1;32m✅ Deleted $delete_count old backup files\033[0m"
+        else
+            echo -e "\033[38;5;250mCleanup cancelled\033[0m"
+        fi
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+# Сброс конфигурации
+schedule_reset_config() {
+    echo
+    read -p "Reset all backup configuration to defaults? [y/N]: " confirm
+    
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        cat > "$BACKUP_CONFIG_FILE" << 'EOF'
+{
+  "schedule": "0 2 * * *",
+  "compression": {
+    "enabled": true,
+    "level": 6
+  },
+  "retention": {
+    "days": 7,
+    "min_backups": 3
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": null,
+    "chat_id": null,
+    "thread_id": null,
+    "split_large_files": true,
+    "max_file_size": 49,
+    "api_server": "https://api.telegram.org",
+    "use_custom_api": false
+  }
+}
+EOF
+        echo -e "\033[1;32m✅ Configuration reset to defaults\033[0m"
+    else
+        echo -e "\033[38;5;250mReset cancelled\033[0m"
+    fi
+    
+    sleep 2
+}
+
+# Справка
+schedule_help() {
+    clear
+    echo -e "\033[1;37m📚 Backup Scheduler Help\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    echo -e "\033[1;37mCommands:\033[0m"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "setup" "🔧 Configure backup settings"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "enable" "✅ Enable scheduler"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "disable" "❌ Disable scheduler"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "status" "📊 Show status"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "test" "🧪 Test backup creation"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "test-telegram" "📱 Test Telegram delivery"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "run" "▶️  Run backup now"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "logs" "📋 View logs"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "cleanup" "🧹 Clean old backups"
+    echo
+    read -p "Press Enter to continue..."
+}
+
 generate_random_string() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex $((${1}/2))
@@ -225,26 +1271,51 @@ generate_random_string() {
     fi
 }
 
+validate_port() {
+    local port="$1"
+    
+    # Проверяем диапазон портов
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
+    fi
+    
+    # Проверяем, что порт не зарезервирован системой
+    if [ "$port" -lt 1024 ] && [ "$(id -u)" != "0" ]; then
+        colorized_echo yellow "Warning: Port $port requires root privileges"
+    fi
+    
+    # Проверяем на конфликт с известными сервисами
+    case "$port" in
+        22|80|443|53|25|110|143|993|995)
+            colorized_echo yellow "Warning: Port $port is commonly used by system services"
+            ;;
+    esac
+    
+    return 0
+}
+
 get_occupied_ports() {
+    local ports=""
+    
     if command -v ss &>/dev/null; then
-        OCCUPIED_PORTS=$(ss -tuln | awk '{print $5}' | grep -Eo '[0-9]+$' | sort | uniq)
+        ports=$(ss -tuln 2>/dev/null | awk 'NR>1 {print $5}' | grep -Eo '[0-9]+$' | sort -n | uniq)
     elif command -v netstat &>/dev/null; then
-        OCCUPIED_PORTS=$(netstat -tuln | awk '{print $4}' | grep -Eo '[0-9]+$' | sort | uniq)
+        ports=$(netstat -tuln 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eo '[0-9]+$' | sort -n | uniq)
     else
-        colorized_echo yellow "Neither ss nor netstat found. Attempting to install net-tools."
+        colorized_echo yellow "Installing network tools for port checking..."
         detect_os
-        if [[ "$OS" == "Amazon"* ]]; then
-            yum install -y net-tools >/dev/null 2>&1
+        if install_package net-tools; then
+            if command -v netstat &>/dev/null; then
+                ports=$(netstat -tuln 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eo '[0-9]+$' | sort -n | uniq)
+            fi
         else
-            install_package net-tools
-        fi
-        if command -v netstat &>/dev/null; then
-            OCCUPIED_PORTS=$(netstat -tuln | awk '{print $4}' | grep -Eo '[0-9]+$' | sort | uniq)
-        else
-            colorized_echo red "Failed to install net-tools. Please install it manually."
-            exit 1
+            colorized_echo yellow "Could not install net-tools. Skipping port conflict check."
+            return 1
         fi
     fi
+    
+    OCCUPIED_PORTS="$ports"
+    return 0
 }
 
 is_port_occupied() {
@@ -1297,23 +2368,71 @@ update_remnawave() {
     $COMPOSE -f $COMPOSE_FILE -p "$APP_NAME" pull
 }
 
-backup_remnawave() {
+backup_command() {
     check_running_as_root
+    detect_compose  
+    
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
         exit 1
     fi
 
+    local compress=false
+    
+    # Парсинг аргументов
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --compress|-c) compress=true ;;
+            -h|--help) 
+                echo -e "\033[1;37m💾 Remnawave Database Backup\033[0m"
+                echo
+                echo -e "\033[1;37mUsage:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup\033[0m [\033[38;5;244moptions\033[0m]"
+                echo
+                echo -e "\033[1;37mOptions:\033[0m"
+                echo -e "  \033[38;5;244m--compress, -c\033[0m  Compress backup file with gzip"
+                echo -e "  \033[38;5;244m--help, -h\033[0m      Show this help"
+                echo
+                echo -e "\033[1;37mExample:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup --compress\033[0m"
+                echo
+                echo -e "\033[38;5;8mBackup includes full database (schema + data)\033[0m"
+                exit 0
+                ;;
+            *) 
+                echo "Unknown option: $1" >&2
+                echo "Use '$APP_NAME backup --help' for usage information."
+                exit 1
+                ;;
+        esac
+        shift
+    done
     
     if [ ! -f "$ENV_FILE" ]; then
         colorized_echo red ".env file not found!"
         exit 1
     fi
 
+    # Проверяем, что база данных запущена
+    if ! is_remnawave_up; then
+        colorized_echo red "Remnawave services are not running!"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' first\033[0m"
+        exit 1
+    fi
+
+    # Проверяем, что контейнер базы данных доступен
+    local db_container="${APP_NAME}-db"
+    if ! docker ps --format "{{.Names}}" | grep -q "^${db_container}$"; then
+        colorized_echo red "Database container '$db_container' not found or not running!"
+        exit 1
+    fi
+
+    # Получаем данные подключения к БД
     local POSTGRES_USER=$(grep "^POSTGRES_USER=" "$ENV_FILE" | cut -d '=' -f2)
     local POSTGRES_PASSWORD=$(grep "^POSTGRES_PASSWORD=" "$ENV_FILE" | cut -d '=' -f2)
     local POSTGRES_DB=$(grep "^POSTGRES_DB=" "$ENV_FILE" | cut -d '=' -f2)
 
+    # Устанавливаем значения по умолчанию
     POSTGRES_USER=${POSTGRES_USER:-postgres}
     POSTGRES_DB=${POSTGRES_DB:-postgres}
 
@@ -1322,21 +2441,157 @@ backup_remnawave() {
         exit 1
     fi
 
-    local BACKUP_DIR="$APP_DIR/backup"
-    local BACKUP_NAME="pg_backup_data_only_$(date +%F_%H-%M-%S).sql"
+    # Создаем директорию для бэкапов
+    local BACKUP_DIR="$APP_DIR/backups"
     mkdir -p "$BACKUP_DIR"
 
-    colorized_echo blue "Creating PostgreSQL data-only backup..."
-
-    docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "${APP_NAME}-db" \
-        pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --data-only -F p > "$BACKUP_DIR/$BACKUP_NAME"
-
-    if [ $? -eq 0 ]; then
-        colorized_echo green "Data-only backup created at: $BACKUP_DIR/$BACKUP_NAME"
+    # Генерируем имя файла
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_name="remnawave_full_${timestamp}"
+    
+    if [ "$compress" = true ]; then
+        backup_name="${backup_name}.sql.gz"
+        local backup_path="$BACKUP_DIR/$backup_name"
     else
-        colorized_echo red "Backup failed."
+        backup_name="${backup_name}.sql"
+        local backup_path="$BACKUP_DIR/$backup_name"
+    fi
+
+    echo -e "\033[1;37m💾 Creating full database backup...\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[38;5;250mDatabase: $POSTGRES_DB\033[0m"
+    echo -e "\033[38;5;250mContainer: $db_container\033[0m"
+    echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
+    echo
+
+    # Создаем бэкап
+    if [ "$compress" = true ]; then
+        docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
+            gzip > "$backup_path"
+    else
+        docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null
+    fi
+
+    # Проверяем результат
+    if [ $? -eq 0 ] && [ -f "$backup_path" ] && [ -s "$backup_path" ]; then
+        local file_size=$(du -h "$backup_path" | cut -f1)
+        echo -e "\033[1;32m✅ Database backup created successfully!\033[0m"
+        echo
+        echo -e "\033[1;37m📋 Backup Information:\033[0m"
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Location:" "$backup_path"
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Size:" "$file_size"
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (schema + data)"
+        if [ "$compress" = true ]; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Compression:" "gzip"
+        fi
+        echo
+        
+        # Показываем как восстановить
+        echo -e "\033[1;37m🔄 To restore this backup:\033[0m"
+        if [ "$compress" = true ]; then
+            echo -e "\033[38;5;244mzcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
+        else
+            echo -e "\033[38;5;244mcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
+        fi
+        echo
+        
+        # Автоматическая очистка старых бэкапов (оставляем последние 10)
+        local old_backups=$(ls -t "$BACKUP_DIR"/remnawave_full_*.sql* 2>/dev/null | tail -n +11)
+        if [ -n "$old_backups" ]; then
+            echo "$old_backups" | xargs rm -f
+            local removed_count=$(echo "$old_backups" | wc -l)
+            echo -e "\033[38;5;8m🧹 Cleaned up $removed_count old backup(s) (keeping last 10)\033[0m"
+        fi
+        
+    else
+        colorized_echo red "❌ Backup failed!"
+        echo -e "\033[38;5;8m   Check database connectivity and permissions\033[0m"
+        
+        # Удаляем поврежденный файл если он существует
+        [ -f "$backup_path" ] && rm -f "$backup_path"
         exit 1
     fi
+}
+
+
+
+monitor_command() {
+    if ! is_remnawave_installed; then
+        colorized_echo red "Remnawave not installed!"
+        exit 1
+    fi
+    
+    detect_compose
+    
+    if ! is_remnawave_up; then
+        colorized_echo red "Remnawave is not running!"
+        exit 1
+    fi
+    
+    local interval=5
+    local count=-1
+    
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            -i|--interval) interval="$2"; shift ;;
+            -c|--count) count="$2"; shift ;;
+            -h|--help)
+                echo -e "\033[1;37mRemnawave Performance Monitor\033[0m"
+                echo
+                echo -e "\033[1;37mUsage:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME monitor\033[0m [\033[38;5;244moptions\033[0m]"
+                echo
+                echo -e "\033[1;37mOptions:\033[0m"
+                echo -e "  \033[38;5;244m-i, --interval\033[0m  Update interval in seconds (default: 5)"
+                echo -e "  \033[38;5;244m-c, --count\033[0m     Number of updates (default: infinite)"
+                echo -e "  \033[38;5;244m-h, --help\033[0m      Show this help"
+                exit 0
+                ;;
+            *) echo "Unknown option: $1" >&2; exit 1 ;;
+        esac
+        shift
+    done
+    
+    echo -e "\033[1;37m📊 Remnawave Performance Monitor\033[0m"
+    echo -e "\033[38;5;8mPress Ctrl+C to stop\033[0m"
+    echo
+    
+    local iteration=0
+    while [ $count -eq -1 ] || [ $iteration -lt $count ]; do
+        clear
+        echo -e "\033[1;37m📊 Remnawave Performance Monitor - $(date '+%Y-%m-%d %H:%M:%S')\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+        echo
+        
+        # Статистика контейнеров
+        echo -e "\033[1;37m🐳 Container Statistics:\033[0m"
+        docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}" \
+            $(docker ps --filter "label=com.docker.compose.project=$APP_NAME" -q) 2>/dev/null || \
+            echo "No containers found"
+        
+        echo
+        
+        # Системная статистика
+        echo -e "\033[1;37m💻 System Resources:\033[0m"
+        echo -n "   CPU: "
+        top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 | xargs printf "%.1f%% usage\n"
+        echo -n "   Memory: "
+        free -h | awk 'NR==2{printf "%.1f%% usage (%s used / %s total)\n", $3/$2*100, $3, $2}'
+        echo -n "   Disk: "
+        df -h "$APP_DIR" | awk 'NR==2{printf "%s used / %s total (%s)\n", $3, $2, $5}'
+        
+        echo
+        echo -e "\033[38;5;8mUpdating every ${interval}s... (iteration $((iteration + 1)))\033[0m"
+        
+        if [ $count -ne -1 ] && [ $((iteration + 1)) -ge $count ]; then
+            break
+        fi
+        
+        sleep "$interval"
+        iteration=$((iteration + 1))
+    done
 }
 
 is_remnawave_installed() {
@@ -1348,6 +2603,7 @@ is_remnawave_installed() {
 }
 
 is_remnawave_up() {
+    detect_compose
     if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a)" ]; then
         return 1
     else
@@ -1455,14 +2711,30 @@ up_command() {
     }
 
     local no_logs=false
+    
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             -n|--no-logs) no_logs=true ;;
-            -h|--help) help; exit 0 ;;
-            *) echo "Error: Invalid option: $1" >&2; help; exit 0 ;;
+            -h|--help) 
+                echo -e "\033[1;37m▶️  up\033[0m - Start all Remnawave services"
+                echo
+                echo -e "\033[1;37mUsage:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME\033[0m \033[38;5;250mup\033[0m [\033[38;5;244m--no-logs\033[0m]"
+                echo
+                echo -e "\033[1;37mOptions:\033[0m"
+                echo -e "  \033[38;5;244m-n, --no-logs\033[0m   Start without following logs"
+                echo
+                exit 0
+                ;;
+            *) 
+                echo "Error: Invalid option: $1" >&2
+                echo "Use '$APP_NAME up --help' for usage information."
+                exit 1
+                ;;
         esac
         shift
     done
+    
 
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
@@ -1531,80 +2803,602 @@ restart_command() {
     fi
 }
 
-status_command() {
+health_check_command() {
+    echo -e "\033[1;37m🏥 Remnawave System Health Check\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    local issues=0
+    
+    # Проверка установки
     if ! is_remnawave_installed; then
-        echo -n "Status: "
-        colorized_echo red "Not Installed"
-        exit 1
+        echo -e "\033[1;31m❌ Panel not installed\033[0m"
+        return 1
     fi
-
+    
+    # Проверка Docker
+    if ! command -v docker >/dev/null; then
+        echo -e "\033[1;31m❌ Docker not installed\033[0m"
+        issues=$((issues + 1))
+    else
+        echo -e "\033[1;32m✅ Docker installed\033[0m"
+        
+        # Проверка статуса Docker daemon
+        if ! docker info >/dev/null 2>&1; then
+            echo -e "\033[1;31m❌ Docker daemon not running\033[0m"
+            issues=$((issues + 1))
+        else
+            echo -e "\033[1;32m✅ Docker daemon running\033[0m"
+        fi
+    fi
+    
+    # Проверка Docker Compose
     detect_compose
-
-    if ! is_remnawave_up; then
-        echo -n "Status: "
-        colorized_echo blue "Down"
-        exit 1
+    if [ -z "$COMPOSE" ]; then
+        echo -e "\033[1;31m❌ Docker Compose not found\033[0m"
+        issues=$((issues + 1))
+    else
+        echo -e "\033[1;32m✅ Docker Compose available ($COMPOSE)\033[0m"
     fi
-
-    echo -n "Status: "
-    colorized_echo green "Up"
+    
+    # Проверка конфигурационных файлов
+    if [ ! -f "$ENV_FILE" ]; then
+        echo -e "\033[1;31m❌ Environment file missing: $ENV_FILE\033[0m"
+        issues=$((issues + 1))
+    else
+        echo -e "\033[1;32m✅ Environment file exists\033[0m"
+        
+        # Проверка обязательных переменных
+        local required_vars=("APP_PORT" "JWT_AUTH_SECRET" "JWT_API_TOKENS_SECRET" "POSTGRES_USER" "POSTGRES_PASSWORD" "POSTGRES_DB")
+        for var in "${required_vars[@]}"; do
+            if ! grep -q "^${var}=" "$ENV_FILE"; then
+                echo -e "\033[1;31m❌ Missing required variable: $var\033[0m"
+                issues=$((issues + 1))
+            fi
+        done
+    fi
+    
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        echo -e "\033[1;31m❌ Docker Compose file missing: $COMPOSE_FILE\033[0m"
+        issues=$((issues + 1))
+    else
+        echo -e "\033[1;32m✅ Docker Compose file exists\033[0m"
+        
+        # Проверка валидности compose файла
+        if validate_compose_file "$COMPOSE_FILE"; then
+            echo -e "\033[1;32m✅ Docker Compose file valid\033[0m"
+        else
+            echo -e "\033[1;31m❌ Docker Compose file invalid\033[0m"
+            issues=$((issues + 1))
+        fi
+    fi
+    
+    # Проверка портов
+    if [ -f "$ENV_FILE" ]; then
+        get_occupied_ports
+        local app_port=$(grep "^APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
+        local metrics_port=$(grep "^METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
+        
+        for port in $app_port $metrics_port; do
+            if [ -n "$port" ] && is_port_occupied "$port"; then
+                local port_owner=$(ss -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | cut -d',' -f1 || echo "unknown")
+                echo -e "\033[1;33m⚠️  Port $port occupied by: $port_owner\033[0m"
+            fi
+        done
+    fi
+    
+    # Проверка дискового пространства
+    local available_space=$(df "$APP_DIR" 2>/dev/null | awk 'NR==2 {print $4}' || echo "0")
+    if [ "$available_space" -lt 1048576 ]; then  # 1GB в KB
+        echo -e "\033[1;33m⚠️  Low disk space: $(( available_space / 1024 ))MB available\033[0m"
+        issues=$((issues + 1))
+    else
+        echo -e "\033[1;32m✅ Sufficient disk space: $(( available_space / 1024 ))MB available\033[0m"
+    fi
+    
+    # Проверка RAM
+    local available_ram=$(free -m | awk 'NR==2{print $7}')
+    if [ "$available_ram" -lt 256 ]; then
+        echo -e "\033[1;33m⚠️  Low available RAM: ${available_ram}MB\033[0m"
+    else
+        echo -e "\033[1;32m✅ Sufficient RAM: ${available_ram}MB available\033[0m"
+    fi
+    
+    echo
+    if [ $issues -eq 0 ]; then
+        echo -e "\033[1;32m🎉 System health: EXCELLENT\033[0m"
+        return 0
+    else
+        echo -e "\033[1;33m⚠️  Found $issues issue(s) that may affect performance\033[0m"
+        return 1
+    fi
 }
 
-logs_command() {
-    help() {
-        colorized_echo red "Usage: remnawave logs [options]"
-        echo "OPTIONS:"
-        echo "  -h, --help        display this help message"
-        echo "  -n, --no-follow   do not show follow logs"
-    }
 
-    local no_follow=false
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            -n|--no-follow) no_follow=true ;;
-            -h|--help) help; exit 0 ;;
-            *) echo "Error: Invalid option: $1" >&2; help; exit 0 ;;
-        esac
-        shift
+
+validate_compose_file() {
+    local compose_file="$1"
+    
+    if [ ! -f "$compose_file" ]; then
+        return 1
+    fi
+    
+    local current_dir=$(pwd)
+    cd "$(dirname "$compose_file")"
+    
+    if command -v docker >/dev/null 2>&1; then
+        detect_compose
+        
+        if $COMPOSE config >/dev/null 2>&1; then
+            cd "$current_dir"
+            return 0
+        else
+            cd "$current_dir"
+            return 1
+        fi
+    fi
+    
+    cd "$current_dir"
+    return 0
+}
+
+status_command() {
+    echo -e "\033[1;37m📊 Remnawave Panel Status Check:\033[0m"
+    echo
+    
+    if ! is_remnawave_installed; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Not Installed\033[0m\n" "Status:"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' to install\033[0m"
+        exit 1
+    fi
+    
+    detect_compose
+    
+    local overall_status="unknown"
+    local issues=0
+    
+    # Получаем список всех сервисов из docker-compose
+    local services_info=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+    
+    if [ -z "$services_info" ]; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⏹️  Down\033[0m\n" "Status:"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start\033[0m"
+        exit 1
+    fi
+    
+    # Проверяем общий статус
+    if is_remnawave_up; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;32m✅ Running\033[0m\n" "Status:"
+        overall_status="running"
+    else
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⚠️  Partial\033[0m\n" "Status:"
+        overall_status="partial"
+    fi
+    
+    echo
+    echo -e "\033[1;37m🔧 Services Status:\033[0m"
+    
+    # Парсим вывод docker-compose ps и выводим статус каждого сервиса
+    echo "$services_info" | tail -n +2 | while IFS=$'\t' read -r service status ports; do
+        local status_icon="❓"
+        local status_color="38;5;244"
+        local port_info=""
+        
+        # Определяем иконку и цвет статуса
+        if [[ "$status" =~ "Up" ]]; then
+            if [[ "$status" =~ "healthy" ]]; then
+                status_icon="✅"
+                status_color="1;32"
+            elif [[ "$status" =~ "unhealthy" ]]; then
+                status_icon="❌"
+                status_color="1;31"
+                issues=$((issues + 1))
+            else
+                status_icon="🟡"
+                status_color="1;33"
+            fi
+        elif [[ "$status" =~ "Exit" ]]; then
+            status_icon="❌"
+            status_color="1;31"
+            issues=$((issues + 1))
+        elif [[ "$status" =~ "Restarting" ]]; then
+            status_icon="🔄"
+            status_color="1;33"
+        fi
+        
+        # Форматируем информацию о портах
+        if [ -n "$ports" ] && [ "$ports" != "-" ]; then
+            port_info=" \033[38;5;244m($ports)\033[0m"
+    fi
+    
+    printf "   \033[38;5;15m%-20s\033[0m \033[${status_color}m${status_icon} ${status}\033[0m${port_info}\n" "$service:"
     done
+    
+    # Информация о здоровье контейнеров
+    local unhealthy_containers=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --filter "health=unhealthy" -q 2>/dev/null | wc -l)
+    local starting_containers=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --filter "health=starting" -q 2>/dev/null | wc -l)
+    
+    if [ "$unhealthy_containers" -gt 0 ]; then
+        echo
+        echo -e "\033[1;31m⚠️  Warning: $unhealthy_containers container(s) unhealthy\033[0m"
+        issues=$((issues + 1))
+    fi
+    
+    if [ "$starting_containers" -gt 0 ]; then
+        echo
+        echo -e "\033[1;33m🔄 Info: $starting_containers container(s) still starting\033[0m"
+    fi
+    
+    # Информация о ресурсах
+    echo
+    echo -e "\033[1;37m💾 Resource Usage:\033[0m"
+    
+    # CPU и память для основного контейнера
+    local main_stats=$(docker stats "$APP_NAME" --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null | tail -n +2)
+    if [ -n "$main_stats" ]; then
+        local cpu_percent=$(echo "$main_stats" | cut -f1)
+        local mem_usage=$(echo "$main_stats" | cut -f2)
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250mCPU: %s, Memory: %s\033[0m\n" "Main Panel:" "$cpu_percent" "$mem_usage"
+    fi
+    
+    # Информация о портах и доменах
+    if [ -f "$ENV_FILE" ]; then
+        echo
+        echo -e "\033[1;37m🌐 Connection Information:\033[0m"
+        
+        local app_port=$(grep "^APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        local metrics_port=$(grep "^METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        local front_domain=$(grep "^FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        local sub_domain=$(grep "^SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        
+        if [ -f "$SUB_ENV_FILE" ]; then
+            local sub_port=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        fi
+        
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Panel URL:" "$NODE_IP" "$app_port"
+        if [ -n "$sub_port" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Sub Page URL:" "$NODE_IP" "$sub_port"
+        fi
+        if [ -n "$metrics_port" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s/api/metrics\033[0m\n" "Metrics URL:" "$NODE_IP" "$metrics_port"
+        fi
+        
+        if [ -n "$front_domain" ] && [ "$front_domain" != "*" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Panel Domain:" "$front_domain"
+        fi
+        if [ -n "$sub_domain" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Sub Domain:" "$sub_domain"
+        fi
+    fi
+    
+    # Итоговая информация
+    echo
+    if [ $issues -eq 0 ] && [ "$overall_status" = "running" ]; then
+        echo -e "\033[1;32m🎉 All services are healthy and running!\033[0m"
+        exit 0
+    elif [ $issues -gt 0 ]; then
+        echo -e "\033[1;33m⚠️  Found $issues issue(s) - check logs with '\033[38;5;15msudo $APP_NAME logs\033[0m\033[1;33m'\033[0m"
+        exit 1
+    else
+        echo -e "\033[1;33m⚠️  Some services may be starting up\033[0m"
+        exit 1
+    fi
+}
 
+# Замените logs_command на:
+logs_command() {
+    check_running_as_root
+    detect_compose
+    
     if ! is_remnawave_installed; then
         colorized_echo red "Remnawave not installed!"
-        exit 1
+        return 1
     fi
-
-    detect_compose
 
     if ! is_remnawave_up; then
-        colorized_echo red "Remnawave is not up."
-        exit 1
+        colorized_echo red "Remnawave services are not running!"
+        colorized_echo yellow "   Run 'sudo $APP_NAME up' first"
+        return 1
     fi
 
-    if [ "$no_follow" = true ]; then
-        show_remnawave_logs
-    else
-        follow_remnawave_logs
-    fi
+    logs_menu
 }
 
+# Добавьте новую функцию logs_menu:
+logs_menu() {
+    while true; do
+        clear
+        echo -e "\033[1;37m📋 Application Logs\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+        echo
+        
+        echo -e "\033[1;37m📊 Log Options:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 📱 Follow all logs (real-time)"
+        echo -e "   \033[38;5;15m2)\033[0m 📄 Show last 100 lines"
+        echo -e "   \033[38;5;15m3)\033[0m 🔍 Show specific service logs"
+        echo -e "   \033[38;5;15m4)\033[0m ❌ Show error logs only"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back"
+        echo
+        
+        read -p "Select option [0-4]: " choice
+        
+        case "$choice" in
+            1) show_live_logs ;;
+            2) show_recent_logs ;;
+            3) show_service_logs ;;
+            4) show_error_logs ;;
+            0) return 0 ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Функции для просмотра логов:
+show_live_logs() {
+    clear
+    echo -e "\033[1;37m📱 Live Logs (Press Ctrl+C to exit)\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    cd "$APP_DIR"
+    $COMPOSE -f "$COMPOSE_FILE" logs -f --tail=50
+    
+    echo
+    read -p "Press Enter to return to logs menu..."
+}
+
+show_recent_logs() {
+    clear
+    echo -e "\033[1;37m📄 Last 100 Log Lines\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    cd "$APP_DIR"
+    $COMPOSE -f "$COMPOSE_FILE" logs --tail=100
+    
+    echo
+    read -p "Press Enter to return to logs menu..."
+}
+
+show_service_logs() {
+    while true; do
+        clear
+        echo -e "\033[1;37m🔍 Service Logs\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+        echo
+        
+        echo -e "\033[1;37m📦 Available Services:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 🚀 Main Panel (remnawave)"
+        echo -e "   \033[38;5;15m2)\033[0m 🗄️  Database (remnawave-db)"
+        echo -e "   \033[38;5;15m3)\033[0m 📊 Redis (remnawave-redis)"
+        echo -e "   \033[38;5;15m4)\033[0m 📄 Subscription Page"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back"
+        echo
+        
+        read -p "Select service [0-4]: " service_choice
+        
+        local service_name=""
+        case "$service_choice" in
+            1) service_name="remnawave" ;;
+            2) service_name="remnawave-db" ;;
+            3) service_name="remnawave-redis" ;;
+            4) service_name="remnawave-subscription-page" ;;
+            0) return 0 ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                continue
+                ;;
+        esac
+        
+        clear
+        echo -e "\033[1;37m📋 Logs for: $service_name\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo
+        
+        cd "$APP_DIR"
+        $COMPOSE -f "$COMPOSE_FILE" logs --tail=100 "$service_name"
+        
+        echo
+        read -p "Press Enter to continue..."
+    done
+}
+
+show_error_logs() {
+    clear
+    echo -e "\033[1;37m❌ Error Logs Only\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    cd "$APP_DIR"
+    $COMPOSE -f "$COMPOSE_FILE" logs --tail=200 | grep -i "error\|exception\|failed\|fatal" || echo "No errors found in recent logs"
+    
+    echo
+    read -p "Press Enter to return to logs menu..."
+}
 update_command() {
     check_running_as_root
     if ! is_remnawave_installed; then
-        colorized_echo red "Remnawave not installed!"
+        echo -e "\033[1;31m❌ Remnawave not installed!\033[0m"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
         exit 1
     fi
-
+    
     detect_compose
-
-    update_remnawave_script
-    colorized_echo blue "Pulling latest version"
-    update_remnawave
-
-    colorized_echo blue "Restarting Remnawave services"
-    down_remnawave
-    up_remnawave
-
-    colorized_echo blue "Remnawave updated successfully"
+    
+    echo -e "\033[1;37m🔄 Starting Remnawave Update Check...\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+    # Получаем текущую версию скрипта
+    local current_script_version="$SCRIPT_VERSION"
+    
+    # Получаем последнюю версию скрипта с GitHub
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking for script updates..."
+    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    if [ -n "$remote_script_version" ] && [ "$remote_script_version" != "$current_script_version" ]; then
+        echo -e "\033[1;33m🔄 Script update available: \033[38;5;15mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+        read -p "Do you want to update the script first? (y/n): " -r update_script
+        if [[ $update_script =~ ^[Yy]$ ]]; then
+            update_remnawave_script
+            echo -e "\033[1;32m✅ Script updated to v$remote_script_version\033[0m"
+            echo -e "\033[38;5;8m   Please run the update command again to continue\033[0m"
+            exit 0
+        fi
+    else
+        echo -e "\033[1;32m✅ Script is up to date (v$current_script_version)\033[0m"
+    fi
+    
+    # Переходим в директорию приложения
+    cd "$APP_DIR" 2>/dev/null || { echo -e "\033[1;31m❌ Cannot access app directory\033[0m"; exit 1; }
+    
+    # Получаем список образов из compose файла
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking current images..."
+    local compose_images=$($COMPOSE -f "$COMPOSE_FILE" config 2>/dev/null | grep "image:" | awk '{print $2}' | sort | uniq)
+    
+    if [ -z "$compose_images" ]; then
+        echo -e "\033[1;31m❌ Cannot read compose file images\033[0m"
+        exit 1
+    fi
+    
+    echo -e "\033[38;5;244mImages to check:\033[0m"
+    echo "$compose_images" | while read image; do
+        echo -e "\033[38;5;244m   $image\033[0m"
+    done
+    
+    # Выполняем pull и анализируем вывод
+    echo -e "\033[38;5;250m📝 Step 3:\033[0m Pulling latest images..."
+    
+    local pull_output=""
+    local pull_exit_code=0
+    
+    # Захватываем полный вывод pull команды
+    pull_output=$($COMPOSE -f "$COMPOSE_FILE" pull 2>&1) || pull_exit_code=$?
+    
+    if [ $pull_exit_code -ne 0 ]; then
+        echo -e "\033[1;31m❌ Failed to pull images:\033[0m"
+        echo -e "\033[38;5;244m$pull_output\033[0m"
+        exit 1
+    fi
+    
+    # Анализируем вывод pull команды для определения обновлений
+    local images_updated=false
+    local update_indicators=""
+    
+    # Ищем индикаторы обновления в выводе
+    if echo "$pull_output" | grep -qi "downloading\|downloaded\|pulling fs layer\|extracting\|pull complete"; then
+        images_updated=true
+        update_indicators="New layers downloaded"
+    fi
+    
+    # Проверяем количество "up to date" сообщений
+    local up_to_date_count=$(echo "$pull_output" | grep -ci "image is up to date\|already exists")
+    local total_images_count=$(echo "$compose_images" | wc -l)
+    
+    # Если ВСЕ образы показали "up to date", то обновлений точно нет
+    if [ "$up_to_date_count" -ge "$total_images_count" ] && [ "$total_images_count" -gt 0 ]; then
+        if ! echo "$pull_output" | grep -qi "downloading\|downloaded\|pulling fs layer\|extracting\|pull complete"; then
+            images_updated=false
+        fi
+    fi
+    
+    # Дополнительная проверка для надежности
+    if echo "$pull_output" | grep -qi "digest.*differs\|newer image\|status.*downloaded"; then
+        images_updated=true
+        update_indicators="$update_indicators, Newer versions detected"
+    fi
+    
+    # Выводим детальную информацию для диагностики
+    echo -e "\033[38;5;244mPull analysis:\033[0m"
+    echo -e "\033[38;5;244m   Images checked: $total_images_count\033[0m"
+    echo -e "\033[38;5;244m   Up-to-date responses: $up_to_date_count\033[0m"
+    
+    # Показываем результат
+    if [ "$images_updated" = true ]; then
+        echo -e "\033[1;32m✅ New image versions available!\033[0m"
+        if [ -n "$update_indicators" ]; then
+            echo -e "\033[38;5;244m   Indicators: $update_indicators\033[0m"
+        fi
+        
+        # Показываем какие образы были обновлены (из вывода pull)
+        local updated_images=$(echo "$pull_output" | grep -i "pulling\|downloaded" | head -3)
+        if [ -n "$updated_images" ]; then
+            echo -e "\033[38;5;244m   Update activity detected\033[0m"
+        fi
+    else
+        echo -e "\033[1;32m✅ All images are already up to date\033[0m"
+        echo
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo -e "\033[1;37m🎉 No updates available!\033[0m"
+        echo -e "\033[38;5;250m� All components are running the latest versions\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        exit 0
+    fi
+    
+    # Проверяем, запущен ли контейнер
+    local was_running=false
+    if is_remnawave_up; then
+        was_running=true
+        echo -e "\033[38;5;250m📝 Step 4:\033[0m Stopping services for update..."
+        if down_remnawave; then
+            echo -e "\033[1;32m✅ Services stopped\033[0m"
+        else
+            echo -e "\033[1;31m❌ Failed to stop services\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[38;5;250m📝 Step 4:\033[0m Services already stopped\033[0m"
+    fi
+    
+    # Запускаем сервисы с новыми образами
+    if [ "$was_running" = true ]; then
+        echo -e "\033[38;5;250m📝 Step 5:\033[0m Starting updated services..."
+        if up_remnawave; then
+            echo -e "\033[1;32m✅ Services started successfully\033[0m"
+            
+            # Проверяем здоровье сервисов после запуска
+            echo -e "\033[38;5;250m🔍 Waiting for services to become healthy...\033[0m"
+            local attempts=0
+            local max_attempts=30
+            
+            while [ $attempts -lt $max_attempts ]; do
+                if is_remnawave_up; then
+                    echo -e "\033[1;32m✅ All services are healthy\033[0m"
+                    break
+                fi
+                
+                sleep 2
+                attempts=$((attempts + 1))
+                
+                if [ $attempts -eq $max_attempts ]; then
+                    echo -e "\033[1;33m⚠️  Services started but may still be initializing\033[0m"
+                    echo -e "\033[38;5;8m   Check status with '\033[38;5;15msudo $APP_NAME status\033[38;5;8m'\033[0m"
+                fi
+            done
+        else
+            echo -e "\033[1;31m❌ Failed to start services\033[0m"
+            echo -e "\033[38;5;8m   Check logs with '\033[38;5;15msudo $APP_NAME logs\033[38;5;8m'\033[0m"
+            exit 1
+        fi
+    else
+        echo -e "\033[38;5;250m📝 Step 5:\033[0m Services were not running, skipping startup\033[0m"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start when ready\033[0m"
+    fi
+    
+    echo
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[1;37m🎉 Remnawave updated successfully!\033[0m"
+    
+    # Показываем итоговую информацию
+    if [ "$was_running" = true ]; then
+        echo -e "\033[38;5;250m💡 Services are running with latest versions\033[0m"
+        echo -e "\033[38;5;8m   Check status: '\033[38;5;15msudo $APP_NAME status\033[38;5;8m'\033[0m"
+    fi
+    
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
 }
 
 edit_command() {
@@ -1625,6 +3419,17 @@ edit_env_command() {
         $EDITOR "$ENV_FILE"
     else
         colorized_echo red "Environment file not found at $ENV_FILE"
+        exit 1
+    fi
+}
+
+edit_env_sub_command() {
+    detect_os
+    check_editor
+    if [ -f "$SUB_ENV_FILE" ]; then
+        $EDITOR "$SUB_ENV_FILE"
+    else
+        colorized_echo red "Environment file not found at $SUB_ENV_FILE"
         exit 1
     fi
 }
@@ -1661,68 +3466,576 @@ pm2_monitor() {
     docker exec -it $APP_NAME pm2 monit
 }
 
+# main_menu() {
+#     while true; do
+#         clear
+#         echo -e "\033[1;37m⚡ $APP_NAME Panel Management\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+#         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+#         echo
+        
+#         # Проверка статуса
+#         if is_remnawave_installed; then
+#             if is_remnawave_up; then
+#                 echo -e "\033[1;32m✅ Panel Status: RUNNING\033[0m"
+#             else
+#                 echo -e "\033[1;31m❌ Panel Status: STOPPED\033[0m"
+#             fi
+#         else
+#             echo -e "\033[1;33m⚠️  Panel Status: NOT INSTALLED\033[0m"
+#         fi
+        
+#         echo
+#         echo -e "\033[1;37m🚀 Installation & Updates:\033[0m"
+#         echo -e "   \033[38;5;15m1)\033[0m 🛠️  Install Remnawave panel"
+#         echo -e "   \033[38;5;15m2)\033[0m ⬆️  Update to latest version"
+#         echo -e "   \033[38;5;15m3)\033[0m 🗑️  Remove panel completely"
+#         echo
+#         echo -e "\033[1;37m⚙️  Service Management:\033[0m"
+#         echo -e "   \033[38;5;15m4)\033[0m ▶️  Start all services"
+#         echo -e "   \033[38;5;15m5)\033[0m ⏹️  Stop all services"
+#         echo -e "   \033[38;5;15m6)\033[0m 🔄 Restart all services"
+#         echo -e "   \033[38;5;15m7)\033[0m 📊 Show services status"
+#         echo
+#         echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
+#         echo -e "   \033[38;5;15m8)\033[0m 📋 View application logs"
+#         echo -e "   \033[38;5;15m9)\033[0m 📈 System performance monitor"
+#         echo -e "   \033[38;5;15m10)\033[0m 🩺 Health check diagnostics"
+#         echo
+#         echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
+#         echo -e "   \033[38;5;15m11)\033[0m 💾 Manual database backup"
+#         echo -e "   \033[38;5;15m12)\033[0m 📅 Scheduled backup system"
+#         echo
+#         echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
+#         echo -e "   \033[38;5;15m13)\033[0m 📝 Edit docker-compose.yml"
+#         echo -e "   \033[38;5;15m14)\033[0m ⚙️  Edit environment variables"
+#         echo -e "   \033[38;5;15m15)\033[0m 🖥️  Access container shell"
+#         echo -e "   \033[38;5;15m16)\033[0m 📊 PM2 process monitor"
+#         echo
+#         echo -e "   \033[38;5;244m0)\033[0m 🚪 Exit"
+#         echo
+        
+#         read -p "Select option [0-16]: " choice
+        
+#         case "$choice" in
+#             1) install_command; read -p "Press Enter to continue..." ;;
+#             2) update_command; read -p "Press Enter to continue..." ;;
+#             3) uninstall_command; read -p "Press Enter to continue..." ;;
+#             4) up_command; read -p "Press Enter to continue..." ;;
+#             5) down_command; read -p "Press Enter to continue..." ;;
+#             6) restart_command; read -p "Press Enter to continue..." ;;
+#             7) status_command; read -p "Press Enter to continue..." ;;
+#             8) logs_command ;;
+#             9) monitor_command ;;
+#             10) health_check_command; read -p "Press Enter to continue..." ;;
+#             11) backup_command; read -p "Press Enter to continue..." ;;
+#             12) schedule_menu ;;
+#             13) edit_command ;;
+#             14) edit_command_menu ;;
+#             15) console_command ;;
+#             16) pm2_monitor ;;
+#             0) clear; exit 0 ;;
+#             *) 
+#                 echo -e "\033[1;31mInvalid option!\033[0m"
+#                 sleep 1
+#                 ;;
+#         esac
+#     done
+# }
+
+main_menu() {
+    while true; do
+        clear
+        echo -e "\033[1;37m⚡ $APP_NAME Panel Management\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo
+        
+        # Проверка статуса панели
+        if is_remnawave_installed; then
+            if is_remnawave_up; then
+                echo -e "\033[1;32m✅ Panel Status: RUNNING\033[0m"
+                
+                if [ -f "$ENV_FILE" ]; then
+
+                    local panel_domain=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+                    local sub_domain=$(grep "SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+                    
+                    echo
+                    echo -e "\033[1;37m🌐 Access URLs:\033[0m"
+                    
+                    local domains_found=0
+                    
+                    # Panel Domain (FRONT_END_DOMAIN)
+                    if [ -n "$panel_domain" ] && [ "$panel_domain" != "null" ]; then
+                        domains_found=$((domains_found + 1))
+                        if [[ "$panel_domain" =~ ^https?:// ]]; then
+                            printf "   \033[38;5;15m📊 Admin Panel:\033[0m    \033[38;5;117m%s\033[0m\n" "$panel_domain"
+                        else
+                            printf "   \033[38;5;15m📊 Admin Panel:\033[0m    \033[38;5;117mhttps://%s\033[0m\n" "$panel_domain"
+                        fi
+                    fi
+                    
+                    # Subscription Domain (SUB_PUBLIC_DOMAIN)
+                    if [ -n "$sub_domain" ] && [ "$sub_domain" != "null" ]; then
+                        domains_found=$((domains_found + 1))
+                        if [[ "$sub_domain" =~ ^https?:// ]]; then
+                            printf "   \033[38;5;15m📄 Subscriptions:\033[0m   \033[38;5;117m%s\033[0m\n" "$sub_domain"
+                        else
+                            printf "   \033[38;5;15m📄 Subscriptions:\033[0m   \033[38;5;117mhttps://%s\033[0m\n" "$sub_domain"
+                        fi
+                    fi
+                    
+                    echo
+                    if [ "$domains_found" -gt 0 ]; then
+                        echo -e "\033[38;5;32m✅ Domains configured - Panel accessible via HTTPS\033[0m"
+                    else
+                        echo -e "\033[1;33m⚠️  No domains configured - Panel not accessible!\033[0m"
+                        echo
+                        echo -e "\033[1;37m🔧 Setup Required:\033[0m"
+                        echo -e "\033[38;5;244m   1. Configure reverse proxy (nginx/cloudflare)\033[0m"
+                        echo -e "\033[38;5;244m   2. Set domains in environment (option 13)\033[0m"
+                        echo -e "\033[38;5;244m   3. Configure SSL certificates\033[0m"
+                    fi
+                fi
+                
+                # Показываем статус сервисов
+                echo
+                echo -e "\033[1;37m🔧 Services Status:\033[0m"
+                detect_compose
+                cd "$APP_DIR" 2>/dev/null || true
+                local services_status=$($COMPOSE -f "$COMPOSE_FILE" ps --format "table" 2>/dev/null || echo "")
+                
+                if [ -n "$services_status" ]; then
+                    # Подсчитываем сервисы
+                    local total_services=$(echo "$services_status" | tail -n +2 | wc -l)
+                    local running_services=$(echo "$services_status" | tail -n +2 | grep -c "Up" || echo "0")
+                    local healthy_services=$(echo "$services_status" | tail -n +2 | grep -c "healthy" || echo "0")
+                    
+                    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s/%s running\033[0m\n" "Total Services:" "$running_services" "$total_services"
+                    if [ "$healthy_services" -gt 0 ]; then
+                        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s healthy\033[0m\n" "Health Checks:" "$healthy_services"
+                    fi
+                fi
+                
+                # Показываем использование ресурсов
+                echo
+                echo -e "\033[1;37m💾 Resource Usage:\033[0m"
+                
+                # CPU и Memory
+                local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "N/A")
+                local mem_info=$(free -h | grep "Mem:" 2>/dev/null)
+                local mem_used=$(echo "$mem_info" | awk '{print $3}' 2>/dev/null || echo "N/A")
+                local mem_total=$(echo "$mem_info" | awk '{print $2}' 2>/dev/null || echo "N/A")
+                
+                printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s%%\033[0m\n" "CPU Usage:" "$cpu_usage"
+                printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s / %s\033[0m\n" "Memory Usage:" "$mem_used" "$mem_total"
+                
+                # Дисковое пространство
+                local disk_usage=$(df -h "$APP_DIR" 2>/dev/null | tail -1 | awk '{print $5}' | sed 's/%//' 2>/dev/null || echo "N/A")
+                local disk_available=$(df -h "$APP_DIR" 2>/dev/null | tail -1 | awk '{print $4}' 2>/dev/null || echo "N/A")
+                
+                printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s%% used, %s available\033[0m\n" "Disk Usage:" "$disk_usage" "$disk_available"
+                
+                # Информация о бэкапах
+                if [ -f "$BACKUP_CONFIG_FILE" ]; then
+                    echo
+                    echo -e "\033[1;37m📅 Backup Status:\033[0m"
+                    local backup_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+                    local backup_schedule=$(jq -r '.schedule // "Not configured"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+                    local scheduler_status=$(schedule_get_status 2>/dev/null || echo "disabled")
+                    
+                    printf "   \033[38;5;15m%-15s\033[0m " "Scheduler:"
+                    if [ "$scheduler_status" = "enabled" ]; then
+                        echo -e "\033[1;32m✅ Enabled\033[0m"
+                    else
+                        echo -e "\033[1;31m❌ Disabled\033[0m"
+                    fi
+                    
+                    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Schedule:" "$backup_schedule"
+                    printf "   \033[38;5;15m%-15s\033[0m " "Telegram:"
+                    if [ "$backup_enabled" = "true" ]; then
+                        echo -e "\033[1;32m✅ Enabled\033[0m"
+                    else
+                        echo -e "\033[38;5;244m❌ Disabled\033[0m"
+                    fi
+                    
+                    # Последний бэкап
+                    if [ -d "$APP_DIR/backups" ]; then
+                        local last_backup=$(ls -t "$APP_DIR/backups"/*.sql* 2>/dev/null | head -1)
+                        if [ -n "$last_backup" ]; then
+                            local backup_date=$(stat -c %y "$last_backup" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+                            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Last Backup:" "$backup_date"
+                        fi
+                    fi
+                fi
+                
+            else
+                echo -e "\033[1;31m❌ Panel Status: STOPPED\033[0m"
+                echo -e "\033[38;5;244m   Services are installed but not running\033[0m"
+                echo -e "\033[38;5;244m   Use option 4 to start services\033[0m"
+            fi
+        else
+            echo -e "\033[1;33m⚠️  Panel Status: NOT INSTALLED\033[0m"
+            echo -e "\033[38;5;244m   Use option 1 to install Remnawave Panel\033[0m"
+        fi
+        
+        echo
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo
+        echo -e "\033[1;37m🚀 Installation & Updates:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 🛠️  Install Remnawave panel"
+        echo -e "   \033[38;5;15m2)\033[0m ⬆️  Update to latest version"
+        echo -e "   \033[38;5;15m3)\033[0m 🗑️  Remove panel completely"
+        echo
+        echo -e "\033[1;37m⚙️  Service Management:\033[0m"
+        echo -e "   \033[38;5;15m4)\033[0m ▶️  Start all services"
+        echo -e "   \033[38;5;15m5)\033[0m ⏹️  Stop all services"
+        echo -e "   \033[38;5;15m6)\033[0m 🔄 Restart all services"
+        echo -e "   \033[38;5;15m7)\033[0m 📊 Show services status"
+        echo
+        echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
+        echo -e "   \033[38;5;15m8)\033[0m 📋 View application logs"
+        echo -e "   \033[38;5;15m9)\033[0m 📈 System performance monitor"
+        echo -e "   \033[38;5;15m10)\033[0m 🩺 Health check diagnostics"
+        echo
+        echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
+        echo -e "   \033[38;5;15m11)\033[0m 💾 Manual database backup"
+        echo -e "   \033[38;5;15m12)\033[0m 📅 Scheduled backup system"
+        echo
+        echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
+        echo -e "   \033[38;5;15m13)\033[0m 📝 Edit configuration files"
+        echo -e "   \033[38;5;15m14)\033[0m 🖥️  Access container shell"
+        echo -e "   \033[38;5;15m15)\033[0m 📊 PM2 process monitor"
+        echo
+        echo -e "   \033[38;5;244m0)\033[0m 🚪 Exit"
+        echo
+        
+        read -p "Select option [0-15]: " choice
+        
+        case "$choice" in
+            1) install_command; read -p "Press Enter to continue..." ;;
+            2) update_command; read -p "Press Enter to continue..." ;;
+            3) uninstall_command; read -p "Press Enter to continue..." ;;
+            4) up_command; read -p "Press Enter to continue..." ;;
+            5) down_command; read -p "Press Enter to continue..." ;;
+            6) restart_command; read -p "Press Enter to continue..." ;;
+            7) status_command; read -p "Press Enter to continue..." ;;
+            8) logs_command ;;
+            9) monitor_command ;;
+            10) health_check_command; read -p "Press Enter to continue..." ;;
+            11) backup_command; read -p "Press Enter to continue..." ;;
+            12) schedule_menu ;;
+            13) edit_command_menu ;;
+            14) console_command ;;
+            15) pm2_monitor ;;
+            0) clear; exit 0 ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+
+edit_command_menu() {
+    while true; do
+        clear
+        echo -e "\033[1;37m📝 Configuration Editor\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+        echo
+        echo -e "   \033[38;5;15m1)\033[0m 📝 Edit docker-compose.yml"
+        echo -e "   \033[38;5;15m2)\033[0m ⚙️  Edit main environment (.env)"
+        echo -e "   \033[38;5;15m3)\033[0m 📄 Edit subscription environment (.env.subscription)"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back"
+        echo
+        
+        read -p "Select option [0-3]: " choice
+        
+        case "$choice" in
+            1) edit_command; read -p "Press Enter to continue..." ;;
+            2) edit_env_command; read -p "Press Enter to continue..." ;;
+            3) edit_env_sub_command; read -p "Press Enter to continue..." ;;
+            0) return 0 ;;
+            *) 
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
 usage() {
-    colorized_echo blue "================================"
-    colorized_echo magenta "       $APP_NAME CLI Help"
-    colorized_echo blue "================================"
-    colorized_echo cyan "Usage:"
-    echo "  $APP_NAME [command]"
+    echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;8mPanel Management CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo
+    echo -e "\033[1;37m� Installation & Updates:\033[0m"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install Remnawave panel"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove panel completely"
     echo
 
-    colorized_echo cyan "Commands:"
-    colorized_echo yellow "  up                  $(tput sgr0)– Start services"
-    colorized_echo yellow "  down                $(tput sgr0)– Stop services"
-    colorized_echo yellow "  restart             $(tput sgr0)– Restart services"
-    colorized_echo yellow "  status              $(tput sgr0)– Show status"
-    colorized_echo yellow "  logs                $(tput sgr0)– Show logs"
-    colorized_echo yellow "  install             $(tput sgr0)– Install/reinstall Remnawave Panel"
-    colorized_echo yellow "  update              $(tput sgr0)– Update to latest version"
-    colorized_echo yellow "  uninstall           $(tput sgr0)– Uninstall Remnawave Panel"
-    colorized_echo yellow "  install-script      $(tput sgr0)– Install Remnawave script"
-    colorized_echo yellow "  uninstall-script    $(tput sgr0)– Uninstall Remnawave script"
-    colorized_echo yellow "  edit                $(tput sgr0)– Edit docker-compose.yml"
-    colorized_echo yellow "  edit-env            $(tput sgr0)– Edit .env file"
-    colorized_echo yellow "  backup              $(tput sgr0)– Make PostgreDB (data-only) backup dump file in /opt/remnawave/backup"    
-    colorized_echo yellow "  console             $(tput sgr0)– Access Remnawave Rescue CLI console"
-    colorized_echo yellow "  pm2-monitor         $(tput sgr0)– Access PM2 monitor"
-
+    echo -e "\033[1;37m⚙️  Service Management:\033[0m"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "up" "▶️  Start all services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "down" "⏹️  Stop all services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "restart" "🔄 Restart all services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "status" "📊 Show services status"
     echo
-    colorized_echo cyan "Options for install:"
-    colorized_echo yellow "  --dev               $(tput sgr0)– Use remnawave/backend:dev instead of latest"
-    colorized_echo yellow "  --name NAME         $(tput sgr0)– Custom installation name (default: remnawave)"
 
+    echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "logs" "📋 View application logs"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "monitor" "📈 System performance monitor"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "health" "🩺 Health check diagnostics"
     echo
-    colorized_echo cyan "Panel Information:"
-    colorized_echo magenta "  Server IP: $NODE_IP"
+
+    echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "backup" "💾 Manual database backup"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "schedule" "📅 Scheduled backup system"
+    echo
+
+    echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit" "📝 Edit docker-compose.yml"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit-env" "⚙️  Edit environment variables"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit-env-sub" "⚙️  Edit subscription environment variables"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "console" "�️  Access container shell"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "pm2-monitor" "📊 PM2 process monitor"
+    echo
+
+    echo -e "\033[1;37m� Script Management:\033[0m"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "install-script" "📥 Install this script globally"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
     echo
 
     if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
-        APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
-        METRICS_PORT=$(grep "METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
-        if [ -f "$SUB_ENV_FILE" ]; then
-            SUB_PAGE_PORT=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
-            if [ -z "$SUB_PAGE_PORT" ]; then
-                SUB_PAGE_PORT="unknown (APP_PORT not found in $SUB_ENV_FILE)"
+        local panel_domain=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+        if [ -n "$panel_domain" ] && [ "$panel_domain" != "null" ]; then
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+            if [[ "$panel_domain" =~ ^https?:// ]]; then
+                echo -e "\033[1;37m🌐 Panel Access:\033[0m \033[38;5;117m$panel_domain\033[0m"
+            else
+                echo -e "\033[1;37m🌐 Panel Access:\033[0m \033[38;5;117mhttps://$panel_domain\033[0m"
             fi
-        else
-            SUB_PAGE_PORT="unknown (env file not found: $SUB_ENV_FILE)"
         fi
-        FRONT_END_DOMAIN=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
-        SUB_PUBLIC_DOMAIN=$(grep "SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
-
-        colorized_echo cyan "Ports:"
-        colorized_echo magenta "  App port: $APP_PORT"
-        colorized_echo magenta "  Metrics port: $METRICS_PORT"
-        colorized_echo magenta "  Subscription page port: $SUB_PAGE_PORT"
-        echo
-        colorized_echo cyan "Domains:"
-        colorized_echo magenta "  Panel domain: $FRONT_END_DOMAIN"
-        colorized_echo magenta "  Subscription domain: $SUB_PUBLIC_DOMAIN"
     fi
 
-    colorized_echo blue "================================="
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;37m📖 Examples:\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME install --name mypanel\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME schedule setup\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME backup --compress\033[0m"
+    echo -e "\033[38;5;244m   $APP_NAME menu           # Interactive menu\033[0m"
+    echo -e "\033[38;5;244m   $APP_NAME                # Same as menu\033[0m"
     echo
+    echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME <command> --help\033[38;5;8m' for detailed command help\033[0m"
 }
+
+# Обновляем usage_minimal()
+usage_minimal() {
+    echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo
+    echo -e "\033[1;37mMain:\033[0m"
+    printf "   \033[38;5;15m%-12s\033[0m %s\n" "install" "🛠️  Install"
+    printf "   \033[38;5;15m%-12s\033[0m %s\n" "update" "⬆️  Update"
+    printf "   \033[38;5;15m%-12s\033[0m %s\n" "uninstall" "🗑️  Remove"
+    echo
+    echo -e "\033[1;37mControl:\033[0m"
+    printf "   \033[38;5;250m%-12s\033[0m %s\n" "up" "▶️  Start"
+    printf "   \033[38;5;250m%-12s\033[0m %s\n" "down" "⏹️  Stop"
+    printf "   \033[38;5;250m%-12s\033[0m %s\n" "restart" "🔄 Restart"
+    printf "   \033[38;5;250m%-12s\033[0m %s\n" "status" "📊 Status"
+    echo
+    echo -e "\033[1;37mTools:\033[0m"
+    printf "   \033[38;5;244m%-12s\033[0m %s\n" "logs" "📋 Logs"
+    printf "   \033[38;5;244m%-12s\033[0m %s\n" "monitor" "📈 Monitor"
+    printf "   \033[38;5;244m%-12s\033[0m %s\n" "health" "🩺 Health"
+    printf "   \033[38;5;244m%-12s\033[0m %s\n" "backup" "💾 Backup"
+    printf "   \033[38;5;244m%-12s\033[0m %s\n" "schedule" "📅 Schedule"
+    echo
+    echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME help\033[38;5;8m' for full help\033[0m"
+}
+
+# Обновляем usage_compact()
+usage_compact() {
+    echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;8mPanel CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    echo -e "\033[1;37m🚀 Main:\033[0m"
+    printf "   \033[38;5;15m%-16s\033[0m %s\n" "install" "🛠️  Install panel"
+    printf "   \033[38;5;15m%-16s\033[0m %s\n" "update" "⬆️  Update system"
+    printf "   \033[38;5;15m%-16s\033[0m %s\n" "uninstall" "🗑️  Remove panel"
+    echo
+
+    echo -e "\033[1;37m⚙️  Control:\033[0m"
+    printf "   \033[38;5;250m%-16s\033[0m %s\n" "up" "▶️  Start services"
+    printf "   \033[38;5;250m%-16s\033[0m %s\n" "down" "⏹️  Stop services"
+    printf "   \033[38;5;250m%-16s\033[0m %s\n" "restart" "🔄 Restart services"
+    printf "   \033[38;5;250m%-16s\033[0m %s\n" "status" "📊 Show status"
+    echo
+
+    echo -e "\033[1;37m📊 Monitoring:\033[0m"
+    printf "   \033[38;5;244m%-16s\033[0m %s\n" "logs" "📋 View logs"
+    printf "   \033[38;5;244m%-16s\033[0m %s\n" "monitor" "📈 Performance"
+    printf "   \033[38;5;244m%-16s\033[0m %s\n" "health" "🩺 Health check"
+    echo
+
+    echo -e "\033[1;37m💾 Backup:\033[0m"
+    printf "   \033[38;5;178m%-16s\033[0m %s\n" "backup" "💾 Manual backup"
+    printf "   \033[38;5;178m%-16s\033[0m %s\n" "schedule" "📅 Auto backup"
+    echo
+
+    echo -e "\033[1;37m🔧 Config:\033[0m"
+    printf "   \033[38;5;117m%-16s\033[0m %s\n" "edit" "📝 Edit compose"
+    printf "   \033[38;5;117m%-16s\033[0m %s\n" "edit-env" "⚙️  Edit environment"
+    printf "   \033[38;5;117m%-16s\033[0m %s\n" "edit-env-sub" "⚙️  Edit subscription environment"
+    printf "   \033[38;5;117m%-16s\033[0m %s\n" "console" "🖥️  Shell access"
+    echo
+
+    if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
+        local panel_domain=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+        if [ -n "$panel_domain" ] && [ "$panel_domain" != "null" ]; then
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+            if [[ "$panel_domain" =~ ^https?:// ]]; then
+                echo -e "\033[1;37m🌐 Panel Access:\033[0m \033[38;5;117m$panel_domain\033[0m"
+            else
+                echo -e "\033[1;37m🌐 Panel Access:\033[0m \033[38;5;117mhttps://$panel_domain\033[0m"
+            fi
+        fi
+    fi
+    echo
+    echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME <command> help\033[38;5;8m' for details\033[0m"
+}
+
+# Добавляем функцию help для отдельных команд
+command_help() {
+    local cmd="$1"
+    
+    case "$cmd" in
+        install)
+            echo -e "\033[1;37m📖 Install Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+            echo
+            echo -e "\033[1;37mUsage:\033[0m"
+            echo -e "   \033[38;5;15m$APP_NAME install [options]\033[0m"
+            echo
+            echo -e "\033[1;37mOptions:\033[0m"
+            echo -e "   \033[38;5;15m--name <name>\033[0m    Custom installation name"
+            echo -e "   \033[38;5;15m--dev\033[0m            Use development branch"
+            echo
+            echo -e "\033[1;37mExamples:\033[0m"
+            echo -e "   \033[38;5;244m$APP_NAME install\033[0m"
+            echo -e "   \033[38;5;244m$APP_NAME install --name mypanel\033[0m"
+            echo -e "   \033[38;5;244m$APP_NAME install --dev\033[0m"
+            ;;
+        schedule)
+            echo -e "\033[1;37m📖 Schedule Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+            echo
+            echo -e "\033[1;37mUsage:\033[0m"
+            echo -e "   \033[38;5;15m$APP_NAME schedule [action]\033[0m"
+            echo
+            echo -e "\033[1;37mActions:\033[0m"
+            echo -e "   \033[38;5;15msetup\033[0m           Configure backup settings"
+            echo -e "   \033[38;5;15menable\033[0m          Enable scheduler"
+            echo -e "   \033[38;5;15mdisable\033[0m         Disable scheduler"
+            echo -e "   \033[38;5;15mstatus\033[0m          Show scheduler status"
+            echo -e "   \033[38;5;15mtest\033[0m            Test backup creation"
+            echo -e "   \033[38;5;15mtest-telegram\033[0m   Test Telegram delivery"
+            echo -e "   \033[38;5;15mrun\033[0m             Run backup now"
+            echo -e "   \033[38;5;15mlogs\033[0m            View backup logs"
+            echo -e "   \033[38;5;15mcleanup\033[0m         Clean old backups"
+            echo
+            echo -e "\033[1;37mFeatures:\033[0m"
+            echo -e "   \033[38;5;250m• Automated database backups\033[0m"
+            echo -e "   \033[38;5;250m• Telegram notifications with file splitting\033[0m"
+            echo -e "   \033[38;5;250m• Configurable retention policies\033[0m"
+            echo -e "   \033[38;5;250m• Compression options\033[0m"
+            echo -e "   \033[38;5;250m• Thread support for group chats\033[0m"
+            ;;
+
+        backup)
+            echo -e "\033[1;37m📖 Backup Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+            echo
+            echo -e "\033[1;37mUsage:\033[0m"
+            echo -e "   \033[38;5;15m$APP_NAME backup [options]\033[0m"
+            echo
+            echo -e "\033[1;37mOptions:\033[0m"
+            echo -e "   \033[38;5;15m--compress\033[0m       Create compressed backup"
+            echo -e "   \033[38;5;15m--output <dir>\033[0m   Specify output directory"
+            echo
+            echo -e "\033[1;37mNote:\033[0m"
+            echo -e "   \033[38;5;250mFor automated backups with Telegram delivery,\033[0m"
+            echo -e "   \033[38;5;250muse '\033[38;5;15m$APP_NAME schedule\033[38;5;250m' command instead.\033[0m"
+            ;;
+        monitor)
+            echo -e "\033[1;37m📖 Monitor Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+            echo
+            echo -e "\033[1;37mDescription:\033[0m"
+            echo -e "   \033[38;5;250mReal-time system monitoring dashboard\033[0m"
+            echo
+            echo -e "\033[1;37mDisplays:\033[0m"
+            echo -e "   \033[38;5;250m• CPU and Memory usage\033[0m"
+            echo -e "   \033[38;5;250m• Docker container stats\033[0m"
+            echo -e "   \033[38;5;250m• Network I/O\033[0m"
+            echo -e "   \033[38;5;250m• Disk usage\033[0m"
+            echo -e "   \033[38;5;250m• Service health status\033[0m"
+            echo
+            echo -e "\033[1;37mControls:\033[0m"
+            echo -e "   \033[38;5;250mPress \033[38;5;15mCtrl+C\033[38;5;250m to exit\033[0m"
+            ;;
+        health)
+            echo -e "\033[1;37m📖 Health Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+            echo
+            echo -e "\033[1;37mDescription:\033[0m"
+            echo -e "   \033[38;5;250mComprehensive system health diagnostics\033[0m"
+            echo
+            echo -e "\033[1;37mChecks:\033[0m"
+            echo -e "   \033[38;5;250m• Service availability\033[0m"
+            echo -e "   \033[38;5;250m• Database connectivity\033[0m"
+            echo -e "   \033[38;5;250m• Port accessibility\033[0m"
+            echo -e "   \033[38;5;250m• Resource usage\033[0m"
+            echo -e "   \033[38;5;250m• Docker health\033[0m"
+            echo -e "   \033[38;5;250m• Configuration validation\033[0m"
+            ;;
+        *)
+            echo -e "\033[1;37m📖 Command Help\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 20))\033[0m"
+            echo
+            echo -e "\033[1;31mUnknown command: $cmd\033[0m"
+            echo
+            echo -e "\033[1;37mAvailable commands:\033[0m"
+            echo -e "   \033[38;5;250minstall, update, uninstall, up, down, restart\033[0m"
+            echo -e "   \033[38;5;250mstatus, logs, monitor, health, backup, schedule\033[0m"
+            echo -e "   \033[38;5;250medit, edit-env, console, pm2-monitor\033[0m"
+            echo
+            echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME help\033[38;5;8m' for full usage\033[0m"
+            ;;
+    esac
+}
+
+# Обновляем smart_usage для обработки help
+smart_usage() {
+    # Проверяем, запрашивается ли help для конкретной команды
+    if [ "$1" = "help" ] && [ -n "$2" ]; then
+        command_help "$2"
+        return
+    fi
+    
+    local terminal_width=$(tput cols 2>/dev/null || echo "80")
+    local terminal_height=$(tput lines 2>/dev/null || echo "24")
+    
+    if [ "$terminal_width" -lt 50 ]; then
+        usage_minimal
+    elif [ "$terminal_width" -lt 80 ] || [ "$terminal_height" -lt 35 ]; then
+        usage_compact
+    else
+        usage
+    fi
+}
+
+
 
 case "$COMMAND" in
     install) install_command ;;
@@ -1733,12 +4046,19 @@ case "$COMMAND" in
     restart) restart_command ;;
     status) status_command ;;
     logs) logs_command ;;
+    monitor) monitor_command ;;
+    health) health_check_command ;;
+    schedule) schedule_command "$@" ;;
     install-script) install_remnawave_script ;;
     uninstall-script) uninstall_remnawave_script ;;
     edit) edit_command ;;
     edit-env) edit_env_command ;;
+    edit-env-sub) edit_env_sub_command ;;
     console) console_command ;;
-    pm2-monitor) pm2_monitor;;
-    backup) backup_remnawave ;;
-    *) usage ;;
+    pm2-monitor) pm2_monitor ;;
+    backup) backup_command ;;
+    menu) main_menu ;;  
+    help) smart_usage "help" "$1" ;;
+    "") main_menu ;;    
+    *) smart_usage ;;
 esac
