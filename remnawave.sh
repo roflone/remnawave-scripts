@@ -3826,6 +3826,13 @@ usage() {
     echo -e "\033[38;5;244m   $APP_NAME                # Same as menu\033[0m"
     echo
     echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME <command> --help\033[38;5;8m' for detailed command help\033[0m"
+    echo
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;8m📚 Project: \033[38;5;250mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;8m🐛 Issues: \033[38;5;250mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;8m💬 Support: \033[38;5;250mhttps://t.me/remnawave\033[0m"
+    echo -e "\033[38;5;8m👨‍💻 Author: \033[38;5;250mDigneZzZ\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
 }
 
 # Обновляем usage_minimal()
@@ -3851,6 +3858,7 @@ usage_minimal() {
     printf "   \033[38;5;244m%-12s\033[0m %s\n" "schedule" "📅 Schedule"
     echo
     echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME help\033[38;5;8m' for full help\033[0m"
+    echo -e "\033[38;5;8m👨‍💻 DigneZzZ | 📚 gig.ovh\033[0m"
 }
 
 # Обновляем usage_compact()
@@ -3903,9 +3911,24 @@ usage_compact() {
     fi
     echo
     echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME <command> help\033[38;5;8m' for details\033[0m"
+    echo
+    echo -e "\033[38;5;8m📚 \033[38;5;250mhttps://gig.ovh\033[38;5;8m | 💬 \033[38;5;250m@remnawave\033[38;5;8m | 👨‍💻 \033[38;5;250mDigneZzZ\033[0m"
 }
 
-# Добавляем функцию help для отдельных команд
+
+show_version() {
+    echo -e "\033[1;37m⚡ Remnawave Panel CLI\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo -e "\033[38;5;250mVersion: \033[38;5;15m$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;250mAuthor:  \033[38;5;15mDigneZzZ\033[0m"
+    echo -e "\033[38;5;250mGitHub:  \033[38;5;15mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;250mProject: \033[38;5;15mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;250mCommunity: \033[38;5;15mhttps://openode.xyz\033[0m"
+    echo -e "\033[38;5;250mSupport: \033[38;5;15mhttps://t.me/remnawave\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+}
+
+
 command_help() {
     local cmd="$1"
     
@@ -4059,6 +4082,8 @@ case "$COMMAND" in
     backup) backup_command ;;
     menu) main_menu ;;  
     help) smart_usage "help" "$1" ;;
+    --version|-v) show_version ;;
+    --help|-h) smart_usage ;;
     "") main_menu ;;    
     *) smart_usage ;;
 esac
