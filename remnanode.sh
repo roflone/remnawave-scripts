@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 2.4
+# Version: 2.5
 set -e
-SCRIPT_VERSION="2.4"
+SCRIPT_VERSION="2.5"
 while [[ $# -gt 0 ]]; do
     key="$1"
     
@@ -963,111 +963,51 @@ update_command() {
     echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking local image version..."
     local local_image_id=""
     local local_created=""
-    local local_digest=""
-    local local_repo_digest=""
     
     if docker images remnawave/node:$current_tag --format "table {{.ID}}\t{{.CreatedAt}}" | grep -v "IMAGE ID" > /dev/null 2>&1; then
         local_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
         local_created=$(docker images remnawave/node:$current_tag --format "{{.CreatedAt}}" | head -1 | cut -d' ' -f1,2)
         
-        # Получаем digest локального образа
-        local_repo_digest=$(docker inspect remnawave/node:$current_tag --format='{{index .RepoDigests 0}}' 2>/dev/null)
-        if [ -n "$local_repo_digest" ] && [ "$local_repo_digest" != "<no value>" ]; then
-            local_digest=$(echo "$local_repo_digest" | cut -d'@' -f2)
-        fi
-        
         echo -e "\033[1;32m✅ Local image found\033[0m"
         echo -e "\033[38;5;8m   Image ID: $local_image_id\033[0m"
         echo -e "\033[38;5;8m   Created: $local_created\033[0m"
-        if [ -n "$local_digest" ]; then
-            echo -e "\033[38;5;8m   Digest: ${local_digest:0:12}...\033[0m"
-        else
-            echo -e "\033[38;5;8m   Digest: Not available (locally built or old image)\033[0m"
-        fi
     else
         echo -e "\033[1;33m⚠️  Local image not found\033[0m"
         local_image_id="none"
     fi
     
-    # Получаем информацию о последней версии из Docker Hub
-    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking remote image version..."
-    local remote_digest=""
-    local remote_last_updated=""
+    # Проверяем обновления через docker pull
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking for updates with docker pull..."
     
-    # Используем Docker Hub API для получения информации
-    local hub_response=$(curl -s "https://hub.docker.com/v2/repositories/remnawave/node/tags/$current_tag" 2>/dev/null)
+    # Сохраняем текущий образ ID для сравнения
+    local old_image_id="$local_image_id"
     
-    if [ -n "$hub_response" ] && echo "$hub_response" | grep -q '"digest"'; then
-        remote_digest=$(echo "$hub_response" | grep -oP '"digest":\s*"\K[^"]+' | head -1)
-        remote_last_updated=$(echo "$hub_response" | grep -oP '"last_updated":\s*"\K[^"]+' | head -1)
+    # Запускаем docker pull
+    if $COMPOSE -f $COMPOSE_FILE pull --quiet 2>/dev/null; then
+        # Проверяем, изменился ли ID образа после pull
+        local new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
         
-        if [ -n "$remote_last_updated" ]; then
-            # Форматируем дату (берем только дату без времени)
-            remote_last_updated=$(echo "$remote_last_updated" | cut -d'T' -f1)
-        fi
+        local needs_update=false
+        local update_reason=""
         
-        echo -e "\033[1;32m✅ Remote image info retrieved\033[0m"
-        echo -e "\033[38;5;8m   Digest: ${remote_digest:0:12}...\033[0m"
-        echo -e "\033[38;5;8m   Updated: $remote_last_updated\033[0m"
-    else
-        echo -e "\033[1;33m⚠️  Could not retrieve remote image info\033[0m"
-        echo -e "\033[38;5;8m   Will use docker pull to check for updates...\033[0m"
-        remote_digest="unknown"
-    fi
-    
-    # Сравниваем версии
-    local needs_update=false
-    local update_reason=""
-    local use_pull_check=false
-    
-    if [ "$local_image_id" = "none" ]; then
-        needs_update=true
-        update_reason="Local image not found"
-    elif [ "$remote_digest" = "unknown" ]; then
-        use_pull_check=true
-    elif [ -z "$local_digest" ]; then
-        # Если локальный digest недоступен, используем pull для проверки
-        use_pull_check=true
-    elif [ "$local_digest" != "$remote_digest" ]; then
-        # Digest'ы разные, но давайте проверим через pull для уверенности
-        echo -e "\033[38;5;250m📝 Step 2.1:\033[0m Digest mismatch detected, verifying with docker pull..."
-        use_pull_check=true
-    else
-        needs_update=false
-        update_reason="Already up to date (digest match)"
-    fi
-    
-    # Если нужно, проверяем через docker pull
-    if [ "$use_pull_check" = true ]; then
-        echo -e "\033[38;5;250m📝 Step 2.2:\033[0m Checking for updates with docker pull..."
-        
-        # Сохраняем текущий образ ID для сравнения
-        local old_image_id="$local_image_id"
-        
-        # Создаем временный файл для вывода docker pull
-        local pull_output=$(mktemp)
-        
-        # Запускаем docker pull и перехватываем вывод
-        if $COMPOSE -f $COMPOSE_FILE pull --quiet 2>&1 | tee "$pull_output" > /dev/null; then
-            # Проверяем, изменился ли ID образа после pull
-            local new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
-            
-            if [ "$old_image_id" != "$new_image_id" ]; then
-                needs_update=true
-                update_reason="New version downloaded via docker pull"
-                echo -e "\033[1;33m🔄 New version detected and downloaded\033[0m"
-            else
-                needs_update=false
-                update_reason="Already up to date (verified via docker pull)"
-                echo -e "\033[1;32m✅ Already up to date\033[0m"
-            fi
-        else
-            echo -e "\033[1;33m⚠️  Docker pull check failed, assuming update needed\033[0m"
+        if [ "$old_image_id" = "none" ]; then
             needs_update=true
-            update_reason="Unable to verify current version"
+            update_reason="Local image not found, downloaded new version"
+            echo -e "\033[1;33m🔄 New image downloaded\033[0m"
+        elif [ "$old_image_id" != "$new_image_id" ]; then
+            needs_update=true
+            update_reason="New version downloaded via docker pull"
+            echo -e "\033[1;33m🔄 New version detected and downloaded\033[0m"
+        else
+            needs_update=false
+            update_reason="Already up to date (verified via docker pull)"
+            echo -e "\033[1;32m✅ Already up to date\033[0m"
         fi
-        
-        rm -f "$pull_output"
+    else
+        echo -e "\033[1;33m⚠️  Docker pull failed, assuming update needed\033[0m"
+        local needs_update=true
+        local update_reason="Unable to verify current version"
+        local new_image_id="$old_image_id"
     fi
     
     echo
@@ -1079,15 +1019,15 @@ update_command() {
         echo -e "\033[38;5;250m   Reason: \033[38;5;15m$update_reason\033[0m"
         echo
         
-        # Спрашиваем подтверждение у пользователя только если это не автоматическое обновление через pull
-        if [ "$update_reason" != "New version downloaded via docker pull" ]; then
+        # Если новая версия уже загружена, автоматически продолжаем
+        if [[ "$update_reason" == *"downloaded"* ]]; then
+            echo -e "\033[1;37m🚀 New version already downloaded, proceeding with update...\033[0m"
+        else
             read -p "Do you want to proceed with the update? (y/n): " -r confirm_update
             if [[ ! $confirm_update =~ ^[Yy]$ ]]; then
                 echo -e "\033[1;31m❌ Update cancelled by user\033[0m"
                 exit 0
             fi
-        else
-            echo -e "\033[1;37m🚀 New version already downloaded, proceeding with update...\033[0m"
         fi
         
         echo
@@ -1117,11 +1057,13 @@ update_command() {
             echo -e "\033[38;5;250m📝 Step 4:\033[0m Container not running, skipping stop..."
         fi
         
-        # Загружаем новый образ (только если еще не загружен)
-        if [ "$update_reason" != "New version downloaded via docker pull" ]; then
+        # Загружаем образ только если еще не загружен
+        if [[ "$update_reason" != *"downloaded"* ]]; then
             echo -e "\033[38;5;250m📝 Step 5:\033[0m Pulling latest image..."
             if update_remnanode; then
                 echo -e "\033[1;32m✅ Image updated\033[0m"
+                # Обновляем ID образа
+                new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
             else
                 echo -e "\033[1;31m❌ Failed to pull image\033[0m"
                 
@@ -1155,13 +1097,12 @@ update_command() {
         echo -e "\033[1;37m🎉 RemnaNode updated successfully!\033[0m"
         
         # Получаем новую информацию об образе
-        local new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
-        local new_created=$(docker images remnawave/node:$current_tag --format "{{.CreatedAt}}" | head -1 | cut -d' ' -f1,2)
+        local final_created=$(docker images remnawave/node:$current_tag --format "{{.CreatedAt}}" | head -1 | cut -d' ' -f1,2)
         
         echo -e "\033[1;37m📋 Update Summary:\033[0m"
-        echo -e "\033[38;5;250m   Previous: \033[38;5;8m$local_image_id\033[0m"
+        echo -e "\033[38;5;250m   Previous: \033[38;5;8m$old_image_id\033[0m"
         echo -e "\033[38;5;250m   Current:  \033[38;5;15m$new_image_id\033[0m"
-        echo -e "\033[38;5;250m   Created:  \033[38;5;15m$new_created\033[0m"
+        echo -e "\033[38;5;250m   Created:  \033[38;5;15m$final_created\033[0m"
         
         if [ "$was_running" = true ]; then
             echo -e "\033[38;5;250m   Status:   \033[1;32mRunning\033[0m"
