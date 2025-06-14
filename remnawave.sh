@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.73 
+# VERSION=2.74
 
 set -e
-SCRIPT_VERSION="2.73"
+SCRIPT_VERSION="2.74"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -1440,50 +1440,185 @@ schedule_cleanup() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 25))\033[0m"
     echo
     
-    local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_*.sql* 2>/dev/null | wc -l)
-    echo -e "\033[38;5;250mFound $backup_count backup files\033[0m"
+    local backup_directory="$APP_DIR/backups"
     
-    if [ "$backup_count" -eq 0 ]; then
-        echo -e "\033[38;5;244mNo backup files to clean\033[0m"
+    if [ ! -d "$backup_directory" ]; then
+        echo -e "\033[38;5;244mBackup directory not found: $backup_directory\033[0m"
+        echo -e "\033[38;5;244mNo backups to clean\033[0m"
         read -p "Press Enter to continue..."
         return
+    fi
+
+    local retention_days=7
+    local min_backups=3
+    
+    if [ -f "$BACKUP_CONFIG_FILE" ]; then
+        retention_days=$(jq -r '.retention.days // 7' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+        min_backups=$(jq -r '.retention.min_backups // 3' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    fi
+    
+    echo -e "\033[1;37m📋 Cleanup Configuration:\033[0m"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s days\033[0m\n" "Retention period:" "$retention_days"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s files\033[0m\n" "Minimum to keep:" "$min_backups"
+    echo
+
+    local all_backups=$(ls -t "$backup_directory"/remnawave_*.tar.gz "$backup_directory"/remnawave_*.sql.gz "$backup_directory"/remnawave_*.sql 2>/dev/null)
+    local total_files=$(echo "$all_backups" | grep -c . 2>/dev/null || echo "0")
+    
+    echo -e "\033[1;37m📊 Current Status:\033[0m"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backup files:" "$total_files"
+    
+    if [ "$total_files" -eq 0 ]; then
+        echo -e "\033[38;5;244mNo backup files found in $backup_directory\033[0m"
+        echo -e "\033[38;5;244mNothing to clean\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    local dir_size=$(du -sh "$backup_directory" 2>/dev/null | cut -f1)
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Directory size:" "$dir_size"
+    echo
+    local old_files=""
+    local old_count=0
+    local current_time=$(date +%s)
+    local cutoff_time=$((current_time - retention_days * 86400))
+    
+    echo -e "\033[1;37m🔍 Analyzing backup files:\033[0m"
+    echo "$all_backups" | while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            local filename=$(basename "$file")
+            local file_size=$(du -sh "$file" 2>/dev/null | cut -f1)
+            local file_time=$(stat -c %Y "$file" 2>/dev/null)
+            local file_date=$(stat -c %y "$file" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+            local age_days=$(( (current_time - file_time) / 86400 ))
+            local file_type="📦"
+            local status_color="38;5;250"
+            local status_text="Keep"
+            
+            if [[ "$filename" =~ scheduled ]]; then
+                file_type="🤖"
+            elif [[ "$filename" =~ full ]]; then
+                file_type="📁"
+            else
+                file_type="📊"
+            fi
+            
+            if [ $age_days -gt $retention_days ]; then
+                status_color="1;31"
+                status_text="DELETE (${age_days}d old)"
+            else
+                status_text="Keep (${age_days}d old)"
+            fi
+            
+            printf "   %s \033[38;5;250m%-30s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m \033[${status_color}m%s\033[0m\n" \
+                "$file_type" "$filename" "$file_size" "$file_date" "$status_text"
+        fi
+    done
+    echo "$all_backups" | while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            local file_time=$(stat -c %Y "$file" 2>/dev/null)
+            if [ $file_time -lt $cutoff_time ]; then
+                echo "$file"
+            fi
+        fi
+    done > /tmp/files_to_delete_$$
+    
+    old_files=$(cat /tmp/files_to_delete_$$ 2>/dev/null)
+    old_count=$(cat /tmp/files_to_delete_$$ 2>/dev/null | wc -l)
+    rm -f /tmp/files_to_delete_$$
+    
+    echo
+
+    local remaining_count=$((total_files - old_count))
+    
+    if [ $remaining_count -lt $min_backups ]; then
+        local files_to_keep=$((min_backups - remaining_count))
+        echo -e "\033[1;33m⚠️  Protection activated!\033[0m"
+        echo -e "\033[38;5;250mWould keep minimum $min_backups backups, reducing deletion by $files_to_keep files\033[0m"
+
+        old_files=$(echo "$all_backups" | tail -n +$((min_backups + 1)) | while IFS= read -r file; do
+            if [ -f "$file" ]; then
+                local file_time=$(stat -c %Y "$file" 2>/dev/null)
+                if [ $file_time -lt $cutoff_time ]; then
+                    echo "$file"
+                fi
+            fi
+        done)
+        old_count=$(echo "$old_files" | grep -c . 2>/dev/null || echo "0")
+    fi
+    
+    if [ "$old_count" -eq 0 ] || [ -z "$old_files" ]; then
+        echo -e "\033[1;32m✅ No files to delete\033[0m"
+        echo -e "\033[38;5;250mAll backups are within retention period or protected by minimum count\033[0m"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+
+    echo -e "\033[1;37m📋 Cleanup Summary:\033[0m"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Files to delete:" "$old_count"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Files to keep:" "$remaining_count"
+    
+    local delete_size=0
+    echo "$old_files" | while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            local size_bytes=$(stat -c %s "$file" 2>/dev/null || echo "0")
+            delete_size=$((delete_size + size_bytes))
+        fi
+    done > /tmp/delete_size_$$
+    
+    local delete_size_human=""
+    if command -v numfmt >/dev/null 2>&1; then
+        delete_size_human=$(numfmt --to=iec --suffix=B $(cat /tmp/delete_size_$$ 2>/dev/null || echo "0"))
+    else
+        delete_size_human="Unknown"
+    fi
+    rm -f /tmp/delete_size_$$
+    
+    if [ "$delete_size_human" != "Unknown" ]; then
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Space to free:" "$delete_size_human"
     fi
     
     echo
-    read -p "Delete backups older than how many days? [7]: " days
-    days=${days:-7}
+    read -p "Proceed with cleanup? [y/N]: " confirm
     
-    if ! [[ "$days" =~ ^[0-9]+$ ]] || [ "$days" -lt 1 ]; then
-        echo -e "\033[1;31m❌ Invalid number!\033[0m"
-        read -p "Press Enter to continue..."
-        return
-    fi
-    
-    local files_to_delete=$(find "$BACKUP_DIR" -name "remnawave_*.sql*" -type f -mtime +$days)
-    local delete_count=$(echo "$files_to_delete" | wc -l)
-    
-    if [ -z "$files_to_delete" ]; then
-        echo -e "\033[38;5;250mNo files older than $days days found\033[0m"
-    else
-        echo -e "\033[38;5;250mFiles to delete ($delete_count):\033[0m"
-        echo "$files_to_delete" | while read file; do
-            echo -e "\033[38;5;244m   $(basename "$file")\033[0m"
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        echo
+        echo -e "\033[1;37m🗑️  Deleting old backup files...\033[0m"
+        
+        local deleted_count=0
+        local failed_count=0
+        
+        echo "$old_files" | while IFS= read -r file; do
+            if [ -f "$file" ]; then
+                local filename=$(basename "$file")
+                if rm -f "$file" 2>/dev/null; then
+                    echo -e "\033[1;32m   ✅ Deleted: $filename\033[0m"
+                    deleted_count=$((deleted_count + 1))
+                else
+                    echo -e "\033[1;31m   ❌ Failed to delete: $filename\033[0m"
+                    failed_count=$((failed_count + 1))
+                fi
+            fi
         done
         
         echo
-        read -p "Proceed with deletion? [y/N]: " confirm
-        if [[ $confirm =~ ^[Yy]$ ]]; then
-            echo "$files_to_delete" | xargs rm -f
-            echo -e "\033[1;32m✅ Deleted $delete_count old backup files\033[0m"
+        if [ $failed_count -eq 0 ]; then
+            echo -e "\033[1;32m🎉 Cleanup completed successfully!\033[0m"
+            echo -e "\033[38;5;250mDeleted $old_count backup files\033[0m"
         else
-            echo -e "\033[38;5;250mCleanup cancelled\033[0m"
+            echo -e "\033[1;33m⚠️  Cleanup completed with warnings\033[0m"
+            echo -e "\033[38;5;250mDeleted: $deleted_count, Failed: $failed_count\033[0m"
         fi
+        local new_dir_size=$(du -sh "$backup_directory" 2>/dev/null | cut -f1)
+        echo -e "\033[38;5;250mNew directory size: $new_dir_size\033[0m"
+    else
+        echo -e "\033[38;5;250mCleanup cancelled\033[0m"
     fi
     
+    echo
     read -p "Press Enter to continue..."
 }
 
-# Сброс конфигурации
 schedule_reset_config() {
     echo
     read -p "Reset all backup configuration to defaults? [y/N]: " confirm
