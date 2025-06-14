@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.3 
+# VERSION=2.5 
 
 set -e
-SCRIPT_VERSION="2.3"
+SCRIPT_VERSION="2.5"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -2829,80 +2829,105 @@ EOF
 
 
 monitor_command() {
-    if ! is_remnawave_installed; then
-        colorized_echo red "Remnawave not installed!"
-        exit 1
-    fi
+    check_running_as_root
     
-    detect_compose
+    if ! is_remnawave_installed; then
+        echo -e "\033[1;31m❌ Remnawave not installed!\033[0m"
+        return 1
+    fi
     
     if ! is_remnawave_up; then
-        colorized_echo red "Remnawave is not running!"
-        exit 1
+        echo -e "\033[1;31m❌ Remnawave services are not running!\033[0m"
+        echo -e "\033[38;5;8m   Use 'sudo $APP_NAME up' to start services\033[0m"
+        return 1
     fi
     
-    local interval=5
-    local count=-1
-    
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            -i|--interval) interval="$2"; shift ;;
-            -c|--count) count="$2"; shift ;;
-            -h|--help)
-                echo -e "\033[1;37mRemnawave Performance Monitor\033[0m"
-                echo
-                echo -e "\033[1;37mUsage:\033[0m"
-                echo -e "  \033[38;5;15m$APP_NAME monitor\033[0m [\033[38;5;244moptions\033[0m]"
-                echo
-                echo -e "\033[1;37mOptions:\033[0m"
-                echo -e "  \033[38;5;244m-i, --interval\033[0m  Update interval in seconds (default: 5)"
-                echo -e "  \033[38;5;244m-c, --count\033[0m     Number of updates (default: infinite)"
-                echo -e "  \033[38;5;244m-h, --help\033[0m      Show this help"
-                exit 0
-                ;;
-            *) echo "Unknown option: $1" >&2; exit 1 ;;
-        esac
-        shift
-    done
-    
-    echo -e "\033[1;37m📊 Remnawave Performance Monitor\033[0m"
-    echo -e "\033[38;5;8mPress Ctrl+C to stop\033[0m"
+    # Однократный вывод статистики
+    echo -e "\033[1;37m📊 Remnawave Performance Monitor - $(date '+%Y-%m-%d %H:%M:%S')\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
     
-    local iteration=0
-    while [ $count -eq -1 ] || [ $iteration -lt $count ]; do
-        clear
-        echo -e "\033[1;37m📊 Remnawave Performance Monitor - $(date '+%Y-%m-%d %H:%M:%S')\033[0m"
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
-        echo
+    # Показываем статистику контейнеров
+    echo -e "\033[1;37m🐳 Container Statistics:\033[0m"
+    local stats_available=false
+    
+    # Проверяем доступность docker stats
+    if docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}" 2>/dev/null | grep -q "${APP_NAME}"; then
+        docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}" | grep -E "(NAME|${APP_NAME})"
+        stats_available=true
+    else
+        echo -e "\033[38;5;244m   Docker stats not available or no containers running\033[0m"
+    fi
+    
+    echo
+    
+    # Показываем системные ресурсы
+    echo -e "\033[1;37m💻 System Resources:\033[0m"
+    
+    # CPU
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "N/A")
+    echo -e "   \033[38;5;15mCPU:\033[0m $cpu_usage% usage"
+    
+    # Memory
+    local mem_info=$(free -h | grep "Mem:" 2>/dev/null)
+    if [ -n "$mem_info" ]; then
+        local mem_used=$(echo "$mem_info" | awk '{print $3}')
+        local mem_total=$(echo "$mem_info" | awk '{print $2}')
+        local mem_percent=$(free | grep Mem | awk '{printf("%.1f", $3/$2 * 100.0)}')
+        echo -e "   \033[38;5;15mMemory:\033[0m $mem_percent% usage ($mem_used used / $mem_total total)"
+    else
+        echo -e "   \033[38;5;15mMemory:\033[0m N/A"
+    fi
+    
+    # Disk
+    local disk_info=$(df -h "$APP_DIR" 2>/dev/null | tail -1)
+    if [ -n "$disk_info" ]; then
+        local disk_used=$(echo "$disk_info" | awk '{print $3}')
+        local disk_total=$(echo "$disk_info" | awk '{print $2}')
+        local disk_percent=$(echo "$disk_info" | awk '{print $5}' | sed 's/%//')
+        echo -e "   \033[38;5;15mDisk:\033[0m $disk_used used / $disk_total total ($disk_percent%)"
+    else
+        echo -e "   \033[38;5;15mDisk:\033[0m N/A"
+    fi
+    
+    echo
+    
+    # Дополнительная информация о контейнерах
+    if [ "$stats_available" = true ]; then
+        echo -e "\033[1;37m📋 Container Details:\033[0m"
+        detect_compose
+        cd "$APP_DIR" 2>/dev/null || true
         
-        # Статистика контейнеров
-        echo -e "\033[1;37m🐳 Container Statistics:\033[0m"
-        docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}" \
-            $(docker ps --filter "label=com.docker.compose.project=$APP_NAME" -q) 2>/dev/null || \
-            echo "No containers found"
-        
-        echo
-        
-        # Системная статистика
-        echo -e "\033[1;37m💻 System Resources:\033[0m"
-        echo -n "   CPU: "
-        top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 | xargs printf "%.1f%% usage\n"
-        echo -n "   Memory: "
-        free -h | awk 'NR==2{printf "%.1f%% usage (%s used / %s total)\n", $3/$2*100, $3, $2}'
-        echo -n "   Disk: "
-        df -h "$APP_DIR" | awk 'NR==2{printf "%s used / %s total (%s)\n", $3, $2, $5}'
-        
-        echo
-        echo -e "\033[38;5;8mUpdating every ${interval}s... (iteration $((iteration + 1)))\033[0m"
-        
-        if [ $count -ne -1 ] && [ $((iteration + 1)) -ge $count ]; then
-            break
+        local container_info=$($COMPOSE -f "$COMPOSE_FILE" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+        if [ -n "$container_info" ]; then
+            echo "$container_info" | tail -n +2 | while IFS=$'\t' read -r service status ports; do
+                local status_icon="❓"
+                local status_color="38;5;244"
+                
+                if [[ "$status" =~ "Up" ]]; then
+                    if [[ "$status" =~ "healthy" ]]; then
+                        status_icon="✅"
+                        status_color="1;32"
+                    elif [[ "$status" =~ "unhealthy" ]]; then
+                        status_icon="❌"
+                        status_color="1;31"
+                    else
+                        status_icon="🟡"
+                        status_color="1;33"
+                    fi
+                elif [[ "$status" =~ "Exit" ]]; then
+                    status_icon="❌"
+                    status_color="1;31"
+                fi
+                
+                printf "   \033[38;5;15m%-20s\033[0m \033[${status_color}m${status_icon} %-25s\033[0m \033[38;5;244m%s\033[0m\n" "$service:" "$status" "$ports"
+            done
         fi
-        
-        sleep "$interval"
-        iteration=$((iteration + 1))
-    done
+    fi
+    
+    echo
+    echo -e "\033[38;5;8m📊 Snapshot taken at $(date '+%H:%M:%S')\033[0m"
+    echo -e "\033[38;5;8m💡 For continuous monitoring, use: docker stats\033[0m"
 }
 
 is_remnawave_installed() {
@@ -3348,145 +3373,140 @@ validate_compose_file() {
 }
 
 status_command() {
+    check_running_as_root
+    detect_compose
+    
     echo -e "\033[1;37m📊 Remnawave Panel Status Check:\033[0m"
     echo
     
-    if ! is_remnawave_installed; then
-        printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Not Installed\033[0m\n" "Status:"
-        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' to install\033[0m"
-        exit 1
-    fi
-    
-    detect_compose
-    
-    local overall_status="unknown"
-    local issues=0
-    
-    # Получаем список всех сервисов из docker-compose
-    local services_info=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
-    
-    if [ -z "$services_info" ]; then
-        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⏹️  Down\033[0m\n" "Status:"
-        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start\033[0m"
-        exit 1
-    fi
-    
-    # Проверяем общий статус
-    if is_remnawave_up; then
-        printf "   \033[38;5;15m%-12s\033[0m \033[1;32m✅ Running\033[0m\n" "Status:"
-        overall_status="running"
+    # Проверяем статус панели
+    if is_remnawave_installed; then
+        if is_remnawave_up; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[1;32m✅ Running\033[0m\n" "Status:"
+        else
+            printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Stopped\033[0m\n" "Status:"
+        fi
     else
-        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⚠️  Partial\033[0m\n" "Status:"
-        overall_status="partial"
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⚠️  Not Installed\033[0m\n" "Status:"
+        return 1
     fi
     
     echo
-    echo -e "\033[1;37m🔧 Services Status:\033[0m"
     
-    # Парсим вывод docker-compose ps и выводим статус каждого сервиса
-    echo "$services_info" | tail -n +2 | while IFS=$'\t' read -r service status ports; do
-        local status_icon="❓"
-        local status_color="38;5;244"
-        local port_info=""
-        
-        # Определяем иконку и цвет статуса
-        if [[ "$status" =~ "Up" ]]; then
-            if [[ "$status" =~ "healthy" ]]; then
-                status_icon="✅"
-                status_color="1;32"
-            elif [[ "$status" =~ "unhealthy" ]]; then
+    # Показываем статус сервисов
+    echo -e "\033[1;37m🔧 Services Status:\033[0m"
+    cd "$APP_DIR" 2>/dev/null || true
+    
+    local services_status=$($COMPOSE -f "$COMPOSE_FILE" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "")
+    
+    if [ -n "$services_status" ]; then
+        echo "$services_status" | tail -n +2 | while IFS=$'\t' read -r service status ports; do
+            local status_icon="❓"
+            local status_color="38;5;244"
+            
+            if [[ "$status" =~ "Up" ]]; then
+                if [[ "$status" =~ "healthy" ]]; then
+                    status_icon="✅"
+                    status_color="1;32"
+                elif [[ "$status" =~ "unhealthy" ]]; then
+                    status_icon="❌"
+                    status_color="1;31"
+                else
+                    status_icon="🟡"
+                    status_color="1;33"
+                fi
+            elif [[ "$status" =~ "Exit" ]]; then
                 status_icon="❌"
                 status_color="1;31"
-                issues=$((issues + 1))
-            else
-                status_icon="🟡"
+            elif [[ "$status" =~ "Restarting" ]]; then
+                status_icon="🔄"
                 status_color="1;33"
             fi
-        elif [[ "$status" =~ "Exit" ]]; then
-            status_icon="❌"
-            status_color="1;31"
-            issues=$((issues + 1))
-        elif [[ "$status" =~ "Restarting" ]]; then
-            status_icon="🔄"
-            status_color="1;33"
-        fi
-        
-        # Форматируем информацию о портах
-        if [ -n "$ports" ] && [ "$ports" != "-" ]; then
-            port_info=" \033[38;5;244m($ports)\033[0m"
+            
+            printf "   \033[38;5;15m%-25s\033[0m \033[${status_color}m${status_icon} %-25s\033[0m \033[38;5;244m%s\033[0m\n" "$service" "$status" "$ports"
+        done
+    else
+        echo -e "\033[38;5;244m   No services found\033[0m"
     fi
     
-    printf "   \033[38;5;15m%-20s\033[0m \033[${status_color}m${status_icon} ${status}\033[0m${port_info}\n" "$service:"
-    done
-    
-    # Информация о здоровье контейнеров
-    local unhealthy_containers=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --filter "health=unhealthy" -q 2>/dev/null | wc -l)
-    local starting_containers=$($COMPOSE -f "$COMPOSE_FILE" -p "$APP_NAME" ps --filter "health=starting" -q 2>/dev/null | wc -l)
-    
-    if [ "$unhealthy_containers" -gt 0 ]; then
-        echo
-        echo -e "\033[1;31m⚠️  Warning: $unhealthy_containers container(s) unhealthy\033[0m"
-        issues=$((issues + 1))
-    fi
-    
-    if [ "$starting_containers" -gt 0 ]; then
-        echo
-        echo -e "\033[1;33m🔄 Info: $starting_containers container(s) still starting\033[0m"
-    fi
-    
-    # Информация о ресурсах
     echo
-    echo -e "\033[1;37m💾 Resource Usage:\033[0m"
     
-    # CPU и память для основного контейнера
-    local main_stats=$(docker stats "$APP_NAME" --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null | tail -n +2)
-    if [ -n "$main_stats" ]; then
-        local cpu_percent=$(echo "$main_stats" | cut -f1)
-        local mem_usage=$(echo "$main_stats" | cut -f2)
-        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250mCPU: %s, Memory: %s\033[0m\n" "Main Panel:" "$cpu_percent" "$mem_usage"
+    # Показываем использование ресурсов основного контейнера
+    echo -e "\033[1;37m💾 Resource Usage:\033[0m"
+    local main_stats=$(docker stats --no-stream --format "{{.CPUPerc}}\t{{.MemUsage}}" "${APP_NAME}" 2>/dev/null || echo "N/A\tN/A")
+    local cpu_perc=$(echo "$main_stats" | cut -f1)
+    local mem_usage=$(echo "$main_stats" | cut -f2)
+    
+    if [ "$cpu_perc" != "N/A" ]; then
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250mCPU: %-10s %s\033[0m\n" "Main Panel:" "$cpu_perc" "$mem_usage"
+    else
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;244mStats not available\033[0m\n" "Main Panel:"
     fi
     
-    # Информация о портах и доменах
+    echo
+    
+    # Показываем информацию о подключении
     if [ -f "$ENV_FILE" ]; then
-        echo
         echo -e "\033[1;37m🌐 Connection Information:\033[0m"
         
-        local app_port=$(grep "^APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        local metrics_port=$(grep "^METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        local front_domain=$(grep "^FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        local sub_domain=$(grep "^SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        local app_port=$(grep "^APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
+        local metrics_port=$(grep "^METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
+        local panel_domain=$(grep "^FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+        local sub_domain=$(grep "^SUB_PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
         
+        # Subscription port
+        local sub_port=""
         if [ -f "$SUB_ENV_FILE" ]; then
-            local sub_port=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+            sub_port=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
         fi
         
-        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Panel URL:" "$NODE_IP" "$app_port"
+        # IP адрес
+        local server_ip="${NODE_IP:-127.0.0.1}"
+        
+        # URL подключения
+        if [ -n "$app_port" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Panel URL:" "$server_ip" "$app_port"
+        fi
+        
         if [ -n "$sub_port" ]; then
-            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Sub Page URL:" "$NODE_IP" "$sub_port"
-        fi
-        if [ -n "$metrics_port" ]; then
-            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s/api/metrics\033[0m\n" "Metrics URL:" "$NODE_IP" "$metrics_port"
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Sub Page URL:" "$server_ip" "$sub_port"
         fi
         
-        if [ -n "$front_domain" ] && [ "$front_domain" != "*" ]; then
-            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Panel Domain:" "$front_domain"
+        if [ -n "$metrics_port" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s:%s/api/metrics\033[0m\n" "Metrics URL:" "$server_ip" "$metrics_port"
         fi
-        if [ -n "$sub_domain" ]; then
+        
+        # Домены
+        if [ -n "$panel_domain" ] && [ "$panel_domain" != "null" ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Panel Domain:" "$panel_domain"
+        fi
+        
+        if [ -n "$sub_domain" ] && [ "$sub_domain" != "null" ]; then
             printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Sub Domain:" "$sub_domain"
         fi
     fi
     
-    # Итоговая информация
     echo
-    if [ $issues -eq 0 ] && [ "$overall_status" = "running" ]; then
-        echo -e "\033[1;32m🎉 All services are healthy and running!\033[0m"
-        exit 0
-    elif [ $issues -gt 0 ]; then
-        echo -e "\033[1;33m⚠️  Found $issues issue(s) - check logs with '\033[38;5;15msudo $APP_NAME logs\033[0m\033[1;33m'\033[0m"
-        exit 1
+    
+    # Итоговое сообщение
+    if is_remnawave_up; then
+        # Проверяем здоровье всех сервисов
+        local unhealthy_count=$(docker ps --format "{{.Names}}\t{{.Status}}" | grep "$APP_NAME" | grep -c "unhealthy" || echo "0")
+        
+        if [ "$unhealthy_count" -eq 0 ]; then
+            echo -e "\033[1;32m🎉 All services are healthy and running!\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Some services may have health issues ($unhealthy_count unhealthy)\033[0m"
+        fi
     else
-        echo -e "\033[1;33m⚠️  Some services may be starting up\033[0m"
-        exit 1
+        echo -e "\033[1;31m❌ Services are not running\033[0m"
+        echo -e "\033[38;5;8m   Use 'sudo $APP_NAME up' to start services\033[0m"
+    fi
+    
+    # Добавляем паузу только если запущено из меню (проверяем переменную окружения или родительский процесс)
+    if [[ "${BASH_SOURCE[1]}" =~ "main_menu" ]] || [[ "$0" =~ "$APP_NAME" ]] && [[ "$1" != "--no-pause" ]]; then
+        echo
+        read -p "Press Enter to continue..."
     fi
 }
 
