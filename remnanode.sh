@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 2.2
+# Version: 2.4
 set -e
-SCRIPT_VERSION="2.2"
+SCRIPT_VERSION="2.4"
 while [[ $# -gt 0 ]]; do
     key="$1"
     
@@ -664,48 +664,52 @@ install_command() {
     # final message
     clear
     echo
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
-    echo -e "\033[1;38;5;82m🎉 RemnaNode Successfully Installed!\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[1;37m🎉 RemnaNode Successfully Installed!\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
-    echo -e "\033[1;38;5;33m🌐 Connection Information:\033[0m"
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "IP Address:" "$NODE_IP"
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Port:" "$APP_PORT"
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$APP_PORT"
+    
+    echo -e "\033[1;37m🌐 Connection Information:\033[0m"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "IP Address:" "$NODE_IP"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$APP_PORT"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$APP_PORT"
     echo
-    echo -e "\033[1;38;5;214m📋 Next Steps:\033[0m"
-    echo -e "   \033[38;5;220m1.\033[0m Use the IP and port above to set up your Remnawave Panel"
-    echo -e "   \033[38;5;220m2.\033[0m Configure log rotation: \033[38;5;226msudo $APP_NAME setup-logs\033[0m"
+    
+    echo -e "\033[1;37m📋 Next Steps:\033[0m"
+    echo -e "   \033[38;5;250m1.\033[0m Use the IP and port above to set up your Remnawave Panel"
+    echo -e "   \033[38;5;250m2.\033[0m Configure log rotation: \033[38;5;15msudo $APP_NAME setup-logs\033[0m"
     
     if [ "$INSTALL_XRAY" == "true" ]; then
-        echo -e "   \033[38;5;220m3.\033[0m \033[38;5;82mXray-core is already installed and ready! ✅\033[0m"
+        echo -e "   \033[38;5;250m3.\033[0m \033[1;37mXray-core is already installed and ready! ✅\033[0m"
     else
-        echo -e "   \033[38;5;220m3.\033[0m Install Xray-core: \033[38;5;226msudo $APP_NAME core-update\033[0m"
+        echo -e "   \033[38;5;250m3.\033[0m Install Xray-core: \033[38;5;15msudo $APP_NAME core-update\033[0m"
     fi
     
-    echo -e "   \033[38;5;220m4.\033[0m Secure with UFW: \033[38;5;226msudo ufw allow from \033[38;5;255mPANEL_IP\033[38;5;226m to any port $APP_PORT\033[0m"
-    echo -e "      \033[38;5;244m(Enable UFW: \033[38;5;226msudo ufw enable\033[38;5;244m)\033[0m"
+    echo -e "   \033[38;5;250m4.\033[0m Secure with UFW: \033[38;5;15msudo ufw allow from \033[38;5;244mPANEL_IP\033[38;5;15m to any port $APP_PORT\033[0m"
+    echo -e "      \033[38;5;8m(Enable UFW: \033[38;5;15msudo ufw enable\033[38;5;8m)\033[0m"
     echo
-    echo -e "\033[1;38;5;165m🛠️  Quick Commands:\033[0m"
-    printf "   \033[38;5;171m%-15s\033[0m %s\n" "status" "📊 Check service status"
-    printf "   \033[38;5;171m%-15s\033[0m %s\n" "logs" "📋 View container logs"
-    printf "   \033[38;5;171m%-15s\033[0m %s\n" "restart" "🔄 Restart the service"
+    
+    echo -e "\033[1;37m🛠️  Quick Commands:\033[0m"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "status" "📊 Check service status"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "logs" "📋 View container logs"
+    printf "   \033[38;5;15m%-15s\033[0m %s\n" "restart" "🔄 Restart the service"
     if [ "$INSTALL_XRAY" == "true" ]; then
-        printf "   \033[38;5;171m%-15s\033[0m %s\n" "xray_log_out" "📤 View Xray logs"
-    fi
-    echo
-echo -e "\033[1;38;5;201m📁 File Locations:\033[0m"
-    printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Configuration:" "$APP_DIR"
-    printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Data:" "$DATA_DIR"
-    if [ "$INSTALL_XRAY" == "true" ]; then
-        printf "   \033[1;38;5;207m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Binary:" "$XRAY_FILE"
+        printf "   \033[38;5;15m%-15s\033[0m %s\n" "xray_log_out" "📤 View Xray logs"
     fi
     echo
     
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
-    echo -e "\033[38;5;244m💡 For all commands: \033[38;5;226msudo $APP_NAME\033[0m"
-    echo -e "\033[38;5;244m📚 Project: \033[38;5;39mhttps://gig.ovh\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[1;37m📁 File Locations:\033[0m"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Configuration:" "$APP_DIR"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Data:" "$DATA_DIR"
+    if [ "$INSTALL_XRAY" == "true" ]; then
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Binary:" "$XRAY_FILE"
+    fi
+    echo
+    
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[38;5;8m💡 For all commands: \033[38;5;15msudo $APP_NAME\033[0m"
+    echo -e "\033[38;5;8m📚 Project: \033[38;5;250mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
 }
 
@@ -826,36 +830,36 @@ restart_command() {
 }
 
 status_command() {
-    echo -e "\033[1;38;5;33m📊 RemnaNode Status Check:\033[0m"
+    echo -e "\033[1;37m📊 RemnaNode Status Check:\033[0m"
     echo
     
     if ! is_remnanode_installed; then
-        printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;196m❌ Not Installed\033[0m\n" "Status:"
-        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME install\033[38;5;244m' to install\033[0m"
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Not Installed\033[0m\n" "Status:"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' to install\033[0m"
         exit 1
     fi
     
     detect_compose
     
     if ! is_remnanode_up; then
-        printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;214m⏹️  Down\033[0m\n" "Status:"
-        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME up\033[38;5;244m' to start\033[0m"
+        printf "   \033[38;5;15m%-12s\033[0m \033[1;33m⏹️  Down\033[0m\n" "Status:"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start\033[0m"
         exit 1
     fi
     
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[1;38;5;82m✅ Running\033[0m\n" "Status:"
+    printf "   \033[38;5;15m%-12s\033[0m \033[1;32m✅ Running\033[0m\n" "Status:"
     
     # Дополнительная информация
     if [ -f "$ENV_FILE" ]; then
         local app_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
         if [ -n "$app_port" ]; then
-            printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Port:" "$app_port"
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$app_port"
         fi
     fi
     
     # Проверяем Xray
     local xray_version=$(get_current_xray_core_version)
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Core:" "$xray_version"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Core:" "$xray_version"
     
     echo
 }
@@ -897,36 +901,323 @@ logs_command() {
     fi
 }
 
+# update_command() {
+#     check_running_as_root
+#     if ! is_remnanode_installed; then
+#         echo -e "\033[1;31m❌ RemnaNode not installed!\033[0m"
+#         echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
+#         exit 1
+#     fi
+    
+#     detect_compose
+    
+#     echo -e "\033[1;37m🔄 Starting RemnaNode Update...\033[0m"
+#     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+#     echo -e "\033[38;5;250m📝 Step 1:\033[0m Updating script..."
+#     update_remnanode_script
+#     echo -e "\033[1;32m✅ Script updated\033[0m"
+    
+#     echo -e "\033[38;5;250m📝 Step 2:\033[0m Pulling latest version..."
+#     update_remnanode
+#     echo -e "\033[1;32m✅ Image updated\033[0m"
+    
+#     echo -e "\033[38;5;250m📝 Step 3:\033[0m Restarting services..."
+#     down_remnanode
+#     up_remnanode
+#     echo -e "\033[1;32m✅ Services restarted\033[0m"
+    
+#     echo
+#     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+#     echo -e "\033[1;37m🎉 RemnaNode updated successfully!\033[0m"
+#     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+# }
+
+
+
 update_command() {
     check_running_as_root
     if ! is_remnanode_installed; then
-        echo -e "\033[1;38;5;196m❌ RemnaNode not installed!\033[0m"
-        echo -e "\033[38;5;244m   Run '\033[38;5;226msudo $APP_NAME install\033[38;5;244m' first\033[0m"
+        echo -e "\033[1;31m❌ RemnaNode not installed!\033[0m"
+        echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
         exit 1
     fi
     
     detect_compose
     
-    echo -e "\033[1;38;5;51m🔄 Starting RemnaNode Update...\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[1;37m🔄 Starting RemnaNode Update Check...\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
     
-    echo -e "\033[1;38;5;39m📝 Step 1:\033[0m Updating script..."
-    update_remnanode_script
-    echo -e "\033[1;38;5;82m✅ Script updated\033[0m"
+    # Определяем используемый тег из docker-compose.yml
+    local current_tag="latest"
+    if [ -f "$COMPOSE_FILE" ]; then
+        current_tag=$(grep -E "image:.*remnawave/node:" "$COMPOSE_FILE" | sed 's/.*remnawave\/node://' | tr -d '"' | tr -d "'" | xargs)
+        if [ -z "$current_tag" ]; then
+            current_tag="latest"
+        fi
+    fi
     
-    echo -e "\033[1;38;5;39m📝 Step 2:\033[0m Pulling latest version..."
-    update_remnanode
-    echo -e "\033[1;38;5;82m✅ Image updated\033[0m"
+    echo -e "\033[38;5;250m🏷️  Current tag:\033[0m \033[38;5;15m$current_tag\033[0m"
     
-    echo -e "\033[1;38;5;39m📝 Step 3:\033[0m Restarting services..."
-    down_remnanode
-    up_remnanode
-    echo -e "\033[1;38;5;82m✅ Services restarted\033[0m"
+    # Получаем локальную версию образа
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking local image version..."
+    local local_image_id=""
+    local local_created=""
+    local local_digest=""
+    local local_repo_digest=""
+    
+    if docker images remnawave/node:$current_tag --format "table {{.ID}}\t{{.CreatedAt}}" | grep -v "IMAGE ID" > /dev/null 2>&1; then
+        local_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
+        local_created=$(docker images remnawave/node:$current_tag --format "{{.CreatedAt}}" | head -1 | cut -d' ' -f1,2)
+        
+        # Получаем digest локального образа
+        local_repo_digest=$(docker inspect remnawave/node:$current_tag --format='{{index .RepoDigests 0}}' 2>/dev/null)
+        if [ -n "$local_repo_digest" ] && [ "$local_repo_digest" != "<no value>" ]; then
+            local_digest=$(echo "$local_repo_digest" | cut -d'@' -f2)
+        fi
+        
+        echo -e "\033[1;32m✅ Local image found\033[0m"
+        echo -e "\033[38;5;8m   Image ID: $local_image_id\033[0m"
+        echo -e "\033[38;5;8m   Created: $local_created\033[0m"
+        if [ -n "$local_digest" ]; then
+            echo -e "\033[38;5;8m   Digest: ${local_digest:0:12}...\033[0m"
+        else
+            echo -e "\033[38;5;8m   Digest: Not available (locally built or old image)\033[0m"
+        fi
+    else
+        echo -e "\033[1;33m⚠️  Local image not found\033[0m"
+        local_image_id="none"
+    fi
+    
+    # Получаем информацию о последней версии из Docker Hub
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking remote image version..."
+    local remote_digest=""
+    local remote_last_updated=""
+    
+    # Используем Docker Hub API для получения информации
+    local hub_response=$(curl -s "https://hub.docker.com/v2/repositories/remnawave/node/tags/$current_tag" 2>/dev/null)
+    
+    if [ -n "$hub_response" ] && echo "$hub_response" | grep -q '"digest"'; then
+        remote_digest=$(echo "$hub_response" | grep -oP '"digest":\s*"\K[^"]+' | head -1)
+        remote_last_updated=$(echo "$hub_response" | grep -oP '"last_updated":\s*"\K[^"]+' | head -1)
+        
+        if [ -n "$remote_last_updated" ]; then
+            # Форматируем дату (берем только дату без времени)
+            remote_last_updated=$(echo "$remote_last_updated" | cut -d'T' -f1)
+        fi
+        
+        echo -e "\033[1;32m✅ Remote image info retrieved\033[0m"
+        echo -e "\033[38;5;8m   Digest: ${remote_digest:0:12}...\033[0m"
+        echo -e "\033[38;5;8m   Updated: $remote_last_updated\033[0m"
+    else
+        echo -e "\033[1;33m⚠️  Could not retrieve remote image info\033[0m"
+        echo -e "\033[38;5;8m   Will use docker pull to check for updates...\033[0m"
+        remote_digest="unknown"
+    fi
+    
+    # Сравниваем версии
+    local needs_update=false
+    local update_reason=""
+    local use_pull_check=false
+    
+    if [ "$local_image_id" = "none" ]; then
+        needs_update=true
+        update_reason="Local image not found"
+    elif [ "$remote_digest" = "unknown" ]; then
+        use_pull_check=true
+    elif [ -z "$local_digest" ]; then
+        # Если локальный digest недоступен, используем pull для проверки
+        use_pull_check=true
+    elif [ "$local_digest" != "$remote_digest" ]; then
+        # Digest'ы разные, но давайте проверим через pull для уверенности
+        echo -e "\033[38;5;250m📝 Step 2.1:\033[0m Digest mismatch detected, verifying with docker pull..."
+        use_pull_check=true
+    else
+        needs_update=false
+        update_reason="Already up to date (digest match)"
+    fi
+    
+    # Если нужно, проверяем через docker pull
+    if [ "$use_pull_check" = true ]; then
+        echo -e "\033[38;5;250m📝 Step 2.2:\033[0m Checking for updates with docker pull..."
+        
+        # Сохраняем текущий образ ID для сравнения
+        local old_image_id="$local_image_id"
+        
+        # Создаем временный файл для вывода docker pull
+        local pull_output=$(mktemp)
+        
+        # Запускаем docker pull и перехватываем вывод
+        if $COMPOSE -f $COMPOSE_FILE pull --quiet 2>&1 | tee "$pull_output" > /dev/null; then
+            # Проверяем, изменился ли ID образа после pull
+            local new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
+            
+            if [ "$old_image_id" != "$new_image_id" ]; then
+                needs_update=true
+                update_reason="New version downloaded via docker pull"
+                echo -e "\033[1;33m🔄 New version detected and downloaded\033[0m"
+            else
+                needs_update=false
+                update_reason="Already up to date (verified via docker pull)"
+                echo -e "\033[1;32m✅ Already up to date\033[0m"
+            fi
+        else
+            echo -e "\033[1;33m⚠️  Docker pull check failed, assuming update needed\033[0m"
+            needs_update=true
+            update_reason="Unable to verify current version"
+        fi
+        
+        rm -f "$pull_output"
+    fi
     
     echo
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
-    echo -e "\033[1;38;5;82m🎉 RemnaNode updated successfully!\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[1;37m📊 Update Analysis:\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    
+    if [ "$needs_update" = true ]; then
+        echo -e "\033[1;33m🔄 Update Available\033[0m"
+        echo -e "\033[38;5;250m   Reason: \033[38;5;15m$update_reason\033[0m"
+        echo
+        
+        # Спрашиваем подтверждение у пользователя только если это не автоматическое обновление через pull
+        if [ "$update_reason" != "New version downloaded via docker pull" ]; then
+            read -p "Do you want to proceed with the update? (y/n): " -r confirm_update
+            if [[ ! $confirm_update =~ ^[Yy]$ ]]; then
+                echo -e "\033[1;31m❌ Update cancelled by user\033[0m"
+                exit 0
+            fi
+        else
+            echo -e "\033[1;37m🚀 New version already downloaded, proceeding with update...\033[0m"
+        fi
+        
+        echo
+        echo -e "\033[1;37m🚀 Performing Update...\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+        
+        # Обновляем скрипт
+        echo -e "\033[38;5;250m📝 Step 3:\033[0m Updating script..."
+        if update_remnanode_script; then
+            echo -e "\033[1;32m✅ Script updated\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Script update failed, continuing...\033[0m"
+        fi
+        
+        # Проверяем, запущен ли контейнер
+        local was_running=false
+        if is_remnanode_up; then
+            was_running=true
+            echo -e "\033[38;5;250m📝 Step 4:\033[0m Stopping running container..."
+            if down_remnanode; then
+                echo -e "\033[1;32m✅ Container stopped\033[0m"
+            else
+                echo -e "\033[1;31m❌ Failed to stop container\033[0m"
+                exit 1
+            fi
+        else
+            echo -e "\033[38;5;250m📝 Step 4:\033[0m Container not running, skipping stop..."
+        fi
+        
+        # Загружаем новый образ (только если еще не загружен)
+        if [ "$update_reason" != "New version downloaded via docker pull" ]; then
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Pulling latest image..."
+            if update_remnanode; then
+                echo -e "\033[1;32m✅ Image updated\033[0m"
+            else
+                echo -e "\033[1;31m❌ Failed to pull image\033[0m"
+                
+                # Если контейнер был запущен, пытаемся его восстановить
+                if [ "$was_running" = true ]; then
+                    echo -e "\033[38;5;250m🔄 Attempting to restore service...\033[0m"
+                    up_remnanode
+                fi
+                exit 1
+            fi
+        else
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Image already updated during check\033[0m"
+        fi
+        
+        # Запускаем контейнер только если он был запущен ранее
+        if [ "$was_running" = true ]; then
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Starting updated container..."
+            if up_remnanode; then
+                echo -e "\033[1;32m✅ Container started\033[0m"
+            else
+                echo -e "\033[1;31m❌ Failed to start container\033[0m"
+                exit 1
+            fi
+        else
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Container was not running, leaving it stopped..."
+        fi
+        
+        # Показываем финальную информацию
+        echo
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo -e "\033[1;37m🎉 RemnaNode updated successfully!\033[0m"
+        
+        # Получаем новую информацию об образе
+        local new_image_id=$(docker images remnawave/node:$current_tag --format "{{.ID}}" | head -1)
+        local new_created=$(docker images remnawave/node:$current_tag --format "{{.CreatedAt}}" | head -1 | cut -d' ' -f1,2)
+        
+        echo -e "\033[1;37m📋 Update Summary:\033[0m"
+        echo -e "\033[38;5;250m   Previous: \033[38;5;8m$local_image_id\033[0m"
+        echo -e "\033[38;5;250m   Current:  \033[38;5;15m$new_image_id\033[0m"
+        echo -e "\033[38;5;250m   Created:  \033[38;5;15m$new_created\033[0m"
+        
+        if [ "$was_running" = true ]; then
+            echo -e "\033[38;5;250m   Status:   \033[1;32mRunning\033[0m"
+        else
+            echo -e "\033[38;5;250m   Status:   \033[1;33mStopped\033[0m"
+            echo -e "\033[38;5;8m   Use '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start\033[0m"
+        fi
+        
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        
+    else
+        echo -e "\033[1;32m✅ Already Up to Date\033[0m"
+        echo -e "\033[38;5;250m   Reason: \033[38;5;15m$update_reason\033[0m"
+        echo
+        
+        # Проверяем все равно скрипт
+        echo -e "\033[38;5;250m📝 Checking script updates...\033[0m"
+        
+        # Получаем текущую версию скрипта
+        local current_script_version="$SCRIPT_VERSION"
+        
+        # Получаем последнюю версию скрипта с GitHub
+        local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+        
+        if [ -n "$remote_script_version" ] && [ "$remote_script_version" != "$current_script_version" ]; then
+            echo -e "\033[1;33m🔄 Script update available: \033[38;5;15mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+            read -p "Do you want to update the script? (y/n): " -r update_script
+            if [[ $update_script =~ ^[Yy]$ ]]; then
+                if update_remnanode_script; then
+                    echo -e "\033[1;32m✅ Script updated to v$remote_script_version\033[0m"
+                    echo -e "\033[38;5;8m   Please run the command again to use the new version\033[0m"
+                else
+                    echo -e "\033[1;33m⚠️  Script update failed\033[0m"
+                fi
+            else
+                echo -e "\033[38;5;8m   Script update skipped\033[0m"
+            fi
+        else
+            echo -e "\033[1;32m✅ Script is up to date\033[0m"
+        fi
+        
+        echo
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+        echo -e "\033[1;37m📊 Current Status:\033[0m"
+        
+        if is_remnanode_up; then
+            echo -e "\033[38;5;250m   Container: \033[1;32mRunning ✅\033[0m"
+        else
+            echo -e "\033[38;5;250m   Container: \033[1;33mStopped ⏹️\033[0m"
+            echo -e "\033[38;5;8m   Use '\033[38;5;15msudo $APP_NAME up\033[38;5;8m' to start\033[0m"
+        fi
+        
+        echo -e "\033[38;5;250m   Image Tag: \033[38;5;15m$current_tag\033[0m"
+        echo -e "\033[38;5;250m   Image ID:  \033[38;5;15m$local_image_id\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    fi
 }
 
 identify_the_operating_system_and_architecture() {
@@ -983,115 +1274,231 @@ get_xray_core() {
     print_menu() {
         clear
         
-        # Заголовок в стиле usage()
-        echo -e "\033[1;38;5;51m⚡ Xray-core Installer\033[0m \033[38;5;249mVersion Manager\033[0m \033[1;38;5;196mv$SCRIPT_VERSION\033[0m"
-        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        # Заголовок в монохромном стиле
+        echo -e "\033[1;37m⚡ Xray-core Installer\033[0m \033[38;5;8mVersion Manager\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
         echo
         
-        # Текущая версия в красивом стиле
+        # Текущая версия
         current_version=$(get_current_xray_core_version)
-        echo -e "\033[1;38;5;33m🌐 Current Status:\033[0m"
-        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Version:" "$current_version"
-        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Architecture:" "$ARCH"
-        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+        echo -e "\033[1;37m🌐 Current Status:\033[0m"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Version:" "$current_version"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
         echo
         
-        # Доступные версии
-        echo -e "\033[1;38;5;82m🚀 Available Versions:\033[0m"
+        # Показываем режим выбора релизов
+        echo -e "\033[1;37m🎯 Release Mode:\033[0m"
+        if [ "$show_prereleases" = true ]; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m \033[38;5;244m(Including Pre-releases)\033[0m\n" "Current:" "All Releases"
+        else
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m \033[1;37m(Stable Only)\033[0m\n" "Current:" "Stable Releases"
+        fi
+        echo
+        
+        # Доступные версии с метками
+        echo -e "\033[1;37m🚀 Available Versions:\033[0m"
         for ((i=0; i<${#versions[@]}; i++)); do
             local version_num=$((i + 1))
             local version_name="${versions[i]}"
+            local is_prerelease="${prereleases[i]}"
             
-            # Выделяем latest версию особым цветом
-            if [ $i -eq 0 ]; then
-                printf "   \033[38;5;46m%-3s\033[0m \033[38;5;255m%s\033[0m \033[1;38;5;226m(Latest)\033[0m\n" "$version_num:" "$version_name"
+            # Определяем тип релиза и используем echo вместо printf
+            if [ "$is_prerelease" = "true" ]; then
+                echo -e "   \033[38;5;15m${version_num}:\033[0m \033[38;5;250m${version_name}\033[0m \033[38;5;244m(Pre-release)\033[0m"
+            elif [ $i -eq 0 ] && [ "$is_prerelease" = "false" ]; then
+                echo -e "   \033[38;5;15m${version_num}:\033[0m \033[38;5;250m${version_name}\033[0m \033[1;37m(Latest Stable)\033[0m"
             else
-                printf "   \033[38;5;46m%-3s\033[0m \033[38;5;255m%s\033[0m\n" "$version_num:" "$version_name"
+                echo -e "   \033[38;5;15m${version_num}:\033[0m \033[38;5;250m${version_name}\033[0m \033[38;5;8m(Stable)\033[0m"
             fi
         done
         echo
         
-        # Опции в стиле usage()
-        echo -e "\033[1;38;5;165m🔧 Options:\033[0m"
-        printf "   \033[38;5;171m%-3s\033[0m %s\n" "M:" "📝 Enter version manually"
-        printf "   \033[38;5;171m%-3s\033[0m %s\n" "Q:" "❌ Quit installer"
+        # Опции
+        echo -e "\033[1;37m🔧 Options:\033[0m"
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "M:" "📝 Enter version manually"
+        if [ "$show_prereleases" = true ]; then
+            printf "   \033[38;5;15m%-3s\033[0m %s\n" "S:" "🔒 Show stable releases only"
+        else
+            printf "   \033[38;5;15m%-3s\033[0m %s\n" "A:" "🧪 Show all releases (including pre-releases)"
+        fi
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "R:" "🔄 Refresh version list"
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "Q:" "❌ Quit installer"
         echo
         
-        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
-        echo -e "\033[1;38;5;39m📖 Usage:\033[0m"
-        echo -e "   Choose a number \033[38;5;226m(1-${#versions[@]})\033[0m, \033[38;5;171mM\033[0m for manual, or \033[38;5;171mQ\033[0m to quit"
-        echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+        echo -e "\033[1;37m📖 Usage:\033[0m"
+        echo -e "   Choose a number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual, \033[38;5;15mA/S\033[0m to toggle releases, or \033[38;5;15mQ\033[0m to quit"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     }
     
-    # Получаем доступные версии
-    echo -e "\033[1;38;5;51m🔍 Fetching available Xray-core versions...\033[0m"
-    latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5")
-    versions=($(echo "$latest_releases" | grep -oP '"tag_name": "\K(.*?)(?=")'))
+    fetch_versions() {
+        local include_prereleases="$1"
+        echo -e "\033[1;37m🔍 Fetching Xray-core versions...\033[0m"
+        
+        if [ "$include_prereleases" = true ]; then
+            echo -e "\033[38;5;8m   Including pre-releases...\033[0m"
+            latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=8")
+        else
+            echo -e "\033[38;5;8m   Stable releases only...\033[0m"
+            latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=15")
+        fi
+        
+        if [ -z "$latest_releases" ] || echo "$latest_releases" | grep -q '"message":'; then
+            echo -e "\033[1;31m❌ Failed to fetch versions. Please check your internet connection.\033[0m"
+            return 1
+        fi
+        
+        # Парсим JSON и извлекаем нужную информацию
+        versions=()
+        prereleases=()
+        
+        # Извлекаем данные с помощью более надежного парсинга
+        local temp_file=$(mktemp)
+        echo "$latest_releases" | grep -E '"(tag_name|prerelease)"' > "$temp_file"
+        
+        local current_version=""
+        local count=0
+        local max_count=6
+        
+        while IFS= read -r line; do
+            if [[ "$line" =~ \"tag_name\":[[:space:]]*\"([^\"]+)\" ]]; then
+                current_version="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ \"prerelease\":[[:space:]]*(true|false) ]]; then
+                local is_prerelease="${BASH_REMATCH[1]}"
+                
+                # Если не показываем pre-releases, пропускаем их
+                if [ "$include_prereleases" = false ] && [ "$is_prerelease" = "true" ]; then
+                    current_version=""
+                    continue
+                fi
+                
+                # Добавляем версию в массивы
+                if [ -n "$current_version" ] && [ $count -lt $max_count ]; then
+                    versions+=("$current_version")
+                    prereleases+=("$is_prerelease")
+                    ((count++))
+                fi
+                current_version=""
+            fi
+        done < "$temp_file"
+        
+        rm "$temp_file"
+        
+        if [ ${#versions[@]} -eq 0 ]; then
+            echo -e "\033[1;31m❌ No versions found.\033[0m"
+            return 1
+        fi
+        
+        echo -e "\033[1;32m✅ Found ${#versions[@]} versions\033[0m"
+        return 0
+    }
     
-    if [ ${#versions[@]} -eq 0 ]; then
-        echo -e "\033[1;38;5;196m❌ Failed to fetch versions. Please check your internet connection.\033[0m"
+    # Инициализация
+    local show_prereleases=false
+    
+    # Первоначальная загрузка версий
+    if ! fetch_versions "$show_prereleases"; then
         exit 1
     fi
     
     while true; do
         print_menu
-        echo -n -e "\033[1;38;5;39m> \033[0m"
+        echo -n -e "\033[1;37m> \033[0m"
         read choice
         
         if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#versions[@]}" ]; then
             choice=$((choice - 1))
             selected_version=${versions[choice]}
+            local selected_prerelease=${prereleases[choice]}
+            
             echo
-            echo -e "\033[1;38;5;82m✅ Selected version: \033[1;38;5;226m$selected_version\033[0m"
+            if [ "$selected_prerelease" = "true" ]; then
+                echo -e "\033[1;33m⚠️  Selected pre-release version: \033[1;37m$selected_version\033[0m"
+                echo -e "\033[38;5;8m   Pre-releases may contain bugs and are not recommended for production.\033[0m"
+                read -p "Are you sure you want to continue? (y/n): " -r confirm_prerelease
+                if [[ ! $confirm_prerelease =~ ^[Yy]$ ]]; then
+                    echo -e "\033[1;31m❌ Installation cancelled.\033[0m"
+                    continue
+                fi
+            else
+                echo -e "\033[1;32m✅ Selected stable version: \033[1;37m$selected_version\033[0m"
+            fi
             break
+            
         elif [ "$choice" == "M" ] || [ "$choice" == "m" ]; then
             echo
-            echo -e "\033[1;38;5;39m📝 Manual Version Entry:\033[0m"
+            echo -e "\033[1;37m📝 Manual Version Entry:\033[0m"
             while true; do
-                echo -n -e "\033[38;5;244mEnter version (e.g., v1.8.4): \033[0m"
+                echo -n -e "\033[38;5;8mEnter version (e.g., v1.8.4): \033[0m"
                 read custom_version
                 
                 if [ -z "$custom_version" ]; then
-                    echo -e "\033[1;38;5;196m❌ Version cannot be empty. Please try again.\033[0m"
+                    echo -e "\033[1;31m❌ Version cannot be empty. Please try again.\033[0m"
                     continue
                 fi
                 
-                echo -e "\033[1;38;5;51m🔍 Validating version $custom_version...\033[0m"
+                echo -e "\033[1;37m🔍 Validating version $custom_version...\033[0m"
                 if [ "$(validate_version "$custom_version")" == "valid" ]; then
                     selected_version="$custom_version"
-                    echo -e "\033[1;38;5;82m✅ Version $custom_version is valid!\033[0m"
+                    echo -e "\033[1;32m✅ Version $custom_version is valid!\033[0m"
                     break 2
                 else
-                    echo -e "\033[1;38;5;196m❌ Version $custom_version not found. Please try again.\033[0m"
-                    echo -e "\033[38;5;244m   Hint: Check https://github.com/XTLS/Xray-core/releases\033[0m"
+                    echo -e "\033[1;31m❌ Version $custom_version not found. Please try again.\033[0m"
+                    echo -e "\033[38;5;8m   Hint: Check https://github.com/XTLS/Xray-core/releases\033[0m"
                     echo
                 fi
             done
+            
+        elif [ "$choice" == "A" ] || [ "$choice" == "a" ]; then
+            if [ "$show_prereleases" = false ]; then
+                show_prereleases=true
+                if ! fetch_versions "$show_prereleases"; then
+                    show_prereleases=false
+                    continue
+                fi
+            fi
+            
+        elif [ "$choice" == "S" ] || [ "$choice" == "s" ]; then
+            if [ "$show_prereleases" = true ]; then
+                show_prereleases=false
+                if ! fetch_versions "$show_prereleases"; then
+                    show_prereleases=true
+                    continue
+                fi
+            fi
+            
+        elif [ "$choice" == "R" ] || [ "$choice" == "r" ]; then
+            if ! fetch_versions "$show_prereleases"; then
+                continue
+            fi
+            
         elif [ "$choice" == "Q" ] || [ "$choice" == "q" ]; then
             echo
-            echo -e "\033[1;38;5;196m❌ Installation cancelled by user.\033[0m"
+            echo -e "\033[1;31m❌ Installation cancelled by user.\033[0m"
             exit 0
+            
         else
             echo
-            echo -e "\033[1;38;5;196m❌ Invalid choice: '$choice'\033[0m"
-            echo -e "\033[38;5;244m   Please enter a number between 1-${#versions[@]}, M for manual, or Q to quit.\033[0m"
+            echo -e "\033[1;31m❌ Invalid choice: '$choice'\033[0m"
+            echo -e "\033[38;5;8m   Please enter a number between 1-${#versions[@]}, M for manual, A/S to toggle releases, R to refresh, or Q to quit.\033[0m"
             echo
-            echo -n -e "\033[38;5;244mPress Enter to continue...\033[0m"
+            echo -n -e "\033[38;5;8mPress Enter to continue...\033[0m"
             read
         fi
     done
     
     echo
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
-    echo -e "\033[1;38;5;82m🚀 Starting Installation\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;37m🚀 Starting Installation\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     
     # Проверка и установка unzip
     if ! dpkg -s unzip >/dev/null 2>&1; then
-        echo -e "\033[1;38;5;51m📦 Installing required packages...\033[0m"
+        echo -e "\033[1;37m📦 Installing required packages...\033[0m"
         detect_os
         install_package unzip
-        echo -e "\033[1;38;5;82m✅ Packages installed successfully\033[0m"
+        echo -e "\033[1;32m✅ Packages installed successfully\033[0m"
     fi
     
     mkdir -p "$DATA_DIR"
@@ -1101,24 +1508,24 @@ get_xray_core() {
     xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${selected_version}/${xray_filename}"
     
     # Скачивание с прогрессом
-    echo -e "\033[1;38;5;51m📥 Downloading Xray-core $selected_version...\033[0m"
-    echo -e "\033[38;5;244m   URL: $xray_download_url\033[0m"
+    echo -e "\033[1;37m📥 Downloading Xray-core $selected_version...\033[0m"
+    echo -e "\033[38;5;8m   URL: $xray_download_url\033[0m"
     
     if wget "${xray_download_url}" -q --show-progress; then
-        echo -e "\033[1;38;5;82m✅ Download completed successfully\033[0m"
+        echo -e "\033[1;32m✅ Download completed successfully\033[0m"
     else
-        echo -e "\033[1;38;5;196m❌ Download failed!\033[0m"
-        echo -e "\033[38;5;244m   Please check your internet connection or try a different version.\033[0m"
+        echo -e "\033[1;31m❌ Download failed!\033[0m"
+        echo -e "\033[38;5;8m   Please check your internet connection or try a different version.\033[0m"
         exit 1
     fi
     
     # Извлечение
-    echo -e "\033[1;38;5;51m📦 Extracting Xray-core...\033[0m"
+    echo -e "\033[1;37m📦 Extracting Xray-core...\033[0m"
     if unzip -o "${xray_filename}" -d "$DATA_DIR" >/dev/null 2>&1; then
-        echo -e "\033[1;38;5;82m✅ Extraction completed successfully\033[0m"
+        echo -e "\033[1;32m✅ Extraction completed successfully\033[0m"
     else
-        echo -e "\033[1;38;5;196m❌ Extraction failed!\033[0m"
-        echo -e "\033[38;5;244m   The downloaded file may be corrupted.\033[0m"
+        echo -e "\033[1;31m❌ Extraction failed!\033[0m"
+        echo -e "\033[38;5;8m   The downloaded file may be corrupted.\033[0m"
         exit 1
     fi
     
@@ -1128,29 +1535,27 @@ get_xray_core() {
     
     # Финальное сообщение
     echo
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
-    echo -e "\033[1;38;5;82m🎉 Installation Complete!\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;37m🎉 Installation Complete!\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     
     # Информация об установке
-    echo -e "\033[1;38;5;33m📋 Installation Details:\033[0m"
-    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Version:" "$selected_version"
-    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Architecture:" "$ARCH"
-    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
-    printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "File Size:" "$(du -h "$XRAY_FILE" | cut -f1)"
+    echo -e "\033[1;37m📋 Installation Details:\033[0m"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Version:" "$selected_version"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "File Size:" "$(du -h "$XRAY_FILE" | cut -f1)"
     echo
     
     # Проверка версии
-    echo -e "\033[1;38;5;51m🔍 Verifying installation...\033[0m"
+    echo -e "\033[1;37m🔍 Verifying installation...\033[0m"
     if installed_version=$("$XRAY_FILE" -version 2>/dev/null | head -n1 | awk '{print $2}'); then
-        echo -e "\033[1;38;5;82m✅ Xray-core is working correctly\033[0m"
-        printf "   \033[1;38;5;81m%-15s\033[0m \033[38;5;255m%s\033[0m\n" "Running Version:" "$installed_version"
+        echo -e "\033[1;32m✅ Xray-core is working correctly\033[0m"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Running Version:" "$installed_version"
     else
-        echo -e "\033[1;38;5;196m⚠️  Installation completed but verification failed\033[0m"
-        echo -e "\033[38;5;244m   The binary may not be compatible with your system\033[0m"
+        echo -e "\033[1;31m⚠️  Installation completed but verification failed\033[0m"
+        echo -e "\033[38;5;8m   The binary may not be compatible with your system\033[0m"
     fi
-    
-
 }
 
 
@@ -1489,103 +1894,103 @@ edit_command() {
 usage() {
     clear
 
-    echo -e "\033[1;38;5;51m⚡ $APP_NAME\033[0m \033[38;5;249mCommand Line Interface\033[0m \033[1;38;5;196m$SCRIPT_VERSION\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;8mCommand Line Interface\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     echo
-    echo -e "\033[1;38;5;39m📖 Usage:\033[0m"
-    echo -e "   \033[38;5;226m$APP_NAME\033[0m \033[38;5;249m<command>\033[0m \033[38;5;244m[options]\033[0m"
-    echo
-
-    echo -e "\033[1;38;5;82m🚀 Core Commands:\033[0m"
-    printf "   \033[38;5;46m%-18s\033[0m %s\n" "install" "🛠️  Install/reinstall RemnaNode"
-    printf "   \033[38;5;46m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
-    printf "   \033[38;5;46m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove RemnaNode completely"
+    echo -e "\033[1;37m📖 Usage:\033[0m"
+    echo -e "   \033[38;5;15m$APP_NAME\033[0m \033[38;5;8m<command>\033[0m \033[38;5;244m[options]\033[0m"
     echo
 
-    echo -e "\033[1;38;5;214m⚙️  Service Control:\033[0m"
-    printf "   \033[38;5;220m%-18s\033[0m %s\n" "up" "▶️  Start services"
-    printf "   \033[38;5;220m%-18s\033[0m %s\n" "down" "⏹️  Stop services"
-    printf "   \033[38;5;220m%-18s\033[0m %s\n" "restart" "🔄 Restart services"
-    printf "   \033[38;5;220m%-18s\033[0m %s\n" "status" "📊 Show service status"
+    echo -e "\033[1;37m🚀 Core Commands:\033[0m"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install/reinstall RemnaNode"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove RemnaNode completely"
     echo
 
-    echo -e "\033[1;38;5;201m📊 Monitoring & Logs:\033[0m"
-    printf "   \033[38;5;207m%-18s\033[0m %s\n" "logs" "📋 Show container logs"
-    printf "   \033[38;5;207m%-18s\033[0m %s\n" "setup-logs" "🔄 Configure Xray-log rotation"
-    printf "   \033[38;5;207m%-18s\033[0m %s\n" "xray_log_out" "📤 View Xray output logs"
-    printf "   \033[38;5;207m%-18s\033[0m %s\n" "xray_log_err" "📥 View Xray error logs"
+    echo -e "\033[1;37m⚙️  Service Control:\033[0m"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "up" "▶️  Start services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "down" "⏹️  Stop services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "restart" "🔄 Restart services"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "status" "📊 Show service status"
     echo
 
-    echo -e "\033[1;38;5;165m🔧 Configuration:\033[0m"
-    printf "   \033[38;5;171m%-18s\033[0m %s\n" "core-update" "⚡ Update/change Xray core"
-    printf "   \033[38;5;171m%-18s\033[0m %s\n" "edit" "✏️  Edit docker-compose.yml"
+    echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "logs" "📋 Show container logs"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "setup-logs" "🔄 Configure Xray-log rotation"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "xray_log_out" "📤 View Xray output logs"
+    printf "   \033[38;5;244m%-18s\033[0m %s\n" "xray_log_err" "📥 View Xray error logs"
     echo
 
-    echo -e "\033[1;38;5;99m🛠️  Utilities:\033[0m"
-    printf "   \033[38;5;105m%-18s\033[0m %s\n" "install-script" "📥 Install script to system"
-    printf "   \033[38;5;105m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
+    echo -e "\033[1;37m🔧 Configuration:\033[0m"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "core-update" "⚡ Update/change Xray core"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "edit" "✏️  Edit docker-compose.yml"
     echo
 
-    echo -e "\033[1;38;5;226m⚙️  Install Options:\033[0m"
-    printf "   \033[38;5;229m%-18s\033[0m %s\n" "--dev" "🧪 Use development version"
-    printf "   \033[38;5;229m%-18s\033[0m %s\n" "--name <name>" "🏷️  Set custom app name"
+    echo -e "\033[1;37m🛠️  Utilities:\033[0m"
+    printf "   \033[38;5;8m%-18s\033[0m %s\n" "install-script" "📥 Install script to system"
+    printf "   \033[38;5;8m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
     echo
 
-    echo -e "\033[1;38;5;33m🌐 System Information:\033[0m"
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Node IP:" "$NODE_IP"
+    echo -e "\033[1;37m⚙️  Install Options:\033[0m"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "--dev" "🧪 Use development version"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "--name <name>" "🏷️  Set custom app name"
+    echo
+
+    echo -e "\033[1;37m🌐 System Information:\033[0m"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Node IP:" "$NODE_IP"
     
     current_version=$(get_current_xray_core_version)
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "Xray Core:" "$current_version"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Core:" "$current_version"
     
     DEFAULT_APP_PORT="3000"
     if [ -f "$ENV_FILE" ]; then
         APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
     fi
     APP_PORT=${APP_PORT:-$DEFAULT_APP_PORT}
-    printf "   \033[1;38;5;81m%-12s\033[0m \033[38;5;255m%s\033[0m\n" "App Port:" "$APP_PORT"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "App Port:" "$APP_PORT"
     echo
-    
 
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
-    echo -e "\033[38;5;244m📚 My Project:\033[0m \033[38;5;39mhttps://gig.ovh\033[0m"
-    echo -e "\033[38;5;244m🐛 Issues:\033[0m        \033[38;5;39mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
-    echo -e "\033[38;5;244m💬 Support Remnawave:\033[0m       \033[38;5;39mhttps://t.me/remnawave\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo -e "\033[38;5;8m📚 Project: \033[38;5;250mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;8m🐛 Issues: \033[38;5;250mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;8m💬 Support: \033[38;5;250mhttps://t.me/remnawave\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     echo
 }
 
 usage_compact() {
     clear
-    echo -e "\033[1;38;5;51m⚡ $APP_NAME CLI\033[0m \033[38;5;244mv1.3\033[0m"
-    echo -e "\033[38;5;240m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo -e "\033[1;37m⚡ $APP_NAME CLI\033[0m \033[38;5;8mCommand Line Interface\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
     echo
     
-    echo -e "\033[1;38;5;82m🚀 Core:\033[0m"
-    printf "  \033[38;5;46m%-12s\033[0m %s\n" "install" "🛠️  Install RemnaNode"
-    printf "  \033[38;5;46m%-12s\033[0m %s\n" "update" "⬆️  Update version"
-    printf "  \033[38;5;46m%-12s\033[0m %s\n" "uninstall" "🗑️  Remove completely"
+    echo -e "\033[1;37m🚀 Core Commands:\033[0m"
+    printf "  \033[38;5;15m%-12s\033[0m %s\n" "install" "🛠️  Install RemnaNode"
+    printf "  \033[38;5;15m%-12s\033[0m %s\n" "update" "⬆️  Update version"
+    printf "  \033[38;5;15m%-12s\033[0m %s\n" "uninstall" "🗑️  Remove completely"
     echo
     
-    echo -e "\033[1;38;5;214m⚙️  Control:\033[0m"
-    printf "  \033[38;5;220m%-12s\033[0m %s\n" "up" "▶️  Start services"
-    printf "  \033[38;5;220m%-12s\033[0m %s\n" "down" "⏹️  Stop services"
-    printf "  \033[38;5;220m%-12s\033[0m %s\n" "restart" "🔄 Restart services"
-    printf "  \033[38;5;220m%-12s\033[0m %s\n" "status" "📊 Show status"
+    echo -e "\033[1;37m⚙️  Service Control:\033[0m"
+    printf "  \033[38;5;250m%-12s\033[0m %s\n" "up" "▶️  Start services"
+    printf "  \033[38;5;250m%-12s\033[0m %s\n" "down" "⏹️  Stop services"
+    printf "  \033[38;5;250m%-12s\033[0m %s\n" "restart" "🔄 Restart services"
+    printf "  \033[38;5;250m%-12s\033[0m %s\n" "status" "📊 Show status"
     echo
     
-    echo -e "\033[1;38;5;201m📊 Monitor:\033[0m"
-    printf "  \033[38;5;207m%-12s\033[0m %s\n" "logs" "📋 Container logs"
-    printf "  \033[38;5;207m%-12s\033[0m %s\n" "setup-logs" "🔄 Log rotation"
+    echo -e "\033[1;37m📊 Monitoring:\033[0m"
+    printf "  \033[38;5;244m%-12s\033[0m %s\n" "logs" "📋 Container logs"
+    printf "  \033[38;5;244m%-12s\033[0m %s\n" "setup-logs" "🔄 Log rotation"
     echo
     
-    echo -e "\033[1;38;5;165m🔧 Config:\033[0m"
-    printf "  \033[38;5;171m%-12s\033[0m %s\n" "core-update" "⚡ Update Xray"
-    printf "  \033[38;5;171m%-12s\033[0m %s\n" "edit" "✏️  Edit compose"
+    echo -e "\033[1;37m🔧 Configuration:\033[0m"
+    printf "  \033[38;5;15m%-12s\033[0m %s\n" "core-update" "⚡ Update Xray"
+    printf "  \033[38;5;15m%-12s\033[0m %s\n" "edit" "✏️  Edit compose"
     echo
     
-    echo -e "\033[38;5;244m💡 Example: \033[38;5;226m$APP_NAME\033[0m \033[38;5;46minstall\033[0m"
-    echo
-    echo -e "\033[38;5;244m📚 Help: \033[38;5;226m$APP_NAME\033[0m \033[38;5;39m--help\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[38;5;244m💡 Example: \033[38;5;15m$APP_NAME\033[0m \033[38;5;250minstall\033[0m"
+    echo -e "\033[38;5;244m📚 Full help: \033[38;5;15m$APP_NAME\033[0m \033[38;5;250m--help\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
 }
 
 
@@ -1608,63 +2013,67 @@ smart_usage() {
 
 # Альтернативная минималистичная версия
 usage_minimal() {
-    echo -e "\033[1;38;5;51m⚡ $APP_NAME CLI\033[0m"
+    echo -e "\033[1;37m⚡ $APP_NAME CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
     echo
-    echo -e "\033[1;38;5;82mMain Commands:\033[0m"
-    echo -e "  \033[38;5;46minstall\033[0m     Install RemnaNode"
-    echo -e "  \033[38;5;46mup\033[0m          Start services"
-    echo -e "  \033[38;5;46mdown\033[0m        Stop services"
-    echo -e "  \033[38;5;46mrestart\033[0m     Restart services"
-    echo -e "  \033[38;5;46mstatus\033[0m      Show status"
-    echo -e "  \033[38;5;46mlogs\033[0m        Show logs"
-    echo -e "  \033[38;5;46mupdate\033[0m      Update version"
-    echo -e "  \033[38;5;46muninstall\033[0m   Remove completely"
+    
+    echo -e "\033[1;37m🚀 Main:\033[0m"
+    echo -e "  \033[38;5;15minstall\033[0m     🛠️  Install RemnaNode"
+    echo -e "  \033[38;5;250mup\033[0m          ▶️  Start services"
+    echo -e "  \033[38;5;250mdown\033[0m        ⏹️  Stop services"
+    echo -e "  \033[38;5;250mrestart\033[0m     🔄 Restart services"
+    echo -e "  \033[38;5;250mstatus\033[0m      📊 Show status"
+    echo -e "  \033[38;5;244mlogs\033[0m        📋 Show logs"
+    echo -e "  \033[38;5;15mupdate\033[0m      ⬆️  Update version"
+    echo -e "  \033[38;5;15muninstall\033[0m   🗑️  Remove completely"
     echo
-    echo -e "\033[1;38;5;165mConfig:\033[0m"
-    echo -e "  \033[38;5;171mcore-update\033[0m Update Xray core"
-    echo -e "  \033[38;5;171medit\033[0m        Edit configuration"
-    echo -e "  \033[38;5;171msetup-logs\033[0m  Setup log rotation"
+    
+    echo -e "\033[1;37m🔧 Config:\033[0m"
+    echo -e "  \033[38;5;15mcore-update\033[0m ⚡ Update Xray core"
+    echo -e "  \033[38;5;15medit\033[0m        ✏️  Edit configuration"
+    echo -e "  \033[38;5;244msetup-logs\033[0m  🔄 Setup log rotation"
     echo
-    echo -e "\033[38;5;244mFor detailed help: \033[38;5;226m$APP_NAME\033[0m \033[38;5;39m--help\033[0m"
+    
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo -e "\033[38;5;244mFull help: \033[38;5;15m$APP_NAME\033[0m \033[38;5;250m--help\033[0m"
 }
 
 show_version() {
-    echo -e "\033[1;38;5;51m"
-    echo "    ⚡ RemnaNode CLI"
-    echo -e "\033[0m\033[38;5;249m    Version: \033[1;38;5;226m$(grep "^# Version:" "$0" | awk '{print $3}')\033[0m"
-    echo -e "\033[38;5;249m    Author:  \033[38;5;255mDigneZzZ\033[0m"
-    echo -e "\033[38;5;249m    GitHub:  \033[38;5;39mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
-    echo -e "\033[38;5;249m    New Project:  \033[38;5;39mhttps://gig.ovh\033[0m"
-    echo
+    echo -e "\033[1;37m⚡ RemnaNode CLI\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo -e "\033[38;5;250mVersion: \033[38;5;15m$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;250mAuthor:  \033[38;5;15mDigneZzZ\033[0m"
+    echo -e "\033[38;5;250mGitHub:  \033[38;5;15mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;250mProject: \033[38;5;15mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
 }
-
 
 show_command_help() {
     local cmd="$1"
     
     case "$cmd" in
         "install")
-            echo -e "\033[1;38;5;46m🛠️  install\033[0m - Install or reinstall RemnaNode"
+            echo -e "\033[1;37m🛠️  install\033[0m - Install or reinstall RemnaNode"
             echo
-            echo -e "\033[1;38;5;226mUsage:\033[0m"
-            echo -e "  \033[38;5;226m$APP_NAME\033[0m \033[38;5;46minstall\033[0m [\033[38;5;229m--dev\033[0m] [\033[38;5;229m--name\033[0m \033[38;5;255m<name>\033[0m]"
+            echo -e "\033[1;37mUsage:\033[0m"
+            echo -e "  \033[38;5;15m$APP_NAME\033[0m \033[38;5;250minstall\033[0m [\033[38;5;244m--dev\033[0m] [\033[38;5;244m--name\033[0m \033[38;5;15m<name>\033[0m]"
             echo
-            echo -e "\033[1;38;5;226mOptions:\033[0m"
-            echo -e "  \033[38;5;229m--dev\033[0m       Use development version instead of latest"
-            echo -e "  \033[38;5;229m--name\033[0m      Set custom application name"
+            echo -e "\033[1;37mOptions:\033[0m"
+            echo -e "  \033[38;5;244m--dev\033[0m       Use development version instead of latest"
+            echo -e "  \033[38;5;244m--name\033[0m      Set custom application name"
             ;;
         "logs")
-            echo -e "\033[1;38;5;207m📋 logs\033[0m - Show container logs"
+            echo -e "\033[1;37m📋 logs\033[0m - Show container logs"
             echo
-            echo -e "\033[1;38;5;226mUsage:\033[0m"
-            echo -e "  \033[38;5;226m$APP_NAME\033[0m \033[38;5;207mlogs\033[0m [\033[38;5;229m--no-follow\033[0m]"
+            echo -e "\033[1;37mUsage:\033[0m"
+            echo -e "  \033[38;5;15m$APP_NAME\033[0m \033[38;5;250mlogs\033[0m [\033[38;5;244m--no-follow\033[0m]"
             echo
-            echo -e "\033[1;38;5;226mOptions:\033[0m"
-            echo -e "  \033[38;5;229m-n, --no-follow\033[0m   Show logs without following"
+            echo -e "\033[1;37mOptions:\033[0m"
+            echo -e "  \033[38;5;244m-n, --no-follow\033[0m   Show logs without following"
             ;;
         *)
-            echo -e "\033[38;5;196mUnknown command:\033[0m $cmd"
-            echo -e "Use '\033[38;5;226m$APP_NAME\033[0m' to see all available commands"
+            echo -e "\033[1;31mUnknown command:\033[0m $cmd"
+            echo -e "Use '\033[38;5;15m$APP_NAME\033[0m' to see all available commands"
             ;;
     esac
     echo
