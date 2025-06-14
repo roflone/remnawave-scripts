@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.7 
+# VERSION=2.71 
 
 set -e
-SCRIPT_VERSION="2.7"
+SCRIPT_VERSION="2.71"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -1214,7 +1214,6 @@ schedule_test_telegram() {
     read -p "Press Enter to continue..."
 }
 
-# Показать статус
 schedule_status() {
     clear
     echo -e "\033[1;37m📊 Backup Scheduler Status\033[0m"
@@ -1233,46 +1232,86 @@ schedule_status() {
             echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
         fi
         
-        # Показываем следующий запуск
+        
         if command -v crontab >/dev/null && [ -n "$cron_line" ]; then
-            echo -e "\033[38;5;250mNext run: $(echo "$cron_line" | awk '{print $1" "$2" "$3" "$4" "$5}' | crontab -l | head -1)\033[0m"
+            
+            local schedule_desc=""
+            case "$schedule" in
+                "0 2 * * *") schedule_desc="Daily at 2:00 AM" ;;
+                "0 4 * * *") schedule_desc="Daily at 4:00 AM" ;;
+                "0 */12 * * *") schedule_desc="Every 12 hours" ;;
+                "0 2 * * 0") schedule_desc="Weekly on Sunday at 2:00 AM" ;;
+                *) schedule_desc="Custom: $schedule" ;;
+            esac
+            echo -e "\033[38;5;250mFrequency: $schedule_desc\033[0m"
         fi
     else
         echo -e "\033[1;31m❌ Status: DISABLED\033[0m"
     fi
     
-    # Показываем последние бэкапы
+    
     echo
     echo -e "\033[1;37m📦 Recent Backups:\033[0m"
-    if ls "$BACKUP_DIR"/remnawave_scheduled_*.sql* >/dev/null 2>&1; then
-        ls -lt "$BACKUP_DIR"/remnawave_scheduled_*.sql* | head -5 | while read line; do
-            local size=$(echo "$line" | awk '{print $5}')
-            local date=$(echo "$line" | awk '{print $6" "$7" "$8}')
-            local file=$(echo "$line" | awk '{print $9}')
-            local filename=$(basename "$file")
-            
-            # Конвертируем размер в читаемый формат
-            local human_size=""
-            if [ "$size" -gt 1073741824 ]; then
-                human_size="$(( size / 1073741824 ))GB"
-            elif [ "$size" -gt 1048576 ]; then
-                human_size="$(( size / 1048576 ))MB"
-            elif [ "$size" -gt 1024 ]; then
-                human_size="$(( size / 1024 ))KB"
-            else
-                human_size="${size}B"
+    
+    
+    local backup_files=""
+    
+    
+    backup_files=$(ls -t "$BACKUP_DIR"/remnawave_scheduled_*.tar.gz "$BACKUP_DIR"/remnawave_scheduled_*.sql 2>/dev/null | head -5)
+    
+    
+    if [ -z "$backup_files" ]; then
+        backup_files=$(ls -t "$BACKUP_DIR"/remnawave_*.tar.gz "$BACKUP_DIR"/remnawave_*.sql* 2>/dev/null | head -5)
+    fi
+    
+    if [ -n "$backup_files" ]; then
+        echo "$backup_files" | while IFS= read -r file; do
+            if [ -f "$file" ]; then
+                local filename=$(basename "$file")
+                local file_size=$(du -sh "$file" 2>/dev/null | cut -f1)
+                local file_date=$(stat -c %y "$file" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+                
+                
+                local backup_type="📦"
+                if [[ "$filename" =~ scheduled ]]; then
+                    backup_type="🤖"  # автоматический
+                elif [[ "$filename" =~ full ]]; then
+                    backup_type="📁"  # полный ручной
+                else
+                    backup_type="📊"  # обычный
+                fi
+                
+                printf "   %s \033[38;5;250m%-35s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\n" "$backup_type" "$filename" "$file_size" "$file_date"
             fi
-            
-            printf "   \033[38;5;250m%-30s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\n" "$filename" "$human_size" "$date"
         done
     else
-        echo -e "\033[38;5;244m   No scheduled backups found\033[0m"
+        echo -e "\033[38;5;244m   No backup files found\033[0m"
+        echo -e "\033[38;5;244m   Run a backup to see files here\033[0m"
+    fi
+    
+
+    echo
+    echo -e "\033[1;37m📈 Statistics:\033[0m"
+    
+
+    local total_backups=$(ls -1 "$BACKUP_DIR"/remnawave_*.{tar.gz,sql*} 2>/dev/null | wc -l)
+    local scheduled_backups=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.{tar.gz,sql} 2>/dev/null | wc -l)
+    local manual_backups=$(ls -1 "$BACKUP_DIR"/remnawave_full_*.{tar.gz,sql} "$BACKUP_DIR"/remnawave_db_*.{sql*} 2>/dev/null | wc -l)
+    
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backups:" "$total_backups"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Scheduled backups:" "$scheduled_backups"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Manual backups:" "$manual_backups"
+    
+
+    if [ -d "$BACKUP_DIR" ]; then
+        local backup_dir_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total size:" "$backup_dir_size"
     fi
     
     read -p "Press Enter to continue..."
 }
 
-# Показать логи
+
 schedule_show_logs() {
     clear
     echo -e "\033[1;37m📋 Backup Logs\033[0m"
@@ -1280,13 +1319,11 @@ schedule_show_logs() {
     echo
     
     if [ -f "$BACKUP_LOG_FILE" ]; then
-        # Показываем размер лог-файла
+
         local log_size=$(du -sh "$BACKUP_LOG_FILE" 2>/dev/null | cut -f1)
         echo -e "\033[38;5;250mLog file: $(basename "$BACKUP_LOG_FILE") ($log_size)\033[0m"
         echo -e "\033[38;5;250mLocation: $BACKUP_LOG_FILE\033[0m"
         echo
-        
-        # Показываем последние записи с цветовой подсветкой
         echo -e "\033[38;5;250mLast 30 log entries:\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
         
@@ -1320,8 +1357,6 @@ schedule_show_logs() {
     read -p "Press Enter to continue..."
 }
 
-
-# Ручной запуск резервного копирования
 schedule_run_backup() {
     clear
     echo -e "\033[1;37m▶️  Manual Full Backup Run\033[0m"
@@ -1344,26 +1379,20 @@ schedule_run_backup() {
     echo -e "\033[38;5;250m🏃‍♂️ Running backup now...\033[0m"
     echo
     
-    # Создаем скрипт если не существует
+
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
-    fi
-    
-    # Создаем лог-файл если не существует
     mkdir -p "$(dirname "$BACKUP_LOG_FILE")"
     
-    # Добавляем разделитель в лог для ручного запуска
     echo "" >> "$BACKUP_LOG_FILE"
     echo "=============================================" >> "$BACKUP_LOG_FILE"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP STARTED by user" >> "$BACKUP_LOG_FILE"
     echo "=============================================" >> "$BACKUP_LOG_FILE"
     
-    # Запускаем с выводом И в терминал И в лог-файл одновременно
     bash "$BACKUP_SCRIPT_FILE" 2>&1 | tee -a "$BACKUP_LOG_FILE"
     
     local exit_code=${PIPESTATUS[0]}
     
-    # Добавляем завершающий разделитель
     echo "=============================================" >> "$BACKUP_LOG_FILE"
     if [ $exit_code -eq 0 ]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP COMPLETED SUCCESSFULLY" >> "$BACKUP_LOG_FILE"
@@ -1381,7 +1410,6 @@ schedule_run_backup() {
     echo -e "\033[38;5;250m   Location: $APP_DIR/backups/\033[0m"
     echo -e "\033[38;5;250m   Logs: $BACKUP_LOG_FILE\033[0m"
     
-    # Показываем последний созданный бэкап
     local latest_backup=$(ls -t "$APP_DIR/backups"/remnawave_scheduled_*.{tar.gz,sql} 2>/dev/null | head -1)
     if [ -n "$latest_backup" ]; then
         local backup_size=$(du -sh "$latest_backup" | cut -f1)
@@ -1392,7 +1420,6 @@ schedule_run_backup() {
     read -p "Press Enter to continue..."
 }
 
-# Очистка старых бэкапов
 schedule_cleanup() {
     clear
     echo -e "\033[1;37m🧹 Cleanup Old Backups\033[0m"
