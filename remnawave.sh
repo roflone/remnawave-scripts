@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.1 
+# VERSION=2.2 
 
 set -e
-SCRIPT_VERSION="2.1"
+SCRIPT_VERSION="2.2"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -2875,14 +2875,60 @@ health_check_command() {
     
     # Проверка портов
     if [ -f "$ENV_FILE" ]; then
-        get_occupied_ports
+        echo -e "\033[1;37m🔌 Port Status Check:\033[0m"
+        
         local app_port=$(grep "^APP_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         local metrics_port=$(grep "^METRICS_PORT=" "$ENV_FILE" | cut -d'=' -f2)
         
-        for port in $app_port $metrics_port; do
-            if [ -n "$port" ] && is_port_occupied "$port"; then
-                local port_owner=$(ss -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | cut -d',' -f1 || echo "unknown")
-                echo -e "\033[1;33m⚠️  Port $port occupied by: $port_owner\033[0m"
+        if [ -f "$SUB_ENV_FILE" ]; then
+            local sub_port=$(grep "^APP_PORT=" "$SUB_ENV_FILE" | cut -d'=' -f2)
+        fi
+        
+        # Проверяем каждый порт отдельно
+        for port in $app_port $metrics_port $sub_port; do
+            if [ -n "$port" ]; then
+                local port_info=""
+                local status_color="1;32"
+                local status_icon="✅"
+                
+                # Получаем информацию о процессе, использующем порт
+                if command -v ss >/dev/null 2>&1; then
+                    port_info=$(ss -tlnp 2>/dev/null | grep ":$port " | head -1)
+                elif command -v netstat >/dev/null 2>&1; then
+                    port_info=$(netstat -tlnp 2>/dev/null | grep ":$port " | head -1)
+                fi
+                
+                if [ -n "$port_info" ]; then
+                    # Извлекаем имя процесса
+                    local process_name=""
+                    if echo "$port_info" | grep -q "docker-proxy"; then
+                        process_name="docker-proxy"
+                    elif echo "$port_info" | grep -q "nginx"; then
+                        process_name="nginx"
+                    elif echo "$port_info" | grep -q "apache"; then
+                        process_name="apache"
+                    else
+                        # Попытка извлечь имя процесса из вывода
+                        process_name=$(echo "$port_info" | grep -o 'users:(([^)]*))' | sed 's/users:((\([^)]*\)).*/\1/' | cut -d',' -f1 | tr -d '"' | head -1)
+                        if [ -z "$process_name" ]; then
+                            process_name="unknown process"
+                        fi
+                    fi
+                    
+                    # Определяем, это наш порт или чужой
+                    if echo "$process_name" | grep -q "docker"; then
+                        status_color="1;32"
+                        status_icon="✅"
+                        printf "   \033[38;5;15mPort %s:\033[0m \033[${status_color}m${status_icon} Used by Remnawave (docker)\033[0m\n" "$port"
+                    else
+                        status_color="1;33"
+                        status_icon="⚠️ "
+                        printf "   \033[38;5;15mPort %s:\033[0m \033[${status_color}m${status_icon} Occupied by %s\033[0m\n" "$port" "$process_name"
+                        issues=$((issues + 1))
+                    fi
+                else
+                    printf "   \033[38;5;15mPort %s:\033[0m \033[1;32m✅ Available\033[0m\n" "$port"
+                fi
             fi
         done
     fi
@@ -2904,12 +2950,60 @@ health_check_command() {
         echo -e "\033[1;32m✅ Sufficient RAM: ${available_ram}MB available\033[0m"
     fi
     
+    # Проверка состояния сервисов (если установлены)
+    if is_remnawave_up; then
+        echo -e "\033[1;37m🐳 Services Status:\033[0m"
+        detect_compose
+        cd "$APP_DIR" 2>/dev/null || true
+        
+        # Получаем статус каждого сервиса
+        local services_status=$($COMPOSE -f "$COMPOSE_FILE" ps --format "table {{.Service}}\t{{.Status}}" 2>/dev/null || echo "")
+        
+        if [ -n "$services_status" ]; then
+            echo "$services_status" | tail -n +2 | while IFS=$'\t' read -r service status; do
+                local status_icon="❓"
+                local status_color="38;5;244"
+                
+                if [[ "$status" =~ "Up" ]]; then
+                    if [[ "$status" =~ "healthy" ]]; then
+                        status_icon="✅"
+                        status_color="1;32"
+                    elif [[ "$status" =~ "unhealthy" ]]; then
+                        status_icon="❌"
+                        status_color="1;31"
+                    else
+                        status_icon="🟡"
+                        status_color="1;33"
+                    fi
+                elif [[ "$status" =~ "Exit" ]]; then
+                    status_icon="❌"
+                    status_color="1;31"
+                elif [[ "$status" =~ "Restarting" ]]; then
+                    status_icon="🔄"
+                    status_color="1;33"
+                fi
+                
+                printf "   \033[38;5;15m%-20s\033[0m \033[${status_color}m${status_icon} ${status}\033[0m\n" "$service:"
+            done
+        fi
+    fi
+    
     echo
     if [ $issues -eq 0 ]; then
         echo -e "\033[1;32m🎉 System health: EXCELLENT\033[0m"
         return 0
     else
         echo -e "\033[1;33m⚠️  Found $issues issue(s) that may affect performance\033[0m"
+        
+        # Предлагаем решения для типичных проблем
+        echo
+        echo -e "\033[1;37m💡 Recommendations:\033[0m"
+        if [ $issues -gt 0 ]; then
+            echo -e "\033[38;5;244m   • Check port conflicts and reconfigure if needed\033[0m"
+            echo -e "\033[38;5;244m   • Review logs with '\033[38;5;15msudo $APP_NAME logs\033[38;5;244m'\033[0m"
+            echo -e "\033[38;5;244m   • Restart services with '\033[38;5;15msudo $APP_NAME restart\033[38;5;244m'\033[0m"
+        fi
+        
         return 1
     fi
 }
@@ -3466,82 +3560,6 @@ pm2_monitor() {
     docker exec -it $APP_NAME pm2 monit
 }
 
-# main_menu() {
-#     while true; do
-#         clear
-#         echo -e "\033[1;37m⚡ $APP_NAME Panel Management\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
-#         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
-#         echo
-        
-#         # Проверка статуса
-#         if is_remnawave_installed; then
-#             if is_remnawave_up; then
-#                 echo -e "\033[1;32m✅ Panel Status: RUNNING\033[0m"
-#             else
-#                 echo -e "\033[1;31m❌ Panel Status: STOPPED\033[0m"
-#             fi
-#         else
-#             echo -e "\033[1;33m⚠️  Panel Status: NOT INSTALLED\033[0m"
-#         fi
-        
-#         echo
-#         echo -e "\033[1;37m🚀 Installation & Updates:\033[0m"
-#         echo -e "   \033[38;5;15m1)\033[0m 🛠️  Install Remnawave panel"
-#         echo -e "   \033[38;5;15m2)\033[0m ⬆️  Update to latest version"
-#         echo -e "   \033[38;5;15m3)\033[0m 🗑️  Remove panel completely"
-#         echo
-#         echo -e "\033[1;37m⚙️  Service Management:\033[0m"
-#         echo -e "   \033[38;5;15m4)\033[0m ▶️  Start all services"
-#         echo -e "   \033[38;5;15m5)\033[0m ⏹️  Stop all services"
-#         echo -e "   \033[38;5;15m6)\033[0m 🔄 Restart all services"
-#         echo -e "   \033[38;5;15m7)\033[0m 📊 Show services status"
-#         echo
-#         echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
-#         echo -e "   \033[38;5;15m8)\033[0m 📋 View application logs"
-#         echo -e "   \033[38;5;15m9)\033[0m 📈 System performance monitor"
-#         echo -e "   \033[38;5;15m10)\033[0m 🩺 Health check diagnostics"
-#         echo
-#         echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
-#         echo -e "   \033[38;5;15m11)\033[0m 💾 Manual database backup"
-#         echo -e "   \033[38;5;15m12)\033[0m 📅 Scheduled backup system"
-#         echo
-#         echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
-#         echo -e "   \033[38;5;15m13)\033[0m 📝 Edit docker-compose.yml"
-#         echo -e "   \033[38;5;15m14)\033[0m ⚙️  Edit environment variables"
-#         echo -e "   \033[38;5;15m15)\033[0m 🖥️  Access container shell"
-#         echo -e "   \033[38;5;15m16)\033[0m 📊 PM2 process monitor"
-#         echo
-#         echo -e "   \033[38;5;244m0)\033[0m 🚪 Exit"
-#         echo
-        
-#         read -p "Select option [0-16]: " choice
-        
-#         case "$choice" in
-#             1) install_command; read -p "Press Enter to continue..." ;;
-#             2) update_command; read -p "Press Enter to continue..." ;;
-#             3) uninstall_command; read -p "Press Enter to continue..." ;;
-#             4) up_command; read -p "Press Enter to continue..." ;;
-#             5) down_command; read -p "Press Enter to continue..." ;;
-#             6) restart_command; read -p "Press Enter to continue..." ;;
-#             7) status_command; read -p "Press Enter to continue..." ;;
-#             8) logs_command ;;
-#             9) monitor_command ;;
-#             10) health_check_command; read -p "Press Enter to continue..." ;;
-#             11) backup_command; read -p "Press Enter to continue..." ;;
-#             12) schedule_menu ;;
-#             13) edit_command ;;
-#             14) edit_command_menu ;;
-#             15) console_command ;;
-#             16) pm2_monitor ;;
-#             0) clear; exit 0 ;;
-#             *) 
-#                 echo -e "\033[1;31mInvalid option!\033[0m"
-#                 sleep 1
-#                 ;;
-#         esac
-#     done
-# }
-
 main_menu() {
     while true; do
         clear
@@ -3706,15 +3724,12 @@ main_menu() {
         echo -e "   \033[38;5;15m14)\033[0m 🖥️  Access container shell"
         echo -e "   \033[38;5;15m15)\033[0m 📊 PM2 process monitor"
         echo
-        echo -e "   \033[38;5;244m0)\033[0m 🚪 Exit"
-        echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
-        echo -e "\033[38;5;15m 0.\033[0m  🚪 \033[38;5;250mExit to terminal\033[0m"
+        echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
         echo
         echo -e "\033[38;5;8mRemnawave Panel CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-14]:\033[0m ")" choice
-        read -p "Select option [0-15]: " choice
+        read -p "$(echo -e "\033[1;37mSelect option [0-15]:\033[0m ")" choice
         
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
