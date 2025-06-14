@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.6 
+# VERSION=2.7 
 
 set -e
-SCRIPT_VERSION="2.6"
+SCRIPT_VERSION="2.7"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -342,12 +342,22 @@ schedule_menu() {
             local schedule=$(jq -r '.schedule // "Not configured"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             local telegram_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             local retention=$(jq -r '.retention.days // 7' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local compression=$(jq -r '.compression.enabled // true' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             
             echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
+            echo -e "\033[38;5;250mBackup Type: Full (database + all configs)\033[0m"
+            echo -e "\033[38;5;250mCompression: $([ "$compression" = "true" ] && echo "✅ Enabled" || echo "❌ Disabled")\033[0m"
             echo -e "\033[38;5;250mTelegram: $([ "$telegram_enabled" = "true" ] && echo "✅ Enabled" || echo "❌ Disabled")\033[0m"
             echo -e "\033[38;5;250mRetention: $retention days\033[0m"
         else
             echo -e "\033[38;5;244mNo configuration found\033[0m"
+        fi
+        
+        # Показываем информацию о логах
+        if [ -f "$BACKUP_LOG_FILE" ]; then
+            local log_size=$(du -sh "$BACKUP_LOG_FILE" 2>/dev/null | cut -f1)
+            local last_entry=$(tail -1 "$BACKUP_LOG_FILE" 2>/dev/null | grep -o '\[.*\]' | head -1 || echo "No entries")
+            echo -e "\033[38;5;250mLog size: $log_size, Last: $last_entry\033[0m"
         fi
         
         echo
@@ -359,11 +369,14 @@ schedule_menu() {
         echo -e "   \033[38;5;15m5)\033[0m 📊 Show scheduler status"
         echo -e "   \033[38;5;15m6)\033[0m 📋 View backup logs"
         echo -e "   \033[38;5;15m7)\033[0m 🧹 Cleanup old backups"
-        echo -e "   \033[38;5;15m8)\033[0m ▶️  Run backup now"
+        echo -e "   \033[38;5;15m8)\033[0m ▶️  Run full backup now"
+        echo -e "   \033[38;5;15m9)\033[0m 🗑️  Clear logs"
         echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
         echo
+        echo -e "\033[38;5;8m💡 All scheduled backups include database + configurations\033[0m"
+        echo
         
-        read -p "Select option [0-8]: " choice
+        read -p "Select option [0-9]: " choice
         
         case "$choice" in
             1) schedule_setup_menu ;;
@@ -374,6 +387,7 @@ schedule_menu() {
             6) schedule_show_logs ;;
             7) schedule_cleanup ;;
             8) schedule_run_backup ;;
+            9) schedule_clear_logs ;;
             0) 
                 clear
                 return 0  
@@ -386,6 +400,24 @@ schedule_menu() {
     done
 }
 
+# Новая функция очистки логов
+schedule_clear_logs() {
+    echo
+    read -p "Clear all backup logs? [y/N]: " confirm
+    
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        if [ -f "$BACKUP_LOG_FILE" ]; then
+            > "$BACKUP_LOG_FILE"  # Очищаем файл
+            echo -e "\033[1;32m✅ Backup logs cleared\033[0m"
+        else
+            echo -e "\033[38;5;244mNo log file to clear\033[0m"
+        fi
+    else
+        echo -e "\033[38;5;250mOperation cancelled\033[0m"
+    fi
+    
+    sleep 2
+}
 
 
 schedule_setup_menu() {
@@ -1248,30 +1280,52 @@ schedule_show_logs() {
     echo
     
     if [ -f "$BACKUP_LOG_FILE" ]; then
-        echo -e "\033[38;5;250mLast 20 log entries:\033[0m"
+        # Показываем размер лог-файла
+        local log_size=$(du -sh "$BACKUP_LOG_FILE" 2>/dev/null | cut -f1)
+        echo -e "\033[38;5;250mLog file: $(basename "$BACKUP_LOG_FILE") ($log_size)\033[0m"
+        echo -e "\033[38;5;250mLocation: $BACKUP_LOG_FILE\033[0m"
         echo
-        tail -20 "$BACKUP_LOG_FILE" | while read line; do
-            if echo "$line" | grep -q "ERROR"; then
+        
+        # Показываем последние записи с цветовой подсветкой
+        echo -e "\033[38;5;250mLast 30 log entries:\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        
+        tail -30 "$BACKUP_LOG_FILE" | while IFS= read -r line; do
+            if echo "$line" | grep -q "ERROR\|FAILED\|Failed"; then
                 echo -e "\033[1;31m$line\033[0m"
-            elif echo "$line" | grep -q "successfully"; then
+            elif echo "$line" | grep -q "SUCCESS\|successfully\|SUCCESS\|✅\|completed"; then
                 echo -e "\033[1;32m$line\033[0m"
+            elif echo "$line" | grep -q "MANUAL BACKUP\|==="; then
+                echo -e "\033[1;37m$line\033[0m"
+            elif echo "$line" | grep -q "WARNING\|⚠️"; then
+                echo -e "\033[1;33m$line\033[0m"
+            elif echo "$line" | grep -q "Starting\|Step\|Creating"; then
+                echo -e "\033[1;36m$line\033[0m"
             else
                 echo -e "\033[38;5;250m$line\033[0m"
             fi
         done
+        
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo
+        echo -e "\033[38;5;244m💡 Commands:\033[0m"
+        echo -e "\033[38;5;244m   View full log: tail -f $BACKUP_LOG_FILE\033[0m"
+        echo -e "\033[38;5;244m   Clear log: > $BACKUP_LOG_FILE\033[0m"
     else
-        echo -e "\033[38;5;244mNo log file found\033[0m"
+        echo -e "\033[38;5;244mNo log file found at: $BACKUP_LOG_FILE\033[0m"
+        echo -e "\033[38;5;244mLogs will be created after first backup run\033[0m"
     fi
     
     echo
     read -p "Press Enter to continue..."
 }
 
+
 # Ручной запуск резервного копирования
 schedule_run_backup() {
     clear
-    echo -e "\033[1;37m▶️  Manual Backup Run\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 25))\033[0m"
+    echo -e "\033[1;37m▶️  Manual Full Backup Run\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
     echo
     
     if ! is_remnawave_up; then
@@ -1280,7 +1334,14 @@ schedule_run_backup() {
         return
     fi
     
-    echo -e "\033[38;5;250mRunning backup now...\033[0m"
+    echo -e "\033[1;37m📦 Backup Type: Full System Backup\033[0m"
+    echo -e "\033[38;5;250m   ✓ PostgreSQL Database (complete dump)\033[0m"
+    echo -e "\033[38;5;250m   ✓ Environment files (.env, .env.subscription)\033[0m"
+    echo -e "\033[38;5;250m   ✓ Docker Compose configuration\033[0m"
+    echo -e "\033[38;5;250m   ✓ All additional config files (*.json, *.yml, etc.)\033[0m"
+    echo -e "\033[38;5;250m   ✓ Configuration directories (certs, custom, etc.)\033[0m"
+    echo
+    echo -e "\033[38;5;250m🏃‍♂️ Running backup now...\033[0m"
     echo
     
     # Создаем скрипт если не существует
@@ -1288,10 +1349,44 @@ schedule_run_backup() {
         schedule_create_backup_script
     fi
     
-    # Запускаем с выводом в реальном времени
-    bash "$BACKUP_SCRIPT_FILE" 2>&1 | while read line; do
-        echo -e "\033[38;5;244m$line\033[0m"
-    done
+    # Создаем лог-файл если не существует
+    mkdir -p "$(dirname "$BACKUP_LOG_FILE")"
+    
+    # Добавляем разделитель в лог для ручного запуска
+    echo "" >> "$BACKUP_LOG_FILE"
+    echo "=============================================" >> "$BACKUP_LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP STARTED by user" >> "$BACKUP_LOG_FILE"
+    echo "=============================================" >> "$BACKUP_LOG_FILE"
+    
+    # Запускаем с выводом И в терминал И в лог-файл одновременно
+    bash "$BACKUP_SCRIPT_FILE" 2>&1 | tee -a "$BACKUP_LOG_FILE"
+    
+    local exit_code=${PIPESTATUS[0]}
+    
+    # Добавляем завершающий разделитель
+    echo "=============================================" >> "$BACKUP_LOG_FILE"
+    if [ $exit_code -eq 0 ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP COMPLETED SUCCESSFULLY" >> "$BACKUP_LOG_FILE"
+        echo -e "\033[1;32m🎉 Manual full backup completed successfully!\033[0m"
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP FAILED" >> "$BACKUP_LOG_FILE"
+        echo -e "\033[1;31m❌ Manual full backup failed!\033[0m"
+    fi
+    echo "=============================================" >> "$BACKUP_LOG_FILE"
+    echo "" >> "$BACKUP_LOG_FILE"
+    
+    echo
+    echo -e "\033[1;37m📋 Backup Information:\033[0m"
+    echo -e "\033[38;5;250m   Type: Full system backup (database + all configs)\033[0m"
+    echo -e "\033[38;5;250m   Location: $APP_DIR/backups/\033[0m"
+    echo -e "\033[38;5;250m   Logs: $BACKUP_LOG_FILE\033[0m"
+    
+    # Показываем последний созданный бэкап
+    local latest_backup=$(ls -t "$APP_DIR/backups"/remnawave_scheduled_*.{tar.gz,sql} 2>/dev/null | head -1)
+    if [ -n "$latest_backup" ]; then
+        local backup_size=$(du -sh "$latest_backup" | cut -f1)
+        echo -e "\033[38;5;250m   Latest: $(basename "$latest_backup") ($backup_size)\033[0m"
+    fi
     
     echo
     read -p "Press Enter to continue..."
