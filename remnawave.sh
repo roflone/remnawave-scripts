@@ -3708,7 +3708,12 @@ main_menu() {
         echo
         echo -e "   \033[38;5;244m0)\033[0m 🚪 Exit"
         echo
-        
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+        echo -e "\033[38;5;15m 0.\033[0m  🚪 \033[38;5;250mExit to terminal\033[0m"
+        echo
+        echo -e "\033[38;5;8mRemnawave Panel CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
+        echo
+        read -p "$(echo -e "\033[1;37mSelect option [0-14]:\033[0m ")" choice
         read -p "Select option [0-15]: " choice
         
         case "$choice" in
