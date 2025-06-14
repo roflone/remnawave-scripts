@@ -160,8 +160,7 @@ remnawave uninstall
 A universal Bash script to install and manage a **RemnaNode** — a proxy node designed to securely connect to Remnawave Panel using **Xray-core**.
 
 ---
-
-### 📦 Quick Start
+## 📦 Quick Start
 
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
@@ -169,17 +168,20 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 ---
 
-### ✅ Features
+## ✅ Features
 
 * CLI interface (`install`, `up`, `down`, `restart`, `logs`, `status`, etc.)
 * Auto-detects and avoids port conflicts
 * Installs optional latest Xray-core
 * Auto-generates `.env` and `docker-compose.yml`
 * Full support for `--dev` branch deployments
+* Log rotation and backup system
+* Adaptive interface for different terminal sizes
+* Support for multiple Linux distributions
 
 ---
 
-### ⚙️ Installation Flags
+## ⚙️ Installation Flags
 
 | Flag     | Description                                        |
 | -------- | -------------------------------------------------- |
@@ -188,7 +190,7 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 
 ---
 
-### 🛠 Supported Commands
+## 🛠 Supported Commands
 
 | Command       | Description                                       |
 | ------------- | ------------------------------------------------- |
@@ -202,10 +204,13 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 | `logs`        | Shows logs                                        |
 | `core-update` | Update/change Xray-core interactively             |
 | `edit`        | Open `docker-compose.yml` in your terminal editor |
+| `setup-logs`  | Configure log rotation                            |
+| `xray_log_out`| Show Xray output logs                            |
+| `xray_log_err`| Show Xray error logs                             |
 
 ---
 
-### 📂 File Structure
+## 📂 File Structure
 
 ```text
 /opt/remnanode/
@@ -213,20 +218,26 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 └── docker-compose.yml
 
 /var/lib/remnanode/
-└── xray               # Xray-core binary if installed
+├── xray               # Xray-core binary if installed
+└── *.log              # Xray-core logs
+
+/usr/local/bin/remnanode    # Management script
+/etc/logrotate.d/remnanode  # Log rotation configuration
 ```
 
 ---
 
-### 🔐 Xray-core Support
+## 🔐 Xray-core Support
 
 * Downloads and installs latest or chosen version
 * Places it under `/var/lib/remnanode/xray`
 * Binds it into container at runtime
+* Interactive version selection with pre-release support
+* Real-time log monitoring
 
 ---
 
-### 🌐 Reverse Proxy Example
+## 🌐 Reverse Proxy Example
 
 ```text
 node.example.com → 127.0.0.1:3000
@@ -234,7 +245,43 @@ node.example.com → 127.0.0.1:3000
 
 ---
 
-### 🧼 Uninstall Node
+## 🛡 Security
+
+Recommended UFW setup after installation:
+
+```bash
+# Allow access only from panel IP
+sudo ufw allow from PANEL_IP to any port 3000
+sudo ufw enable
+```
+
+---
+
+## 🔧 System Requirements
+
+* **Minimum 1GB** free disk space
+* **Minimum 256MB** available RAM
+* **Linux** (Ubuntu, Debian, CentOS, Amazon Linux, Fedora, Arch, openSUSE)
+* **Supported architectures**: x86_64, ARM64, ARM32, MIPS
+
+---
+
+## 📊 Monitoring
+
+```bash
+# Check status
+remnanode status
+
+# View container logs
+remnanode logs
+
+# Monitor Xray in real-time
+remnanode xray_log_out
+```
+
+---
+
+## 🧼 Uninstall Node
 
 ```bash
 remnanode uninstall
