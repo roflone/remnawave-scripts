@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.8
+# VERSION=1.8.1
 
 set -e
-SCRIPT_VERSION="1.8"
+SCRIPT_VERSION="1.8.1"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -4083,10 +4083,10 @@ EOF
 
     echo -e "${BLUE}🔍 Testing Your Setup:${NC}"
     echo -e "${GRAY}1. Check if Caddy is running:${NC}"
-    echo -e "${CYAN}   curl -k https://${domain:-your-domain.com}:${port:-9443}${NC}"
+    echo -e "${CYAN}   curl -k https://${domain:-your-domain.com}${NC}"
     echo
     echo -e "${GRAY}2. Verify website loads in browser:${NC}"
-    echo -e "${CYAN}   https://${domain:-your-domain.com}:${port:-9443}${NC}"
+    echo -e "${CYAN}   https://${domain:-your-domain.com}${NC}"
     echo
     echo -e "${GRAY}3. Test Xray Reality connection:${NC}"
     echo -e "${CYAN}   Use your VPN client with the configuration above${NC}"
