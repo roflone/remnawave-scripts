@@ -3970,7 +3970,7 @@ main_menu() {
             4) restart_command; read -p "Press Enter to continue..." ;;
             5) status_command; read -p "Press Enter to continue..." ;;
             6) template_command ;;
-            7) logs_command ;;
+            7) logs_command; read -p "Press Enter to continue..." ;;
             8) logs_size_command; read -p "Press Enter to continue..." ;;
             9) clean_logs_command; read -p "Press Enter to continue..." ;;
             10) edit_command; read -p "Press Enter to continue..." ;;
