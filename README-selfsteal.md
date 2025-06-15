@@ -7,13 +7,13 @@
 ### Способ 1: Прямая установка (рекомендуется)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/selfsteal.sh | bash
 ```
 
 ### Способ 2: Скачать и запустить
 
 ```bash
-wget https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh
+wget https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/selfsteal.sh
 chmod +x selfsteal.sh
 ./selfsteal.sh
 ```
@@ -142,7 +142,7 @@ REALITY_SERVER_NAMES=          # Дополнительные серверные
 ### Ручное обновление
 ```bash
 # Обновить только скрипт
-curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh -o selfsteal.sh
+curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/selfsteal.sh -o selfsteal.sh
 chmod +x selfsteal.sh
 
 # Обновить шаблон сайта (в меню скрипта)
@@ -234,7 +234,7 @@ docker exec caddy_reality_container ls -la /var/www/html/
 Если у вас возникли вопросы или проблемы:
 1. Проверьте раздел "Диагностика" выше
 2. Посмотрите логи контейнера: `docker logs caddy_reality_container`
-3. Создайте Issue в [GitHub репозитории](https://github.com/DigneZzZ/remnawave-scriptsnode/issues)
+3. Создайте Issue в [GitHub репозитории](https://github.com/DigneZzZ/remnawave-scripts/issues)
 
 ## 📄 Лицензия
 
