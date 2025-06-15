@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.8
+# VERSION=3.0
 
 set -e
-SCRIPT_VERSION="2.8"
+SCRIPT_VERSION="3.0"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -725,396 +725,1463 @@ schedule_disable() {
 
 
 
+# Обновляем функцию schedule_create_backup_script для создания полных бэкапов:
 schedule_create_backup_script() {
-    cat > "$BACKUP_SCRIPT_FILE" << 'EOF'
+    local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
+    mkdir -p "$config_dir"
+    
+    cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
 #!/bin/bash
-# Автоматически сгенерированный скрипт резервного копирования
 
+# Читаем конфигурацию backup
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/backup-config.json"
-APP_DIR="$SCRIPT_DIR"
-BACKUP_DIR="$APP_DIR/backups"
-TEMP_DIR="$APP_DIR/temp"
+CONFIG_FILE="$SCRIPT_DIR/../config/backup-config.json"
+LOG_FILE="$SCRIPT_DIR/../logs/backup.log"
 
 # Функция логирования
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+log_message() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-# Функция отправки в Telegram
-send_telegram() {
-    local message="$1"
-    local file_path="$2"
+# Функция для проверки доступности команд
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        log_message "ERROR: Required command '$1' not found"
+        exit 1
+    fi
+}
+
+# Проверяем необходимые команды
+check_command docker
+check_command jq
+
+# Определяем переменные из конфигурации
+if [ ! -f "$CONFIG_FILE" ]; then
+    log_message "ERROR: Backup configuration not found: $CONFIG_FILE"
+    exit 1
+fi
+
+APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
+APP_DIR="/opt/$APP_NAME"
+BACKUP_DIR="$APP_DIR/backups"
+COMPRESS_ENABLED=$(jq -r '.compression.enabled // true' "$CONFIG_FILE")
+TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
+
+# Создаем директорию бэкапов
+mkdir -p "$BACKUP_DIR"
+
+# Генерируем имя бэкапа
+timestamp=$(date +%Y%m%d_%H%M%S)
+backup_name="remnawave_scheduled_${timestamp}"
+temp_backup_dir="$BACKUP_DIR/temp_$timestamp"
+
+log_message "Starting scheduled backup..."
+log_message "Creating full system backup: $backup_name"
+
+# Создаем временную директорию для сборки бэкапа
+mkdir -p "$temp_backup_dir/$backup_name"
+
+# Шаг 1: Экспорт базы данных
+log_message "Step 1: Exporting database..."
+
+db_container="${APP_NAME}-db"
+if ! docker exec "$db_container" pg_isready -U postgres >/dev/null 2>&1; then
+    log_message "ERROR: Database container is not ready"
+    rm -rf "$temp_backup_dir"
+    exit 1
+fi
+
+database_file="$temp_backup_dir/$backup_name/database.sql"
+if docker exec -e PGPASSWORD=postgres "$db_container" \
+    pg_dump -U postgres -d postgres --clean --if-exists > "$database_file" 2>/dev/null; then
     
-    local bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE" 2>/dev/null)
-    local chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE" 2>/dev/null)
-    local thread_id=$(jq -r '.telegram.thread_id' "$CONFIG_FILE" 2>/dev/null)
-    local api_server=$(jq -r '.telegram.api_server // "https://api.telegram.org"' "$CONFIG_FILE" 2>/dev/null)
-    local use_custom_api=$(jq -r '.telegram.use_custom_api // false' "$CONFIG_FILE" 2>/dev/null)
+    local db_size=$(du -sh "$database_file" | cut -f1)
+    log_message "Database exported successfully ($db_size)"
+else
+    log_message "ERROR: Database export failed"
+    rm -rf "$temp_backup_dir"
+    exit 1
+fi
+
+# Шаг 2: Копирование полной структуры приложения
+log_message "Step 2: Creating complete application backup..."
+
+app_backup_dir="$temp_backup_dir/$backup_name"
+mkdir -p "$app_backup_dir"
+
+# Копируем всю структуру кроме некоторых директорий
+log_message "Copying application directory structure..."
+rsync -av \
+    --exclude='backups/' \
+    --exclude='logs/' \
+    --exclude='temp/' \
+    --exclude='*.log' \
+    --exclude='*.tmp' \
+    --exclude='.git/' \
+    "$APP_DIR/" \
+    "$app_backup_dir/" 2>/dev/null
+
+if [ $? -eq 0 ]; then
+    local app_files_count=$(find "$app_backup_dir" -type f | wc -l)
+    log_message "Application files copied successfully ($app_files_count files)"
+else
+    log_message "ERROR: Failed to copy application files"
+    rm -rf "$temp_backup_dir"
+    exit 1
+fi
+
+if [ -f "$database_file" ]; then
+    mv "$database_file" "$app_backup_dir/database.sql"
+    log_message "Database file moved to backup root"
+fi
+
+# Шаг 3: Добавляем скрипт управления
+log_message "Step 3: Including management script..."
+
+script_source="/usr/local/bin/$APP_NAME"
+if [ -f "$script_source" ]; then
+    cp "$script_source" "$temp_backup_dir/$backup_name/install-script.sh"
+    log_message "Management script included"
+else
+    log_message "WARNING: Management script not found at $script_source"
+fi
+
+# Шаг 4: Создаем метаданные
+log_message "Step 4: Creating backup metadata..."
+
+metadata_file="$temp_backup_dir/$backup_name/backup-metadata.json"
+cat > "$metadata_file" <<METADATA_EOF
+{
+    "backup_type": "full_system",
+    "app_name": "$APP_NAME",
+    "timestamp": "$timestamp",
+    "date_created": "$(date -Iseconds)",
+    "script_version": "$(grep '^SCRIPT_VERSION=' "$script_source" | cut -d'=' -f2 | tr -d '"' || echo 'unknown')",
+    "database_included": true,
+    "application_files_included": true,
+    "management_script_included": $([ -f "$temp_backup_dir/$backup_name/install-script.sh" ] && echo "true" || echo "false"),
+    "docker_images": {
+$(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep -E "(remnawave|postgres|valkey)" | head -10 || echo '')
+    },
+    "system_info": {
+        "hostname": "$(hostname)",
+        "os": "$(lsb_release -d 2>/dev/null | cut -f2 || uname -s)",
+        "docker_version": "$(docker --version | cut -d' ' -f3 | tr -d ',')",
+        "backup_size_uncompressed": "$(du -sh "$temp_backup_dir/$backup_name" | cut -f1)"
+    }
+}
+METADATA_EOF
+
+log_message "Backup metadata created"
+
+# Шаг 5: Сжатие бэкапа (если включено)
+if [ "$COMPRESS_ENABLED" = "true" ]; then
+    log_message "Step 5: Compressing backup..."
     
-    if [ -z "$bot_token" ] || [ "$bot_token" = "null" ] || [ -z "$chat_id" ] || [ "$chat_id" = "null" ]; then
-        log "ERROR: Telegram credentials not configured"
+    cd "$temp_backup_dir"
+    if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" "$backup_name" 2>/dev/null; then
+        local compressed_size=$(du -sh "$BACKUP_DIR/${backup_name}.tar.gz" | cut -f1)
+        log_message "Backup compressed successfully ($compressed_size)"
+        
+        # Удаляем временную директорию
+        rm -rf "$temp_backup_dir"
+        
+        final_backup_file="$BACKUP_DIR/${backup_name}.tar.gz"
+    else
+        log_message "ERROR: Backup compression failed"
+        rm -rf "$temp_backup_dir"
+        exit 1
+    fi
+else
+    # Перемещаем несжатую директорию в финальное местоположение
+    mv "$temp_backup_dir/$backup_name" "$BACKUP_DIR/"
+    rm -rf "$temp_backup_dir"
+    
+    final_backup_file="$BACKUP_DIR/$backup_name"
+    local backup_size=$(du -sh "$final_backup_file" | cut -f1)
+    log_message "Backup created successfully: $backup_name ($backup_size)"
+fi
+
+# Шаг 6: Отправка в Telegram (если включено)
+if [ "$TELEGRAM_ENABLED" = "true" ]; then
+    log_message "Step 6: Sending backup to Telegram..."
+    
+    telegram_bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE")
+    telegram_chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE")
+    
+    if [ "$telegram_bot_token" != "null" ] && [ "$telegram_chat_id" != "null" ]; then
+        # Отправляем информацию о бэкапе
+        backup_info="🤖 *Scheduled Backup Created*\n\n"
+        backup_info+="📦 *Name:* \`$backup_name\`\n"
+        backup_info+="📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')\n"
+        backup_info+="� *Size:* $(du -sh "$final_backup_file" | cut -f1)\n"
+        backup_info+="🏷️ *Type:* Full System Backup\n"
+        backup_info+="�️ *Server:* $(hostname)\n"
+        backup_info+="✅ *Status:* Success"
+        
+        # Если файл меньше 50MB, отправляем его
+        file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
+        max_size=$((50 * 1024 * 1024))  # 50MB в байтах
+        
+        if [ "$file_size_bytes" -lt "$max_size" ] && [[ "$final_backup_file" =~ \.tar\.gz$ ]]; then
+            log_message "Sending file via Telegram API: $(basename "$final_backup_file")"
+            
+            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
+                -F "chat_id=$telegram_chat_id" \
+                -F "document=@$final_backup_file" \
+                -F "caption=$backup_info" \
+                -F "parse_mode=Markdown" >/dev/null
+            
+            if [ $? -eq 0 ]; then
+                log_message "File sent successfully to Telegram"
+            else
+                log_message "ERROR: Failed to send file to Telegram"
+            fi
+        else
+            log_message "Sending backup notification to Telegram (file too large for upload)"
+            
+            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                -F "chat_id=$telegram_chat_id" \
+                -F "text=$backup_info" \
+                -F "parse_mode=Markdown" >/dev/null
+            
+            if [ $? -eq 0 ]; then
+                log_message "Backup notification sent successfully to Telegram"
+            else
+                log_message "ERROR: Failed to send notification to Telegram"
+            fi
+        fi
+        
+        log_message "Backup sent to Telegram successfully"
+    else
+        log_message "WARNING: Telegram credentials not configured"
+    fi
+fi
+
+# Шаг 7: Очистка старых бэкапов
+retention_days=$(jq -r '.retention.days // 7' "$CONFIG_FILE")
+min_backups=$(jq -r '.retention.min_backups // 3' "$CONFIG_FILE")
+
+log_message "Cleaning up backups older than $retention_days days..."
+
+# Находим старые файлы
+find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type f -mtime +$retention_days -delete 2>/dev/null
+find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type d -mtime +$retention_days -exec rm -rf {} + 2>/dev/null
+
+# Проверяем минимальное количество
+current_backups=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_* 2>/dev/null | wc -l)
+if [ "$current_backups" -lt "$min_backups" ]; then
+    log_message "WARNING: Only $current_backups backups remain (minimum: $min_backups)"
+fi
+
+log_message "Old backups cleaned up"
+log_message "Backup process completed successfully"
+
+BACKUP_SCRIPT_EOF
+
+    chmod +x "$BACKUP_SCRIPT_FILE"
+    echo -e "\033[1;32m✅ Backup script created: $BACKUP_SCRIPT_FILE\033[0m"
+}
+
+# Добавляем после функции backup_command:
+
+restore_command() {
+    check_running_as_root
+    
+    local backup_file=""
+    local target_app_name="$APP_NAME"
+    local target_base_dir="/opt"  
+    local force_restore=false
+    local database_only=false
+    local skip_install=false
+    
+    # Парсинг аргументов
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --file|-f) 
+                backup_file="$2"
+                shift 2
+                ;;
+            --name|-n)
+                target_app_name="$2"
+                shift 2
+                ;;
+            --path|-p)  
+                target_base_dir="$2"
+                shift 2
+                ;;
+            --database-only)
+                database_only=true
+                shift
+                ;;
+            --skip-install)
+                skip_install=true
+                shift
+                ;;
+            --force)
+                force_restore=true
+                shift
+                ;;
+            -h|--help) 
+                echo -e "\033[1;37m🔄 Remnawave Restore System\033[0m"
+                echo
+                echo -e "\033[1;37mUsage:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME restore\033[0m [\033[38;5;244moptions\033[0m]"
+                echo
+                echo -e "\033[1;37mOptions:\033[0m"
+                echo -e "  \033[38;5;244m--file, -f <path>\033[0m     Restore from specific backup file"
+                echo -e "  \033[38;5;244m--name, -n <name>\033[0m     Set custom app name (default: remnawave)"
+                echo -e "  \033[38;5;244m--path, -p <path>\033[0m     Base installation path (default: /opt)"
+                echo -e "  \033[38;5;244m--database-only\033[0m       Restore only database (requires existing installation)"
+                echo -e "  \033[38;5;244m--skip-install\033[0m        Don't install management script"
+                echo -e "  \033[38;5;244m--force\033[0m               Skip confirmation prompts"
+                echo -e "  \033[38;5;244m--help, -h\033[0m            Show this help"
+                echo
+                echo -e "\033[1;37mExamples:\033[0m"
+                echo -e "  \033[38;5;244m$APP_NAME restore --file backup.tar.gz\033[0m"
+                echo -e "  \033[38;5;244m$APP_NAME restore --file backup.tar.gz --name newpanel\033[0m"
+                echo -e "  \033[38;5;244m$APP_NAME restore --file backup.tar.gz --path /root\033[0m"
+                echo -e "  \033[38;5;244m$APP_NAME restore --database-only --file backup.tar.gz\033[0m"
+                echo
+                exit 0
+                ;;
+            *) 
+                echo "Unknown option: $1" >&2
+                echo "Use '$APP_NAME restore --help' for usage information."
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Устанавливаем целевую директорию
+    local target_dir="$target_base_dir/$target_app_name"
+    
+    # Если файл не указан, показываем интерактивное меню
+    if [ -z "$backup_file" ]; then
+        restore_interactive_menu "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+    else
+        restore_from_backup "$backup_file" "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+    fi
+}
+
+restore_interactive_menu() {
+    local target_app_name="$1"
+    local database_only="$2"
+    local skip_install="$3"
+    local force_restore="$4"
+    local target_base_dir="$5"
+    
+    while true; do
+        clear
+        echo -e "\033[1;37m🔄 Restore from Backup\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+        echo
+        
+        # Показываем текущую конфигурацию
+        echo -e "\033[1;37m⚙️  Restore Configuration:\033[0m"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Target name:" "$target_app_name"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Target path:" "$target_base_dir/$target_app_name"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Restore type:" "$([ "$database_only" = true ] && echo "Database only" || echo "Full system")"
+        echo
+        
+        # Проверяем существование целевой директории
+        if [ -d "$target_base_dir/$target_app_name" ]; then
+            echo -e "\033[1;33m⚠️  Target directory already exists!\033[0m"
+            echo -e "\033[38;5;244m   Existing installation will be backed up and replaced\033[0m"
+        else
+            echo -e "\033[1;32m✅ Target directory is clean\033[0m"
+        fi
+        echo
+        
+        # Сканируем доступные бэкапы в разных локациях
+        local backup_files=()
+        
+        # Ищем в стандартной директории текущего приложения
+        if [ -d "$APP_DIR/backups" ]; then
+            while IFS= read -r -d '' backup; do
+                backup_files+=("$backup")
+            done < <(find "$APP_DIR/backups" -maxdepth 1 \( -name "remnawave_*.tar.gz" -o -name "remnawave_*.sql" -o -name "remnawave_*.sql.gz" \) -type f -print0 2>/dev/null | sort -zr)
+        fi
+        
+        # Ищем в стандартных директориях других установок
+        for possible_dir in /opt/remnawave*/backups /opt/*/backups; do
+            if [ -d "$possible_dir" ] && [ "$possible_dir" != "$APP_DIR/backups" ]; then
+                while IFS= read -r -d '' backup; do
+                    backup_files+=("$backup")
+                done < <(find "$possible_dir" -maxdepth 1 \( -name "remnawave_*.tar.gz" -o -name "remnawave_*.sql" -o -name "remnawave_*.sql.gz" \) -type f -print0 2>/dev/null | sort -zr)
+            fi
+        done
+        
+        if [ ${#backup_files[@]} -eq 0 ]; then
+            echo -e "\033[1;33m⚠️  No backup files found!\033[0m"
+            echo
+            echo -e "\033[38;5;244mSearched in:\033[0m"
+            echo -e "\033[38;5;244m   • $APP_DIR/backups/\033[0m"
+            echo -e "\033[38;5;244m   • /opt/*/backups/\033[0m"
+            echo
+            echo -e "\033[1;37m📋 Options:\033[0m"
+            echo -e "   \033[38;5;15m1)\033[0m 📁 Specify custom backup file path"
+            echo -e "   \033[38;5;15m2)\033[0m ⚙️  Change restore settings"
+            echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
+            echo
+            
+            read -p "Select option [0-2]: " choice
+            
+            case "$choice" in
+                1) 
+                    restore_custom_file "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+                    ;;
+                2) 
+                    restore_configure_settings "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+                    ;;
+                0) return 0 ;;
+                *) 
+                    echo -e "\033[1;31mInvalid option!\033[0m"
+                    sleep 1
+                    ;;
+            esac
+            continue
+        fi
+        
+        echo -e "\033[1;37m📦 Available Backups:\033[0m"
+        echo
+        
+        local index=1
+        for backup in "${backup_files[@]}"; do
+            local backup_name=$(basename "$backup")
+            local backup_date=$(stat -c %y "$backup" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+            local backup_size=$(du -sh "$backup" 2>/dev/null | cut -f1)
+            local backup_source=$(dirname "$backup" | sed 's|/backups||')
+            
+            # Определяем тип бэкапа
+            local backup_icon="📦"
+            local backup_type="Unknown"
+            
+            if [[ "$backup_name" =~ scheduled ]]; then
+                backup_icon="🤖"
+                backup_type="Scheduled"
+            elif [[ "$backup_name" =~ full ]]; then
+                backup_icon="📁"
+                backup_type="Full"
+            elif [[ "$backup_name" =~ db ]]; then
+                backup_icon="🗄️"
+                backup_type="Database"
+            fi
+            
+            # Определяем совместимость с текущим режимом восстановления
+            local compatible=true
+            local compat_note=""
+            
+            if [ "$database_only" = true ]; then
+                if [[ "$backup_name" =~ \.tar\.gz$ ]]; then
+                    compat_note=" (will extract DB)"
+                fi
+            else
+                if [[ "$backup_name" =~ \.sql ]]; then
+                    compat_note=" (DB only - need full backup)"
+                    compatible=false
+                fi
+            fi
+            
+            if [ "$compatible" = true ]; then
+                printf "   \033[38;5;15m%2d)\033[0m %s \033[38;5;250m%-30s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\033[38;5;117m%s\033[0m\n" \
+                    "$index" "$backup_icon" "$backup_name" "$backup_size" "$backup_date" "$compat_note"
+            else
+                printf "   \033[38;5;244m%2d)\033[0m %s \033[38;5;244m%-30s\033[0m \033[38;5;244m%s\033[0m \033[38;5;244m%s\033[0m\033[1;31m%s\033[0m\n" \
+                    "$index" "$backup_icon" "$backup_name" "$backup_size" "$backup_date" "$compat_note"
+            fi
+            printf "      \033[38;5;244m   Source: %s | Type: %s\033[0m\n" "$backup_source" "$backup_type"
+            echo
+            index=$((index + 1))
+        done
+        
+        echo -e "\033[1;37m📋 Options:\033[0m"
+        echo -e "   \033[38;5;15m97)\033[0m 📁 Specify custom backup file path"
+        echo -e "   \033[38;5;15m98)\033[0m ⚙️  Change restore settings"
+        echo -e "   \033[38;5;15m99)\033[0m 🔄 Refresh backup list"
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
+        echo
+        
+        read -p "Select backup to restore [0-${#backup_files[@]}]: " choice
+        
+        case "$choice" in
+            0) return 0 ;;
+            97) 
+                restore_custom_file "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+                ;;
+            98) 
+                restore_configure_settings "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+                ;;
+            99) continue ;;
+            *)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#backup_files[@]} ]; then
+                    local selected_backup="${backup_files[$((choice - 1))]}"
+                    restore_from_backup "$selected_backup" "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+                    read -p "Press Enter to continue..."
+                else
+                    echo -e "\033[1;31mInvalid option!\033[0m"
+                    sleep 1
+                fi
+                ;;
+        esac
+    done
+}
+
+restore_configure_settings() {
+    local current_target_name="$1"
+    local current_database_only="$2"
+    local current_skip_install="$3"
+    local current_force_restore="$4"
+    local current_target_base_dir="$5"
+    
+    while true; do
+        clear
+        echo -e "\033[1;37m⚙️  Restore Settings\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+        echo
+        
+        echo -e "\033[1;37m📋 Current Settings:\033[0m"
+        printf "   \033[38;5;15m1)\033[0m \033[38;5;250mTarget app name: \033[0m\033[1;37m%s\033[0m\n" "$current_target_name"
+        printf "   \033[38;5;15m2)\033[0m \033[38;5;250mTarget path: \033[0m\033[1;37m%s\033[0m\n" "$current_target_base_dir"
+        printf "   \033[38;5;15m3)\033[0m \033[38;5;250mRestore type: \033[0m\033[1;37m%s\033[0m\n" "$([ "$current_database_only" = true ] && echo "Database only" || echo "Full system")"
+        printf "   \033[38;5;15m4)\033[0m \033[38;5;250mSkip script install: \033[0m\033[1;37m%s\033[0m\n" "$([ "$current_skip_install" = true ] && echo "Yes" || echo "No")"
+        printf "   \033[38;5;15m5)\033[0m \033[38;5;250mForce mode: \033[0m\033[1;37m%s\033[0m\n" "$([ "$current_force_restore" = true ] && echo "Enabled" || echo "Disabled")"
+        echo
+        echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to backup selection"
+        echo
+        
+        read -p "Select setting to change [0-5]: " choice
+        
+        case "$choice" in
+            1)
+                echo
+                echo -e "\033[1;37m📝 Change Target App Name\033[0m"
+                echo -e "\033[38;5;250mCurrent: $current_target_name\033[0m"
+                echo -e "\033[38;5;244mNote: Will be installed to $current_target_base_dir/<app_name>/\033[0m"
+                echo
+                read -p "Enter new app name: " new_name
+                
+                if [ -n "$new_name" ] && [[ "$new_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                    current_target_name="$new_name"
+                    echo -e "\033[1;32m✅ App name changed to: $current_target_name\033[0m"
+                else
+                    echo -e "\033[1;31m❌ Invalid app name! Use only letters, numbers, - and _\033[0m"
+                fi
+                sleep 2
+                ;;
+            2)
+                echo
+                echo -e "\033[1;37m📝 Change Target Base Path\033[0m"
+                echo -e "\033[38;5;250mCurrent: $current_target_base_dir\033[0m"
+                echo -e "\033[38;5;244mApp will be installed to: <path>/$current_target_name/\033[0m"
+                echo
+                read -p "Enter new base path: " new_path
+                
+                if [ -n "$new_path" ]; then
+                    # Убираем конечный слеш
+                    new_path="${new_path%/}"
+                    current_target_base_dir="$new_path"
+                    echo -e "\033[1;32m✅ Base path changed to: $current_target_base_dir\033[0m"
+                else
+                    echo -e "\033[1;31m❌ Path cannot be empty!\033[0m"
+                fi
+                sleep 2
+                ;;
+            3)
+                if [ "$current_database_only" = true ]; then
+                    current_database_only=false
+                    echo -e "\033[1;32m✅ Changed to: Full system restore\033[0m"
+                else
+                    current_database_only=true
+                    echo -e "\033[1;32m✅ Changed to: Database only restore\033[0m"
+                fi
+                sleep 2
+                ;;
+            4)
+                if [ "$current_skip_install" = true ]; then
+                    current_skip_install=false
+                    echo -e "\033[1;32m✅ Management script will be installed\033[0m"
+                else
+                    current_skip_install=true
+                    echo -e "\033[1;32m✅ Management script installation will be skipped\033[0m"
+                fi
+                sleep 2
+                ;;
+            5)
+                if [ "$current_force_restore" = true ]; then
+                    current_force_restore=false
+                    echo -e "\033[1;32m✅ Confirmation prompts enabled\033[0m"
+                else
+                    current_force_restore=true
+                    echo -e "\033[1;32m✅ Force mode enabled (skip confirmations)\033[0m"
+                fi
+                sleep 2
+                ;;
+            0)
+                # Возвращаемся в меню с обновленными настройками
+                restore_interactive_menu "$current_target_name" "$current_database_only" "$current_skip_install" "$current_force_restore" "$current_target_base_dir"
+                return
+                ;;
+            *)
+                echo -e "\033[1;31mInvalid option!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+restore_custom_file() {
+    local target_app_name="$1"
+    local database_only="$2"
+    local skip_install="$3"
+    local force_restore="$4"
+    local target_base_dir="$5"
+    
+    echo
+    echo -e "\033[1;37m📁 Custom Backup File\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    echo -e "\033[38;5;250mEnter the full path to your backup file.\033[0m"
+    echo -e "\033[38;5;244mSupported formats: .tar.gz, .sql, .sql.gz\033[0m"
+    echo
+    
+    read -p "Backup file path: " -r custom_path
+    
+    if [ -z "$custom_path" ]; then
+        echo -e "\033[1;31m❌ No path specified!\033[0m"
+        sleep 2
+        return
+    fi
+    
+    # Расширяем относительные пути
+    if [[ "$custom_path" == ~* ]]; then
+        custom_path="${custom_path/#\~/$HOME}"
+    fi
+    
+    if [ ! -f "$custom_path" ]; then
+        echo -e "\033[1;31m❌ File not found: $custom_path\033[0m"
+        sleep 2
+        return
+    fi
+    
+    restore_from_backup "$custom_path" "$target_app_name" "$database_only" "$skip_install" "$force_restore" "$target_base_dir"
+}
+
+check_system_requirements_for_restore() {
+    echo -e "\033[1;37m🔍 Checking System Requirements\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo
+    
+    local requirements_met=true
+    local install_needed=()
+    
+    # Проверка ОС
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking operating system..."
+    if ! command -v lsb_release >/dev/null 2>&1 && ! [ -f /etc/os-release ]; then
+        echo -e "\033[1;33m⚠️  Cannot determine OS version\033[0m"
+    else
+        local os_info=""
+        if command -v lsb_release >/dev/null 2>&1; then
+            os_info=$(lsb_release -d | cut -f2)
+        elif [ -f /etc/os-release ]; then
+            os_info=$(grep "PRETTY_NAME" /etc/os-release | cut -d'"' -f2)
+        fi
+        echo -e "\033[1;32m✅ OS: $os_info\033[0m"
+    fi
+    
+    # Проверка прав root
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking root privileges..."
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "\033[1;31m❌ Root privileges required!\033[0m"
+        echo -e "\033[38;5;244m   Please run with sudo\033[0m"
+        return 1
+    else
+        echo -e "\033[1;32m✅ Root privileges confirmed\033[0m"
+    fi
+    
+    # Проверка базовых утилит
+    echo -e "\033[38;5;250m📝 Step 3:\033[0m Checking system utilities..."
+    local basic_tools=("curl" "wget" "tar" "gzip" "jq")
+    local missing_basic=()
+    
+    for tool in "${basic_tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing_basic+=("$tool")
+        fi
+    done
+    
+    if [ ${#missing_basic[@]} -eq 0 ]; then
+        echo -e "\033[1;32m✅ All basic utilities available\033[0m"
+    else
+        echo -e "\033[1;33m⚠️  Missing utilities: ${missing_basic[*]}\033[0m"
+        install_needed+=("${missing_basic[@]}")
+    fi
+    
+    # Проверка Docker
+    echo -e "\033[38;5;250m📝 Step 4:\033[0m Checking Docker..."
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "\033[1;33m⚠️  Docker not installed\033[0m"
+        install_needed+=("docker")
+        requirements_met=false
+    else
+        local docker_version=$(docker --version | cut -d' ' -f3 | tr -d ',')
+        echo -e "\033[1;32m✅ Docker installed: $docker_version\033[0m"
+        
+        # Проверка запуска Docker
+        if ! docker info >/dev/null 2>&1; then
+            echo -e "\033[1;33m⚠️  Docker daemon not running\033[0m"
+            echo -e "\033[38;5;244m   Will attempt to start Docker service\033[0m"
+        else
+            echo -e "\033[38;5;244m   ✓ Docker daemon running\033[0m"
+        fi
+    fi
+    
+    # Проверка Docker Compose
+    echo -e "\033[38;5;250m📝 Step 5:\033[0m Checking Docker Compose..."
+    if ! docker compose version >/dev/null 2>&1; then
+        echo -e "\033[1;33m⚠️  Docker Compose V2 not available\033[0m"
+        
+        # Проверяем старую версию
+        if command -v docker-compose >/dev/null 2>&1; then
+            local compose_version=$(docker-compose --version | cut -d' ' -f3 | tr -d ',')
+            echo -e "\033[1;33m⚠️  Found legacy docker-compose: $compose_version\033[0m"
+            echo -e "\033[38;5;244m   Recommend updating to Docker with built-in Compose V2\033[0m"
+        else
+            install_needed+=("docker-compose")
+            requirements_met=false
+        fi
+    else
+        local compose_version=$(docker compose version --short 2>/dev/null || echo "unknown")
+        echo -e "\033[1;32m✅ Docker Compose V2: $compose_version\033[0m"
+    fi
+    
+    # Проверка свободного места
+    echo -e "\033[38;5;250m📝 Step 6:\033[0m Checking disk space..."
+    local available_space=$(df / | tail -1 | awk '{print $4}')
+    local available_gb=$((available_space / 1024 / 1024))
+    
+    if [ $available_gb -lt 2 ]; then
+        echo -e "\033[1;31m❌ Insufficient disk space: ${available_gb}GB available\033[0m"
+        echo -e "\033[38;5;244m   Minimum 2GB required for restore operation\033[0m"
+        requirements_met=false
+    else
+        echo -e "\033[1;32m✅ Sufficient disk space: ${available_gb}GB available\033[0m"
+    fi
+    
+    # Проверка сетевого подключения
+    echo -e "\033[38;5;250m📝 Step 7:\033[0m Checking network connectivity..."
+    if curl -s --connect-timeout 5 https://registry-1.docker.io/v2/ >/dev/null; then
+        echo -e "\033[1;32m✅ Docker Hub connectivity confirmed\033[0m"
+    else
+        echo -e "\033[1;33m⚠️  Docker Hub connectivity issues\033[0m"
+        echo -e "\033[38;5;244m   This may cause problems downloading Docker images\033[0m"
+    fi
+    
+    # Итоговый результат
+    echo
+    if [ ${#install_needed[@]} -gt 0 ]; then
+        echo -e "\033[1;37m📦 Missing Dependencies:\033[0m"
+        for package in "${install_needed[@]}"; do
+            echo -e "\033[38;5;244m   • $package\033[0m"
+        done
+        echo
+        
+        echo -e "\033[1;37m🔧 Auto-install missing dependencies?\033[0m"
+        read -p "Install missing packages automatically? [Y/n]: " -r auto_install
+        
+        if [[ ! $auto_install =~ ^[Nn]$ ]]; then
+            install_missing_dependencies "${install_needed[@]}"
+            
+            # Повторная проверка после установки
+            echo
+            echo -e "\033[1;37m🔄 Re-checking after installation...\033[0m"
+            check_system_requirements_for_restore
+            return $?
+        else
+            echo -e "\033[1;31m❌ Cannot proceed without required dependencies\033[0m"
+            echo
+            echo -e "\033[1;37m📋 Manual installation commands:\033[0m"
+            show_manual_install_commands "${install_needed[@]}"
+            return 1
+        fi
+    elif [ "$requirements_met" = false ]; then
+        echo -e "\033[1;31m❌ System requirements not met\033[0m"
+        return 1
+    else
+        echo -e "\033[1;32m🎉 All system requirements satisfied!\033[0m"
+        return 0
+    fi
+}
+
+install_missing_dependencies() {
+    local packages=("$@")
+    
+    echo
+    echo -e "\033[1;37m📦 Installing Missing Dependencies\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    
+    # Определяем пакетный менеджер
+    if command -v apt-get >/dev/null 2>&1; then
+        install_with_apt "${packages[@]}"
+    elif command -v yum >/dev/null 2>&1; then
+        install_with_yum "${packages[@]}"
+    elif command -v dnf >/dev/null 2>&1; then
+        install_with_dnf "${packages[@]}"
+    else
+        echo -e "\033[1;31m❌ Unsupported package manager!\033[0m"
+        echo -e "\033[38;5;244m   Please install dependencies manually\033[0m"
+        return 1
+    fi
+}
+
+install_with_apt() {
+    local packages=("$@")
+    
+    echo -e "\033[38;5;250m📝 Using APT package manager...\033[0m"
+    
+    # Обновляем список пакетов
+    echo -e "\033[38;5;244m   Updating package list...\033[0m"
+    if apt-get update >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Package list updated\033[0m"
+    else
+        echo -e "\033[1;33m⚠️  Package list update failed, continuing...\033[0m"
+    fi
+    
+    for package in "${packages[@]}"; do
+        echo -e "\033[38;5;250m📦 Installing $package...\033[0m"
+        
+        case "$package" in
+            "docker")
+                # Устанавливаем Docker официальным способом
+                echo -e "\033[38;5;244m   Installing Docker from official repository...\033[0m"
+                curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
+                if [ $? -eq 0 ]; then
+                    systemctl start docker 2>/dev/null
+                    systemctl enable docker 2>/dev/null
+                    echo -e "\033[1;32m✅ Docker installed and started\033[0m"
+                else
+                    echo -e "\033[1;31m❌ Docker installation failed\033[0m"
+                fi
+                ;;
+            "docker-compose")
+                # Docker Compose как отдельный пакет уже включен в современный Docker
+                echo -e "\033[1;32m✅ Docker Compose included with Docker\033[0m"
+                ;;
+            "jq")
+                apt-get install -y jq >/dev/null 2>&1 && echo -e "\033[1;32m✅ jq installed\033[0m" || echo -e "\033[1;31m❌ jq installation failed\033[0m"
+                ;;
+            "curl")
+                apt-get install -y curl >/dev/null 2>&1 && echo -e "\033[1;32m✅ curl installed\033[0m" || echo -e "\033[1;31m❌ curl installation failed\033[0m"
+                ;;
+            "wget")
+                apt-get install -y wget >/dev/null 2>&1 && echo -e "\033[1;32m✅ wget installed\033[0m" || echo -e "\033[1;31m❌ wget installation failed\033[0m"
+                ;;
+            *)
+                apt-get install -y "$package" >/dev/null 2>&1 && echo -e "\033[1;32m✅ $package installed\033[0m" || echo -e "\033[1;31m❌ $package installation failed\033[0m"
+                ;;
+        esac
+    done
+}
+
+install_with_yum() {
+    local packages=("$@")
+    
+    echo -e "\033[38;5;250m📝 Using YUM package manager...\033[0m"
+    
+    for package in "${packages[@]}"; do
+        echo -e "\033[38;5;250m📦 Installing $package...\033[0m"
+        
+        case "$package" in
+            "docker")
+                curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
+                systemctl start docker 2>/dev/null
+                systemctl enable docker 2>/dev/null
+                echo -e "\033[1;32m✅ Docker installed\033[0m"
+                ;;
+            *)
+                yum install -y "$package" >/dev/null 2>&1 && echo -e "\033[1;32m✅ $package installed\033[0m" || echo -e "\033[1;31m❌ $package installation failed\033[0m"
+                ;;
+        esac
+    done
+}
+
+install_with_dnf() {
+    local packages=("$@")
+    
+    echo -e "\033[38;5;250m📝 Using DNF package manager...\033[0m"
+    
+    for package in "${packages[@]}"; do
+        echo -e "\033[38;5;250m📦 Installing $package...\033[0m"
+        
+        case "$package" in
+            "docker")
+                curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
+                systemctl start docker 2>/dev/null
+                systemctl enable docker 2>/dev/null
+                echo -e "\033[1;32m✅ Docker installed\033[0m"
+                ;;
+            *)
+                dnf install -y "$package" >/dev/null 2>&1 && echo -e "\033[1;32m✅ $package installed\033[0m" || echo -e "\033[1;31m❌ $package installation failed\033[0m"
+                ;;
+        esac
+    done
+}
+
+show_manual_install_commands() {
+    local packages=("$@")
+    
+    echo
+    if command -v apt-get >/dev/null 2>&1; then
+        echo -e "\033[38;5;244m# Ubuntu/Debian:\033[0m"
+        echo -e "\033[38;5;117msudo apt-get update\033[0m"
+        for package in "${packages[@]}"; do
+            if [ "$package" = "docker" ]; then
+                echo -e "\033[38;5;117mcurl -fsSL https://get.docker.com | sh\033[0m"
+            else
+                echo -e "\033[38;5;117msudo apt-get install -y $package\033[0m"
+            fi
+        done
+    elif command -v yum >/dev/null 2>&1; then
+        echo -e "\033[38;5;244m# CentOS/RHEL:\033[0m"
+        for package in "${packages[@]}"; do
+            if [ "$package" = "docker" ]; then
+                echo -e "\033[38;5;117mcurl -fsSL https://get.docker.com | sh\033[0m"
+            else
+                echo -e "\033[38;5;117msudo yum install -y $package\033[0m"
+            fi
+        done
+    fi
+}
+
+
+
+
+
+restore_from_backup() {
+    local backup_file="$1"
+    local target_app_name="$2"
+    local database_only="$3"
+    local skip_install="$4"
+    local force_restore="$5"
+    local target_base_dir="${6:-/opt}"
+    
+    local target_dir="$target_base_dir/$target_app_name"
+    
+    
+    if ! check_system_requirements_for_restore; then
+        echo -e "\033[1;31m❌ System requirements check failed!\033[0m"
+        echo -e "\033[38;5;244m   Please resolve the issues above before continuing\033[0m"
+        return 1
+    fi
+
+    echo
+    echo -e "\033[1;37m🔄 Preparing Restore Operation\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    # Валидация бэкапа
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Validating backup file..."
+    
+    if [ ! -f "$backup_file" ]; then
+        echo -e "\033[1;31m❌ Backup file not found: $backup_file\033[0m"
         return 1
     fi
     
-    # Удаляем завершающий слеш если есть
-    api_server=${api_server%/}
-    
-    local api_url="$api_server/bot$bot_token"
-    local params="chat_id=$chat_id"
-    
-    if [ -n "$thread_id" ] && [ "$thread_id" != "null" ]; then
-        params="$params&message_thread_id=$thread_id"
+    # Определяем тип файла
+    local backup_type=""
+    if [[ "$backup_file" =~ \.tar\.gz$ ]]; then
+        backup_type="archive"
+        # Проверяем архив
+        if ! tar -tzf "$backup_file" >/dev/null 2>&1; then
+            echo -e "\033[1;31m❌ Invalid or corrupted backup archive!\033[0m"
+            return 1
+        fi
+    elif [[ "$backup_file" =~ \.sql\.gz$ ]]; then
+        backup_type="compressed_sql"
+        # Проверяем сжатый SQL
+        if ! gunzip -t "$backup_file" 2>/dev/null; then
+            echo -e "\033[1;31m❌ Invalid or corrupted compressed SQL file!\033[0m"
+            return 1
+        fi
+    elif [[ "$backup_file" =~ \.sql$ ]]; then
+        backup_type="sql"
+        # Проверяем что файл содержит SQL
+        if ! head -10 "$backup_file" | grep -q -i "postgresql\|create\|insert\|copy\|select"; then
+            echo -e "\033[1;33m⚠️  File may not be a valid SQL dump\033[0m"
+        fi
+    else
+        echo -e "\033[1;31m❌ Unsupported file format! Supported: .tar.gz, .sql, .sql.gz\033[0m"
+        return 1
     fi
     
-    if [ -n "$file_path" ] && [ -f "$file_path" ]; then
-        log "Sending file via Telegram API: $(basename "$file_path")"
+    echo -e "\033[1;32m✅ Backup file validation passed (type: $backup_type)\033[0m"
+    
+    # Анализируем содержимое архива для .tar.gz
+    local backup_info=""
+    local original_app_name=""
+    
+    if [ "$backup_type" = "archive" ]; then
+        echo -e "\033[38;5;244m   Analyzing backup content...\033[0m"
         
-        # Отправка файла
-        local response=$(curl -s -X POST "$api_url/sendDocument" \
-            -F "$params" \
-            -F "document=@$file_path" \
-            -F "caption=$message")
+        local temp_analysis_dir="/tmp/backup_analysis_$$"
+        mkdir -p "$temp_analysis_dir"
         
-        # Проверяем ответ
-        if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
-            log "File sent successfully to Telegram"
-            return 0
+        # Извлекаем только метаданные для анализа
+        tar -xzf "$backup_file" -C "$temp_analysis_dir" "*/backup-metadata.json" 2>/dev/null || true
+        
+        local metadata_file=$(find "$temp_analysis_dir" -name "backup-metadata.json" 2>/dev/null | head -1)
+        
+        if [ -f "$metadata_file" ]; then
+            original_app_name=$(jq -r '.app_name // "unknown"' "$metadata_file" 2>/dev/null)
+            local backup_timestamp=$(jq -r '.timestamp // "unknown"' "$metadata_file" 2>/dev/null)
+            local script_version=$(jq -r '.script_version // "unknown"' "$metadata_file" 2>/dev/null)
+            local backup_type_meta=$(jq -r '.backup_type // "unknown"' "$metadata_file" 2>/dev/null)
+            
+            backup_info="Original: $original_app_name, Created: $backup_timestamp, Version: $script_version, Type: $backup_type_meta"
+            echo -e "\033[38;5;244m   ✓ Backup metadata found and valid\033[0m"
         else
-            local error_desc=$(echo "$response" | jq -r '.description // "Unknown error"')
-            log "ERROR: Failed to send file to Telegram: $error_desc"
-            
-            # Если файл слишком большой для официального API, предупреждаем
-            if echo "$error_desc" | grep -qi "file.*too.*large\|entity.*too.*large"; then
-                log "File too large for official API. Consider using custom Bot API server for files up to 2GB"
+            echo -e "\033[1;33m⚠️  No metadata found in backup (older format?)\033[0m"
+            original_app_name="unknown"
+        fi
+        
+        rm -rf "$temp_analysis_dir"
+    fi
+    
+    # Показываем план восстановления
+    echo
+    echo -e "\033[1;37m📋 Restore Plan:\033[0m"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Backup file:" "$(basename "$backup_file")"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Backup size:" "$(du -sh "$backup_file" | cut -f1)"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Backup type:" "$backup_type"
+    if [ -n "$backup_info" ]; then
+        printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Backup info:" "$backup_info"
+    fi
+    echo
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Target name:" "$target_app_name"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Target directory:" "$target_dir"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Restore type:" "$([ "$database_only" = true ] && echo "Database only" || echo "Full system")"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Install script:" "$([ "$skip_install" = true ] && echo "Skip" || echo "Yes")"
+    
+    # Проверка совместимости
+    echo
+    echo -e "\033[1;37m⚙️  Compatibility Check:\033[0m"
+    local compatibility_issues=0
+    
+    if [ "$database_only" = false ] && [[ "$backup_file" =~ \.sql ]]; then
+        echo -e "\033[1;31m❌ Full system restore requested but backup contains only database\033[0m"
+        echo -e "\033[38;5;244m   Solution: Use --database-only flag or use full backup (.tar.gz)\033[0m"
+        compatibility_issues=$((compatibility_issues + 1))
+    fi
+    
+    if [ "$database_only" = true ] && [ "$backup_type" = "archive" ]; then
+        echo -e "\033[1;32m✅ Database-only restore from archive (will extract database.sql)\033[0m"
+    elif [ "$database_only" = true ] && [[ "$backup_file" =~ \.sql ]]; then
+        echo -e "\033[1;32m✅ Database-only restore from SQL file\033[0m"
+    elif [ "$database_only" = false ] && [ "$backup_type" = "archive" ]; then
+        echo -e "\033[1;32m✅ Full system restore from archive\033[0m"
+    fi
+    
+    if [ $compatibility_issues -gt 0 ]; then
+        echo -e "\033[1;31m❌ Cannot proceed due to compatibility issues\033[0m"
+        return 1
+    fi
+    
+    # Проверяем текущее состояние
+    echo
+    echo -e "\033[1;37m⚙️  System Analysis:\033[0m"
+    
+    local target_exists=false
+    local backup_needed=false
+    
+    if [ -d "$target_dir" ]; then
+        target_exists=true
+        echo -e "\033[1;33m⚠️  Target directory exists: $target_dir\033[0m"
+        
+        if [ "$database_only" = false ]; then
+            echo -e "\033[38;5;244m   • Directory will be backed up and replaced\033[0m"
+            backup_needed=true
+        else
+            echo -e "\033[38;5;244m   • Only database will be restored\033[0m"
+        fi
+    else
+        echo -e "\033[1;32m✅ Target directory is clean: $target_dir\033[0m"
+    fi
+    
+    # Проверяем наличие управляющего скрипта
+    local script_exists=false
+    if [ -f "/usr/local/bin/$target_app_name" ]; then
+        script_exists=true
+        echo -e "\033[1;33m⚠️  Management script exists: /usr/local/bin/$target_app_name\033[0m"
+        if [ "$skip_install" = false ]; then
+            echo -e "\033[38;5;244m   • Script will be updated\033[0m"
+        fi
+    else
+        echo -e "\033[1;32m✅ No conflicting management script found\033[0m"
+    fi
+    
+    # Запрашиваем подтверждение
+    if [ "$force_restore" != true ]; then
+        echo
+        echo -e "\033[1;37m🤔 Proceed with restore operation?\033[0m"
+        read -p "Continue? [y/N]: " -r confirm
+        
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            echo -e "\033[38;5;250mRestore cancelled\033[0m"
+            return 0
+        fi
+    fi
+    
+    # Начинаем процесс восстановления
+    echo
+    echo -e "\033[1;37m🔄 Starting Restore Process\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+    # Шаг 1: Резервное копирование существующей установки
+    if [ "$backup_needed" = true ]; then
+        echo -e "\033[38;5;250m📝 Step 1:\033[0m Creating safety backup..."
+        
+        local safety_backup_dir="/opt/restore_backups"
+        local safety_backup_name="${target_app_name}_pre_restore_$(date +%Y%m%d_%H%M%S)"
+        
+        mkdir -p "$safety_backup_dir"
+        
+        if tar -czf "$safety_backup_dir/${safety_backup_name}.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null; then
+            echo -e "\033[1;32m✅ Safety backup created: $safety_backup_dir/${safety_backup_name}.tar.gz\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Safety backup failed, but continuing...\033[0m"
+        fi
+    fi
+    
+    # Шаг 2: Обработка в зависимости от типа восстановления
+    if [ "$database_only" = false ] && [ "$backup_type" = "archive" ]; then
+        # Полное восстановление из архива
+        restore_full_from_archive "$backup_file" "$target_dir" "$target_app_name" "$original_app_name" "$skip_install"
+    elif [ "$database_only" = true ]; then
+        # Восстановление только БД
+        restore_database_only "$backup_file" "$backup_type" "$target_dir" "$target_app_name"
+    fi
+    
+    echo
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo -e "\033[1;37m🎉 Restore Completed!\033[0m"
+    echo
+    
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Restored from:" "$(basename "$backup_file")"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Target name:" "$target_app_name"
+    printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Installation path:" "$target_dir"
+    
+    # Показываем URL доступа если возможно
+    if [ -f "$target_dir/.env" ] && [ "$database_only" = false ]; then
+        local app_port=$(grep "^APP_PORT=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null)
+        local server_ip="${NODE_IP:-127.0.0.1}"
+        
+        echo
+        echo -e "\033[1;37m🌐 Panel Access:\033[0m"
+        if [ -n "$app_port" ]; then
+            printf "   \033[38;5;15m%-20s\033[0m \033[38;5;117mhttp://%s:%s\033[0m\n" "Panel URL:" "$server_ip" "$app_port"
+        fi
+    fi
+    
+    echo
+    echo -e "\033[38;5;8m💡 Next steps:\033[0m"
+    echo -e "\033[38;5;244m   • Check status: sudo $target_app_name status\033[0m"
+    echo -e "\033[38;5;244m   • View logs: sudo $target_app_name logs\033[0m"
+    echo -e "\033[38;5;244m   • Health check: sudo $target_app_name health\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+}
+
+restore_full_from_archive() {
+    local backup_file="$1"
+    local target_dir="$2"
+    local target_app_name="$3"
+    local original_app_name="$4"
+    local skip_install="$5"
+    
+    # Остановка существующих сервисов
+    local services_were_running=false
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        echo -e "\033[38;5;250m📝 Step 2:\033[0m Stopping existing services..."
+        
+        cd "$target_dir"
+        if docker compose ps -q | grep -q .; then
+            services_were_running=true
+            if docker compose down 2>/dev/null; then
+                echo -e "\033[1;32m✅ Services stopped\033[0m"
+            else
+                echo -e "\033[1;33m⚠️  Failed to stop services, continuing...\033[0m"
             fi
-            
+        else
+            echo -e "\033[38;5;244m   No running services found\033[0m"
+        fi
+    fi
+    
+    # Извлечение архива
+    echo -e "\033[38;5;250m📝 Step 3:\033[0m Extracting backup to target directory..."
+    
+    # Удаляем старую директорию если нужно
+    if [ -d "$target_dir" ]; then
+        rm -rf "$target_dir"
+    fi
+    
+    # Создаем родительскую директорию
+    mkdir -p "$(dirname "$target_dir")"
+    
+    # Извлекаем архив
+    local temp_extract_dir="/tmp/restore_extract_$$"
+    mkdir -p "$temp_extract_dir"
+    
+    if tar -xzf "$backup_file" -C "$temp_extract_dir" 2>/dev/null; then
+        # Находим директорию с бэкапом
+        local backup_content=$(ls "$temp_extract_dir")
+        local backup_dir_name=$(echo "$backup_content" | head -1)
+        
+        if [ -d "$temp_extract_dir/$backup_dir_name" ]; then
+            # Проверяем структуру - новый unified формат или старый с app/
+            if [ -f "$temp_extract_dir/$backup_dir_name/docker-compose.yml" ]; then
+                # НОВЫЙ ФОРМАТ: файлы приложения в корне бэкапа
+                mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
+                echo -e "\033[1;32m✅ Backup extracted successfully (unified format)\033[0m"
+            elif [ -d "$temp_extract_dir/$backup_dir_name/app" ]; then
+                # СТАРЫЙ ФОРМАТ: приложение в поддиректории app
+                mv "$temp_extract_dir/$backup_dir_name/app" "$target_dir"
+                
+                # Копируем database.sql в target_dir для последующего использования
+                if [ -f "$temp_extract_dir/$backup_dir_name/database.sql" ]; then
+                    cp "$temp_extract_dir/$backup_dir_name/database.sql" "$target_dir/"
+                fi
+                
+                # Сохраняем скрипт установки
+                if [ -f "$temp_extract_dir/$backup_dir_name/install-script.sh" ]; then
+                    cp "$temp_extract_dir/$backup_dir_name/install-script.sh" "/tmp/restore_script_$$"
+                fi
+                echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
+            else
+                # Очень старый формат - вся директория является приложением
+                mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
+                echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
+            fi
+        else
+            echo -e "\033[1;31m❌ Unexpected backup structure!\033[0m"
+            rm -rf "$temp_extract_dir"
             return 1
         fi
     else
-        # Отправка текста
-        local response=$(curl -s -X POST "$api_url/sendMessage" \
-            -d "$params" \
-            -d "text=$message")
+        echo -e "\033[1;31m❌ Failed to extract backup!\033[0m"
+        rm -rf "$temp_extract_dir"
+        return 1
+    fi
+    
+    rm -rf "$temp_extract_dir"
+    
+    # Установка управляющего скрипта
+    if [ "$skip_install" = false ]; then
+        echo -e "\033[38;5;250m📝 Step 4:\033[0m Installing management script..."
         
-        if echo "$response" | jq -e '.ok' >/dev/null 2>&1; then
-            log "Message sent successfully to Telegram"
-            return 0
+        local script_source=""
+        
+        # Ищем скрипт в порядке приоритета
+        if [ -f "/tmp/restore_script_$$" ]; then
+            script_source="/tmp/restore_script_$$"
+            echo -e "\033[38;5;244m   Using script from backup\033[0m"
+        elif [ -f "$target_dir/install-script.sh" ]; then
+            script_source="$target_dir/install-script.sh"
+            echo -e "\033[38;5;244m   Using script from extracted files\033[0m"
+        elif [ -f "/usr/local/bin/$APP_NAME" ]; then
+            script_source="/usr/local/bin/$APP_NAME"
+            echo -e "\033[38;5;244m   Using current system script\033[0m"
+        fi
+        
+        if [ -n "$script_source" ]; then
+            # Обновляем APP_NAME в скрипте если нужно
+            if [ "$target_app_name" != "$original_app_name" ] && [ "$original_app_name" != "unknown" ]; then
+                echo -e "\033[38;5;244m   Adapting script for new app name...\033[0m"
+                sed "s/APP_NAME=\"$original_app_name\"/APP_NAME=\"$target_app_name\"/" "$script_source" > "/usr/local/bin/$target_app_name"
+            else
+                cp "$script_source" "/usr/local/bin/$target_app_name"
+            fi
+            
+            chmod +x "/usr/local/bin/$target_app_name"
+            echo -e "\033[1;32m✅ Management script installed: /usr/local/bin/$target_app_name\033[0m"
         else
-            local error_desc=$(echo "$response" | jq -r '.description // "Unknown error"')
-            log "ERROR: Failed to send message to Telegram: $error_desc"
+            echo -e "\033[1;33m⚠️  No management script found in backup, skipping installation\033[0m"
+        fi
+        
+        # Очищаем временный файл
+        rm -f "/tmp/restore_script_$$"
+    fi
+    
+    # Запуск и восстановление БД
+    restore_database_in_existing_installation "$target_dir" "$target_app_name"
+}
+
+restore_database_only() {
+    local backup_file="$1"
+    local backup_type="$2"
+    local target_dir="$3"
+    local target_app_name="$4"
+    
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Preparing database file..."
+    
+    local database_file=""
+    
+    # Получаем файл БД в зависимости от типа
+    if [ "$backup_type" = "sql" ]; then
+        database_file="$backup_file"
+    elif [ "$backup_type" = "compressed_sql" ]; then
+        # Распаковываем во временный файл
+        database_file="/tmp/restore_db_$$.sql"
+        if gunzip -c "$backup_file" > "$database_file"; then
+            echo -e "\033[1;32m✅ SQL file decompressed\033[0m"
+        else
+            echo -e "\033[1;31m❌ Failed to decompress SQL file!\033[0m"
+            return 1
+        fi
+    elif [ "$backup_type" = "archive" ]; then
+        # Извлекаем database.sql из архива
+        local temp_db_dir="/tmp/restore_db_$$"
+        mkdir -p "$temp_db_dir"
+        
+        if tar -xzf "$backup_file" -C "$temp_db_dir" "*/database.sql" 2>/dev/null; then
+            database_file=$(find "$temp_db_dir" -name "database.sql" | head -1)
+            if [ -z "$database_file" ]; then
+                echo -e "\033[1;31m❌ No database.sql found in archive!\033[0m"
+                rm -rf "$temp_db_dir"
+                return 1
+            fi
+            echo -e "\033[1;32m✅ Database file extracted from archive\033[0m"
+        else
+            echo -e "\033[1;31m❌ Failed to extract database from archive!\033[0m"
+            rm -rf "$temp_db_dir"
             return 1
         fi
     fi
+    
+    # Восстанавливаем БД в существующей установке
+    restore_database_in_existing_installation "$target_dir" "$target_app_name" "$database_file"
+    
+    # Очищаем временные файлы
+    if [ "$backup_type" = "compressed_sql" ]; then
+        rm -f "/tmp/restore_db_$$.sql"
+    elif [ "$backup_type" = "archive" ]; then
+        rm -rf "/tmp/restore_db_$$"
+    fi
 }
 
-# Функция разделения файла (только для официального API)
-split_file() {
-    local file_path="$1"
-    local max_size_mb="$2"
-    local base_name=$(basename "$file_path")
-    local split_dir="$TEMP_DIR/split_$$"
+restore_database_in_existing_installation() {
+    local target_dir="$1"
+    local target_app_name="$2"
+    local database_file="$3"
     
-    log "Splitting file $base_name into ${max_size_mb}MB parts..."
+
+    if [ -z "$database_file" ]; then
+        if [ -f "$target_dir/database.sql" ]; then
+            database_file="$target_dir/database.sql"
+        elif [ -f "$target_dir/db_backup.sql" ]; then  
+            database_file="$target_dir/db_backup.sql"
+        fi
+    fi
     
-    mkdir -p "$split_dir"
+    if [ -z "$database_file" ] || [ ! -f "$database_file" ]; then
+        echo -e "\033[1;31m❌ Database file not found!\033[0m"
+        echo -e "\033[38;5;244m   Expected: $target_dir/database.sql\033[0m"
+        return 1
+    fi
     
-    # Разделяем файл на части
-    split -b "${max_size_mb}M" "$file_path" "$split_dir/${base_name}.part_"
+    if [ ! -f "$target_dir/docker-compose.yml" ]; then
+        echo -e "\033[1;31m❌ No docker-compose.yml found! Cannot restore database.\033[0m"
+        return 1
+    fi
+    cd "$target_dir"
     
-    # Отправляем каждую часть
-    local part_num=1
-    local success=true
+    echo -e "\033[38;5;250m📝 Step 5:\033[0m Starting database service..."
     
-    for part_file in "$split_dir"/*; do
-        if [ -f "$part_file" ]; then
-            local part_name="${base_name}.part_${part_num}"
-            mv "$part_file" "$split_dir/$part_name"
-            
-            local part_message="📦 Backup part $part_num/${total_parts:-?}
-📁 Original file: $base_name"
-            
-            if ! send_telegram "$part_message" "$split_dir/$part_name"; then
-                success=false
+    # Запускаем ТОЛЬКО базу данных для восстановления
+    if docker compose up -d "${target_app_name}-db" 2>/dev/null; then
+        echo -e "\033[1;32m✅ Database service started\033[0m"
+        
+        # Ждем готовности базы данных
+        echo -e "\033[38;5;244m   Waiting for database to be ready...\033[0m"
+        local attempts=0
+        local max_attempts=30
+        
+        while [ $attempts -lt $max_attempts ]; do
+            if docker exec "${target_app_name}-db" pg_isready -U postgres >/dev/null 2>&1; then
+                echo -e "\033[1;32m✅ Database is ready\033[0m"
                 break
             fi
             
-            part_num=$((part_num + 1))
-        fi
-    done
-    
-    # Очищаем временные файлы
-    rm -rf "$split_dir"
-    
-    if [ "$success" = true ]; then
-        log "All file parts sent successfully"
-        return 0
-    else
-        log "ERROR: Failed to send some file parts"
-        return 1
-    fi
-}
-
-# Основная функция резервного копирования
-main() {
-    log "Starting scheduled backup..."
-    
-    if [ ! -f "$CONFIG_FILE" ]; then
-        log "ERROR: Configuration file not found"
-        exit 1
-    fi
-    
-    # Читаем конфигурацию
-    local compression_enabled=$(jq -r '.compression.enabled // false' "$CONFIG_FILE")
-    local compression_level=$(jq -r '.compression.level // 6' "$CONFIG_FILE")
-    local telegram_enabled=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
-    local split_files=$(jq -r '.telegram.split_large_files // true' "$CONFIG_FILE")
-    local max_file_size=$(jq -r '.telegram.max_file_size // 49' "$CONFIG_FILE")
-    local use_custom_api=$(jq -r '.telegram.use_custom_api // false' "$CONFIG_FILE")
-    
-    # Получаем данные для подключения к БД
-    local POSTGRES_USER=$(grep "^POSTGRES_USER=" "$APP_DIR/.env" | cut -d'=' -f2)
-    local POSTGRES_PASSWORD=$(grep "^POSTGRES_PASSWORD=" "$APP_DIR/.env" | cut -d'=' -f2)
-    local POSTGRES_DB=$(grep "^POSTGRES_DB=" "$APP_DIR/.env" | cut -d'=' -f2)
-    
-    # Устанавливаем значения по умолчанию
-    POSTGRES_USER=${POSTGRES_USER:-postgres}
-    POSTGRES_DB=${POSTGRES_DB:-postgres}
-    
-    if [ -z "$POSTGRES_PASSWORD" ]; then
-        log "ERROR: POSTGRES_PASSWORD not found in .env file"
-        exit 1
-    fi
-    
-    # Создаем резервную копию (всегда полную с конфигами для scheduled backup)
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_name="remnawave_scheduled_${timestamp}"
-    local backup_dir="$BACKUP_DIR/$backup_name"
-    mkdir -p "$backup_dir"
-    
-    log "Creating full system backup: $backup_name"
-    
-    # Создаем дамп базы данных
-    log "Step 1: Exporting database..."
-    if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" \
-        "${APP_NAME:-remnawave}-db" \
-        pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_dir/database.sql" 2>/dev/null; then
-        local db_size=$(du -sh "$backup_dir/database.sql" | cut -f1)
-        log "Database exported successfully ($db_size)"
-    else
-        log "ERROR: Database export failed"
-        rm -rf "$backup_dir"
-        exit 1
-    fi
-    
-    # Универсальное копирование конфигурационных файлов
-    log "Step 2: Including configuration files..."
-    mkdir -p "$backup_dir/configs"
-    
-    local config_count=0
-    
-    # Копируем основные конфигурационные файлы
-    log "Copying main configuration files..."
-    for config_file in "$APP_DIR/.env" "$APP_DIR/.env.subscription" "$APP_DIR/docker-compose.yml"; do
-        if [ -f "$config_file" ]; then
-            local filename=$(basename "$config_file")
-            cp "$config_file" "$backup_dir/configs/"
-            config_count=$((config_count + 1))
-            log "✓ $filename"
-        fi
-    done
-    
-    # Копируем дополнительные конфигурационные файлы по расширениям
-    log "Scanning for additional config files..."
-    local extensions=("json" "yml" "yaml" "toml" "ini" "conf" "config" "cfg")
-    
-    for ext in "${extensions[@]}"; do
-        for config_file in "$APP_DIR"/*."$ext"; do
-            if [ -f "$config_file" ]; then
-                local filename=$(basename "$config_file")
-                # Исключаем файлы, которые могут быть временными или логами
-                if [[ ! "$filename" =~ ^(temp|tmp|cache|log|debug) ]]; then
-                    cp "$config_file" "$backup_dir/configs/"
-                    config_count=$((config_count + 1))
-                    log "✓ $filename"
-                fi
+            sleep 2
+            attempts=$((attempts + 1))
+            
+            if [ $attempts -eq $max_attempts ]; then
+                echo -e "\033[1;31m❌ Database failed to start!\033[0m"
+                return 1
             fi
         done
-    done
-    
-    # Копируем важные директории с конфигурациями
-    log "Checking for configuration directories..."
-    local config_dirs=("certs" "certificates" "ssl" "configs" "config" "custom" "themes" "plugins")
-    
-    for dir_name in "${config_dirs[@]}"; do
-        local config_dir="$APP_DIR/$dir_name"
-        if [ -d "$config_dir" ] && [ "$(ls -A "$config_dir" 2>/dev/null)" ]; then
-            cp -r "$config_dir" "$backup_dir/configs/"
-            local dir_files=$(find "$config_dir" -type f | wc -l)
-            config_count=$((config_count + dir_files))
-            log "✓ $dir_name/ ($dir_files files)"
-        fi
-    done
-    
-    # Создаем метаданные
-    log "Step 3: Creating backup metadata..."
-    cat > "$backup_dir/metadata.json" << METADATA_EOF
-{
-    "backup_type": "scheduled_full",
-    "timestamp": "$timestamp",
-    "app_name": "${APP_NAME:-remnawave}",
-    "script_version": "2.1",
-    "database_included": true,
-    "configs_included": true,
-    "config_files_count": $config_count,
-    "hostname": "$(hostname)",
-    "scheduled": true,
-    "compression": $compression_enabled,
-    "backup_size": "calculated_after_compression"
-}
-METADATA_EOF
-    
-    # Создаем информационный файл
-    cat > "$backup_dir/backup_info.txt" << INFO_EOF
-Remnawave Panel Scheduled Backup Information
-===========================================
-
-Backup Date: $(date)
-Backup Type: Scheduled Full System Backup
-Hostname: $(hostname)
-APP_NAME: ${APP_NAME:-remnawave}
-
-Included Components:
-✓ PostgreSQL Database (complete dump)
-✓ Environment Files (.env, .env.subscription)
-✓ Docker Compose Configuration
-✓ Additional Config Files ($config_count files)
-✓ Configuration Directories (if present)
-✓ SSL Certificates (if present)
-
-Restoration:
-1. Install Remnawave Panel on target system
-2. Stop services: sudo ${APP_NAME:-remnawave} down
-3. Extract this backup
-4. Restore database: cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres
-5. Copy configs to appropriate locations
-6. Start services: sudo ${APP_NAME:-remnawave} up
-
-Generated by Remnawave Scheduled Backup System v2.1
-INFO_EOF
-    
-    log "Configuration files included ($config_count items)"
-    
-    local backup_path=""
-    
-    # Компрессия (всегда применяется для scheduled backup если включена)
-    if [ "$compression_enabled" = "true" ]; then
-        log "Step 4: Compressing backup..."
-        cd "$BACKUP_DIR"
-        if tar -czf "${backup_name}.tar.gz" -C . "$(basename "$backup_dir")" 2>/dev/null; then
-            local compressed_size=$(du -sh "${backup_name}.tar.gz" | cut -f1)
-            log "Backup compressed successfully ($compressed_size)"
-            backup_path="$BACKUP_DIR/${backup_name}.tar.gz"
-            
-            # Удаляем некомпрессированную версию
-            rm -rf "$backup_dir"
-        else
-            log "ERROR: Compression failed, keeping uncompressed backup"
-            backup_path="$backup_dir"
-        fi
     else
-        backup_path="$backup_dir"
+        echo -e "\033[1;31m❌ Failed to start database service!\033[0m"
+        return 1
     fi
     
-    if [ -f "$backup_path" ] || [ -d "$backup_path" ]; then
-        if [ -f "$backup_path" ]; then
-            local file_size=$(du -h "$backup_path" | cut -f1)
-            local file_size_mb=$(du -m "$backup_path" | cut -f1)
-        else
-            local file_size=$(du -sh "$backup_path" | cut -f1)
-            local file_size_mb=$(du -sm "$backup_path" | cut -f1)
-        fi
-        
-        log "Backup created successfully: $(basename "$backup_path") ($file_size)"
-        
-        # Отправка в Telegram
-        if [ "$telegram_enabled" = "true" ]; then
-            log "Sending backup to Telegram..."
-            
-            local message="✅ Scheduled backup completed successfully!
-📅 Date: $(date '+%Y-%m-%d %H:%M:%S')
-📦 File: $(basename "$backup_path")
-📊 Size: $file_size
-🗄️ Database: Remnawave Panel
-📁 Configs: $config_count files included
-🗜️ Compression: $([ "$compression_enabled" = "true" ] && echo "Enabled" || echo "Disabled")
-🤖 API: $([ "$use_custom_api" = "true" ] && echo "Custom (2GB limit)" || echo "Official (49MB limit)")"
-            
-            local telegram_success=false
-            
-            # Проверяем нужно ли разделять файл
-            if [ "$use_custom_api" = "true" ]; then
-                # Для кастомного API отправляем файл целиком (до 2GB)
-                log "Using custom API, sending full file (${file_size_mb}MB)"
-                if send_telegram "$message" "$backup_path"; then
-                    telegram_success=true
-                fi
-            elif [ "$split_files" = "true" ] && [ "$file_size_mb" -gt "$max_file_size" ]; then
-                # Для официального API разделяем большие файлы
-                log "File size ($file_size_mb MB) exceeds limit ($max_file_size MB), splitting..."
-                send_telegram "$message"
-                if split_file "$backup_path" "$max_file_size"; then
-                    telegram_success=true
-                fi
-            else
-                # Отправляем файл целиком если он помещается
-                if send_telegram "$message" "$backup_path"; then
-                    telegram_success=true
-                fi
-            fi
-            
-            if [ "$telegram_success" = true ]; then
-                log "Backup sent to Telegram successfully"
-            else
-                log "WARNING: Failed to send backup to Telegram"
-            fi
-        fi
-        
-        # Очистка старых бэкапов
-        local retention_days=$(jq -r '.retention.days // 7' "$CONFIG_FILE")
-        local min_backups=$(jq -r '.retention.min_backups // 3' "$CONFIG_FILE")
-        
-        log "Cleaning up backups older than $retention_days days..."
-        
-        # Удаляем старые файлы, но оставляем минимальное количество
-        local backup_count=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_*.{sql*,tar.gz} 2>/dev/null | wc -l)
-        
-        if [ "$backup_count" -gt "$min_backups" ]; then
-            find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type f -mtime +$retention_days -delete 2>/dev/null
-            find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type d -mtime +$retention_days -exec rm -rf {} + 2>/dev/null
-            log "Old backups cleaned up"
-        else
-            log "Keeping all backups (count: $backup_count, minimum: $min_backups)"
-        fi
-        
-        log "Backup process completed successfully"
-    else
-        log "ERROR: Backup creation failed"
-        
-        if [ "$telegram_enabled" = "true" ]; then
-            send_telegram "❌ Scheduled backup FAILED!
-📅 Date: $(date '+%Y-%m-%d %H:%M:%S')
-⚠️ Please check the backup logs and system status."
-        fi
-        
-        exit 1
+    echo -e "\033[38;5;250m📝 Step 6:\033[0m Restoring database..."
+    
+    local db_container="${target_app_name}-db"
+    local postgres_user="postgres"
+    local postgres_password="postgres"
+    local postgres_db="postgres"
+    
+    # Читаем настройки из env файла если доступны
+    if [ -f "$target_dir/.env" ]; then
+        postgres_user=$(grep "^POSTGRES_USER=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+        postgres_password=$(grep "^POSTGRES_PASSWORD=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+        postgres_db=$(grep "^POSTGRES_DB=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
     fi
-}
-
-main "$@"
-EOF
-
-    chmod +x "$BACKUP_SCRIPT_FILE"
+    
+    # Очищаем текущую базу данных
+    echo -e "\033[38;5;244m   Clearing current database...\033[0m"
+    if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+        psql -U "$postgres_user" -d "$postgres_db" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Database cleared\033[0m"
+    else
+        echo -e "\033[1;31m❌ Failed to clear database!\033[0m"
+        return 1
+    fi
+    
+    # Восстанавливаем данные с улучшенной безопасностью (заимствуя лучшие практики)
+    echo -e "\033[38;5;244m   Importing backup data...\033[0m"
+    if docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
+        psql -U "$postgres_user" -d "$postgres_db" --set ON_ERROR_STOP=on < "$database_file" >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Database restored successfully\033[0m"
+    else
+        echo -e "\033[1;31m❌ Database restore failed!\033[0m"
+        echo -e "\033[38;5;244m   Check database logs: docker compose logs ${target_app_name}-db\033[0m"
+        return 1
+    fi
+    
+    # Очищаем временные файлы
+    rm -f "$target_dir/database.sql"
+    
+    # Останавливаем БД перед запуском всех сервисов
+    echo -e "\033[38;5;250m📝 Step 7:\033[0m Stopping database service..."
+    docker compose down 2>/dev/null
+    
+    # Запускаем ВСЕ сервисы
+    echo -e "\033[38;5;250m📝 Step 8:\033[0m Starting all services..."
+    
+    if docker compose up -d 2>/dev/null; then
+        echo -e "\033[1;32m✅ All services started successfully\033[0m"
+    else
+        echo -e "\033[1;33m⚠️  Service startup had issues\033[0m"
+    fi
+    
+    # Проверяем финальный статус
+    sleep 5
+    local healthy_services=$(docker compose ps --format json 2>/dev/null | jq -r 'select(.Health == "healthy" or .State == "running") | .Service' 2>/dev/null | wc -l)
+    local total_services=$(docker compose ps --format json 2>/dev/null | jq -r '.Service' 2>/dev/null | wc -l)
+    
+    if [ "$healthy_services" -gt 0 ] && [ "$total_services" -gt 0 ]; then
+        echo -e "\033[1;32m✅ Services health check: $healthy_services/$total_services healthy\033[0m"
+    fi
 }
 
 schedule_test_backup() {
@@ -4291,22 +5358,23 @@ main_menu() {
         echo -e "   \033[38;5;15m9)\033[0m 📈 System performance monitor"
         echo -e "   \033[38;5;15m10)\033[0m 🩺 Health check diagnostics"
         echo
-        echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
-        echo -e "   \033[38;5;15m11)\033[0m 💾 Manual database backup"
+        echo -e "\033[1;37m💾 Backup & Restore:\033[0m"
+        echo -e "   \033[38;5;15m11)\033[0m 💾 Manual backup"
         echo -e "   \033[38;5;15m12)\033[0m 📅 Scheduled backup system"
+        echo -e "   \033[38;5;15m13)\033[0m 🔄 Restore from backup"
         echo
         echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
-        echo -e "   \033[38;5;15m13)\033[0m 📝 Edit configuration files"
-        echo -e "   \033[38;5;15m14)\033[0m 🖥️  Access container shell"
-        echo -e "   \033[38;5;15m15)\033[0m 📊 PM2 process monitor"
+        echo -e "   \033[38;5;15m14)\033[0m 📝 Edit configuration files"
+        echo -e "   \033[38;5;15m15)\033[0m 🖥️  Access container shell"
+        echo -e "   \033[38;5;15m16)\033[0m 📊 PM2 process monitor"
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
         echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
         echo
         echo -e "\033[38;5;8mRemnawave Panel CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-15]:\033[0m ")" choice
-        
+        read -p "$(echo -e "\033[1;37mSelect option [0-16]:\033[0m ")" choice
+
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
             2) update_command; read -p "Press Enter to continue..." ;;
@@ -4320,9 +5388,10 @@ main_menu() {
             10) health_check_command; read -p "Press Enter to continue..." ;;
             11) backup_command; read -p "Press Enter to continue..." ;;
             12) schedule_menu ;;
-            13) edit_command_menu ;;
-            14) console_command ;;
-            15) pm2_monitor ;;
+            13) restore_command; read -p "Press Enter to continue..." ;;  
+            14) edit_command_menu ;;  
+            15) console_command ;;
+            16) pm2_monitor ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "\033[1;31mInvalid option!\033[0m"
@@ -4383,9 +5452,10 @@ usage() {
     printf "   \033[38;5;244m%-18s\033[0m %s\n" "health" "🩺 Health check diagnostics"
     echo
 
-    echo -e "\033[1;37m💾 Backup & Automation:\033[0m"
+    echo -e "\033[1;37m💾 Backup & Restore:\033[0m"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "backup" "💾 Manual database backup"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "schedule" "📅 Scheduled backup system"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "restore" "🔄 Restore from backup" 
     echo
 
     echo -e "\033[1;37m🔧 Configuration & Access:\033[0m"
@@ -4400,6 +5470,9 @@ usage() {
     printf "   \033[38;5;244m%-18s\033[0m %s\n" "install-script" "📥 Install this script globally"
     printf "   \033[38;5;244m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
     echo
+    echo -e "\033[38;5;8m💡 Flexible restore paths:\033[0m"
+    echo -e "\033[38;5;244m   remnawave restore --path /root --name newpanel\033[0m"
+    echo -e "\033[38;5;244m   # Installs to /root/newpanel/\033[0m"
 
     if is_remnawave_installed && [ -f "$ENV_FILE" ]; then
         local panel_domain=$(grep "FRONT_END_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
@@ -4672,6 +5745,7 @@ case "$COMMAND" in
     console) console_command ;;
     pm2-monitor) pm2_monitor ;;
     backup) backup_command ;;
+    restore) restore_command "$@" ;; 
     menu) main_menu ;;  
     help) smart_usage "help" "$1" ;;
     --version|-v) show_version ;;
