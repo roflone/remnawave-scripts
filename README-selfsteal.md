@@ -5,21 +5,15 @@
 ## 🚀 Быстрая установка
 
 ### Способ 1: Прямая установка (рекомендуется)
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/remnawave/RemnaNode-Documentation/main/selfsteal.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh | bash
 ```
 
 ### Способ 2: Скачать и запустить
-```bash
-wget https://raw.githubusercontent.com/remnawave/RemnaNode-Documentation/main/selfsteal.sh
-chmod +x selfsteal.sh
-./selfsteal.sh
-```
 
-### Способ 3: Клонирование репозитория
 ```bash
-git clone https://github.com/remnawave/RemnaNode-Documentation.git
-cd RemnaNode-Documentation
+wget https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh
 chmod +x selfsteal.sh
 ./selfsteal.sh
 ```
@@ -36,6 +30,7 @@ chmod +x selfsteal.sh
 ## 🛠 Функциональность
 
 ### Основные возможности
+
 - ✅ **Автоматическая установка** Docker и Docker Compose
 - ✅ **Развертывание Caddy** с оптимальной конфигурацией
 - ✅ **Reality маскировка** (selfsteal) с поддержкой множественных доменов
@@ -46,6 +41,7 @@ chmod +x selfsteal.sh
 - ✅ **Мониторинг** состояния сервисов
 
 ### Доступные шаблоны маскировки
+
 1. **Corporate Landing** - корпоративная страница
 2. **Tech Blog** - технический блог
 3. **Portfolio** - портфолио разработчика
@@ -146,7 +142,7 @@ REALITY_SERVER_NAMES=          # Дополнительные серверные
 ### Ручное обновление
 ```bash
 # Обновить только скрипт
-curl -fsSL https://raw.githubusercontent.com/remnawave/RemnaNode-Documentation/main/selfsteal.sh -o selfsteal.sh
+curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scriptsnode/main/selfsteal.sh -o selfsteal.sh
 chmod +x selfsteal.sh
 
 # Обновить шаблон сайта (в меню скрипта)
@@ -238,7 +234,7 @@ docker exec caddy_reality_container ls -la /var/www/html/
 Если у вас возникли вопросы или проблемы:
 1. Проверьте раздел "Диагностика" выше
 2. Посмотрите логи контейнера: `docker logs caddy_reality_container`
-3. Создайте Issue в [GitHub репозитории](https://github.com/remnawave/RemnaNode-Documentation/issues)
+3. Создайте Issue в [GitHub репозитории](https://github.com/DigneZzZ/remnawave-scriptsnode/issues)
 
 ## 📄 Лицензия
 
