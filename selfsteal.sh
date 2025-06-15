@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.7
+# VERSION=1.8
 
 set -e
-SCRIPT_VERSION="1.7"
+SCRIPT_VERSION="1.8"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -3957,6 +3957,170 @@ update_command() {
     check_for_updates
 }
 
+# Guide and instructions command
+guide_command() {
+    clear
+    echo -e "${WHITE}📖 Selfsteal Setup Guide${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
+    echo
+
+    # Get current configuration
+    local domain=""
+    local port=""
+    if [ -f "$APP_DIR/.env" ]; then
+        domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+        port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+    fi
+
+    echo -e "${BLUE}🎯 What is Selfsteal?${NC}"
+    echo -e "${GRAY}Selfsteal is a Caddy-based front-end for Xray Reality protocol that provides:"
+    echo "• Traffic masking with legitimate-looking websites"
+    echo "• SSL/TLS termination and certificate management"
+    echo "• Multiple website templates for better camouflage"
+    echo "• Easy integration with Xray Reality servers${NC}"
+    echo
+
+    echo -e "${BLUE}🔧 How it works:${NC}"
+    echo -e "${GRAY}1. Caddy runs on a custom HTTPS port (default: 9443)"
+    echo "2. Xray Reality forwards unrecognized traffic to Caddy"
+    echo "3. Regular users see a normal website"
+    echo "4. VPN clients connect through Reality protocol${NC}"
+    echo
+
+    if [ -n "$domain" ] && [ -n "$port" ]; then
+        echo -e "${GREEN}✅ Your Current Configuration:${NC}"
+        echo -e "${WHITE}   Domain:${NC} ${CYAN}$domain${NC}"
+        echo -e "${WHITE}   HTTPS Port:${NC} ${CYAN}$port${NC}"
+        echo -e "${WHITE}   Website URL:${NC} ${CYAN}https://$domain:$port${NC}"
+        echo
+    else
+        echo -e "${YELLOW}⚠️  Selfsteal not configured yet. Run installation first!${NC}"
+        echo
+    fi
+
+    echo -e "${BLUE}📋 Xray Reality Configuration Example:${NC}"
+    echo -e "${GRAY}Copy this template and customize it for your Xray server:${NC}"
+    echo
+
+    # Generate a random private key if openssl is available
+    local private_key="#REPLACE_WITH_YOUR_PRIVATE_KEY"
+    if command -v openssl >/dev/null 2>&1; then
+        private_key=$(openssl rand -base64 32 | tr -d '=' | head -c 43)
+    fi
+
+    cat << EOF
+${WHITE}{
+    "inbounds": [
+        {
+            "tag": "VLESS_SELFSTEAL_WITH_CADDY",
+            "port": 443,
+            "protocol": "vless",
+            "settings": {
+                "clients": [],
+                "decryption": "none"
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls",
+                    "quic"
+                ]
+            },
+            "streamSettings": {
+                "network": "raw",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "xver": 1,
+                    "target": "127.0.0.1:${port:-9443}",
+                    "spiderX": "",
+                    "shortIds": [
+                        ""
+                    ],
+                    "privateKey": "$private_key",
+                    "serverNames": [
+                        "${domain:-reality.example.com}"
+                    ]
+                }
+            }
+        }
+    ]
+}${NC}
+EOF
+
+    echo
+    echo -e "${YELLOW}🔑 Replace the following values:${NC}"
+    echo -e "${GRAY}• ${WHITE}clients[]${GRAY} - Add your client configurations with UUIDs${NC}"
+    echo -e "${GRAY}• ${WHITE}shortIds${GRAY} - Add your Reality short IDs${NC}"
+    if command -v openssl >/dev/null 2>&1; then
+        echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generated above (or use your own)${NC}"
+    else
+        echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generate with Reality key tools${NC}"
+    fi
+    if [ -z "$domain" ]; then
+        echo -e "${GRAY}• ${WHITE}reality.example.com${GRAY} - Your actual domain${NC}"
+    fi
+    if [ -z "$port" ] || [ "$port" != "9443" ]; then
+        echo -e "${GRAY}• ${WHITE}9443${GRAY} - Your Caddy HTTPS port${NC}"
+    fi
+    echo
+
+    echo -e "${BLUE}🔐 Generate Reality Keys:${NC}"
+    echo -e "${GRAY}Run this command to generate Reality key pair:${NC}"
+    echo
+    echo -e "${CYAN}xray x25519${NC}"
+    echo
+    echo -e "${GRAY}This will output:${NC}"
+    echo -e "${WHITE}Private key: ${GRAY}your-private-key-here${NC}"
+    echo -e "${WHITE}Public key: ${GRAY}your-public-key-here${NC}"
+    echo
+    echo -e "${GRAY}• Use ${WHITE}Private key${GRAY} in your Xray server config${NC}"
+    echo
+
+    echo -e "${BLUE}📱 Client Configuration Tips:${NC}"
+    echo -e "${GRAY}For client apps (v2rayN, v2rayNG, etc.):${NC}"
+    echo -e "${WHITE}• Protocol:${NC} VLESS"
+    echo -e "${WHITE}• Security:${NC} Reality"
+    echo -e "${WHITE}• Server:${NC} ${domain:-your-domain.com}"
+    echo -e "${WHITE}• Port:${NC} 443"
+    echo -e "${WHITE}• Flow:${NC} xtls-rprx-vision"
+    echo -e "${WHITE}• SNI:${NC} ${domain:-your-domain.com}"
+    echo -e "${WHITE}• Reality Public Key:${NC} (from x25519 generation)"
+    echo
+
+    echo -e "${BLUE}🔍 Testing Your Setup:${NC}"
+    echo -e "${GRAY}1. Check if Caddy is running:${NC}"
+    echo -e "${CYAN}   curl -k https://${domain:-your-domain.com}:${port:-9443}${NC}"
+    echo
+    echo -e "${GRAY}2. Verify website loads in browser:${NC}"
+    echo -e "${CYAN}   https://${domain:-your-domain.com}:${port:-9443}${NC}"
+    echo
+    echo -e "${GRAY}3. Test Xray Reality connection:${NC}"
+    echo -e "${CYAN}   Use your VPN client with the configuration above${NC}"
+    echo
+
+    echo -e "${BLUE}🛠️  Troubleshooting:${NC}"
+    echo -e "${GRAY}• ${WHITE}Connection refused:${GRAY} Check if Caddy is running (option 5)${NC}"
+    echo -e "${GRAY}• ${WHITE}SSL certificate errors:${GRAY} Verify DNS points to your server${NC}"
+    echo -e "${GRAY}• ${WHITE}Reality not working:${GRAY} Check port ${port:-9443} is accessible${NC}"
+    echo -e "${GRAY}• ${WHITE}Website not loading:${GRAY} Try regenerating templates (option 6)${NC}"
+    echo
+
+    echo -e "${GREEN}💡 Pro Tips:${NC}"
+    echo -e "${GRAY}• Use different website templates to avoid detection${NC}"
+    echo -e "${GRAY}• Keep your domain's DNS properly configured${NC}"
+    echo -e "${GRAY}• Monitor logs regularly for any issues${NC}"
+    echo -e "${GRAY}• Update both Caddy and Xray regularly${NC}"
+    echo
+
+
+    echo -e "${YELLOW}📚 Additional Resources:${NC}"
+    echo -e "${GRAY}• Xray Documentation: ${CYAN}https://xtls.github.io/${NC}"
+    echo -e "${GRAY}• Reality Protocol Guide: ${CYAN}https://github.com/XTLS/REALITY${NC}"
+    echo
+}
+
 main_menu() {
     # Auto-check for updates on first run
     check_for_updates_silent
@@ -4057,18 +4221,19 @@ main_menu() {
 
         echo -e "${WHITE}🎨 Website Management:${NC}"
         echo -e "   ${WHITE}6)${NC} 🎨 Website templates"
+        echo -e "   ${WHITE}7)${NC} 📖 Setup guide & examples"
         echo
 
-        echo -e "${WHITE}📝 Configuration & Logs:${NC}"
-        echo -e "   ${WHITE}7)${NC} 📝 View logs"
-        echo -e "   ${WHITE}8)${NC} 📊 Log sizes"
-        echo -e "   ${WHITE}9)${NC} 🧹 Clean logs"
-        echo -e "   ${WHITE}10)${NC} ✏️  Edit configuration"
+        echo -e "${WHITE}📝 Logs & Monitoring:${NC}"
+        echo -e "   ${WHITE}8)${NC} 📝 View logs"
+        echo -e "   ${WHITE}9)${NC} 📊 Log sizes"
+        echo -e "   ${WHITE}10)${NC} 🧹 Clean logs"
+        echo -e "   ${WHITE}11)${NC} ✏️  Edit configuration"
         echo
 
         echo -e "${WHITE}🗑️  Maintenance:${NC}"
-        echo -e "   ${WHITE}11)${NC} 🗑️  Uninstall Caddy"
-        echo -e "   ${WHITE}12)${NC} 🔄 Check for updates"
+        echo -e "   ${WHITE}12)${NC} 🗑️  Uninstall Caddy"
+        echo -e "   ${WHITE}13)${NC} 🔄 Check for updates"
         echo
         echo -e "   ${GRAY}0)${NC} ⬅️  Exit"
         echo
@@ -4087,7 +4252,7 @@ main_menu() {
                 ;;
         esac
 
-        read -p "$(echo -e "${WHITE}Select option [0-12]:${NC} ")" choice
+        read -p "$(echo -e "${WHITE}Select option [0-13]:${NC} ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -4096,12 +4261,13 @@ main_menu() {
             4) restart_command; read -p "Press Enter to continue..." ;;
             5) status_command; read -p "Press Enter to continue..." ;;
             6) template_command ;;
-            7) logs_command; read -p "Press Enter to continue..." ;;
-            8) logs_size_command; read -p "Press Enter to continue..." ;;
-            9) clean_logs_command; read -p "Press Enter to continue..." ;;
-            10) edit_command; read -p "Press Enter to continue..." ;;
-            11) uninstall_command; read -p "Press Enter to continue..." ;;
-            12) update_command; read -p "Press Enter to continue..." ;;
+            7) guide_command; read -p "Press Enter to continue..." ;;
+            8) logs_command; read -p "Press Enter to continue..." ;;
+            9) logs_size_command; read -p "Press Enter to continue..." ;;
+            10) clean_logs_command; read -p "Press Enter to continue..." ;;
+            11) edit_command; read -p "Press Enter to continue..." ;;
+            12) uninstall_command; read -p "Press Enter to continue..." ;;
+            13) update_command; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "${RED}❌ Invalid option!${NC}"
@@ -4124,6 +4290,7 @@ case "$COMMAND" in
     edit) edit_command ;;
     uninstall) uninstall_command ;;
     template) template_command ;;
+    guide) guide_command ;;
     menu) main_menu ;;
     update) update_command ;;
     check-update) update_command ;;
