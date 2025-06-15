@@ -215,29 +215,6 @@ REALITY_DEST=8080              # Порт Reality назначения
 REALITY_SERVER_NAMES=          # Дополнительные серверные имена
 ```
 
-### Конфигурация Caddy (Caddyfile)
-```
-{$DOMAIN} {
-    tls {
-        issuer acme {
-            disable_http_challenge
-        }
-    }
-    
-    file_server {
-        root /var/www/html
-    }
-    
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 10MB
-            roll_keep 5
-        }
-        format json
-    }
-}
-```
-
 ## 🔄 Обновления
 
 ### Автоматическое обновление
