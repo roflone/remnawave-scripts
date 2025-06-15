@@ -561,8 +561,6 @@ https://{$SELF_STEAL_DOMAIN} {
             roll_compression gzip
         }
         level ERROR
-        exclude /static/*
-        exclude *.ico
     }
 }
 
