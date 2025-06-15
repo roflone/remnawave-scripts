@@ -4066,15 +4066,7 @@ EOF
     fi
     echo
 
-    echo -e "${BLUE}🔐 Generate Reality Keys:${NC}"
-    echo -e "${GRAY}Run this command to generate Reality key pair:${NC}"
-    echo
-    echo -e "${CYAN}xray x25519${NC}"
-    echo
-    echo -e "${GRAY}This will output:${NC}"
-    echo -e "${WHITE}Private key: ${GRAY}your-private-key-here${NC}"
-    echo -e "${WHITE}Public key: ${GRAY}your-public-key-here${NC}"
-    echo
+    echo -e "${BLUE}🔐 Generate Reality Keys${NC}"
     echo -e "${GRAY}• Use ${WHITE}Private key${GRAY} in your Xray server config${NC}"
     echo
 
