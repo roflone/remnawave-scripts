@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.6
+# VERSION=1.7
 
 set -e
-SCRIPT_VERSION="1.6"
+SCRIPT_VERSION="1.7"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
 CONTAINER_NAME="caddy-selfsteal"
 VOLUME_PREFIX="caddy"
+CADDY_VERSION="2.9.1"
 
 # Configuration
 APP_NAME="selfsteal"
@@ -561,6 +562,8 @@ https://{$SELF_STEAL_DOMAIN} {
             roll_compression gzip
         }
         level ERROR
+        exclude /static/*
+        exclude *.ico
     }
 }
 
@@ -591,6 +594,20 @@ EOF
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     
     cd "$APP_DIR"
+    echo -e "${WHITE}🔍 Validating Caddyfile...${NC}"
+
+    if [ ! -f "$APP_DIR/Caddyfile" ]; then
+        echo -e "${RED}❌ Caddyfile not found at $APP_DIR/Caddyfile${NC}"
+        return 1
+    fi
+
+    if timeout 30 docker run --rm -v "$APP_DIR/Caddyfile:/etc/caddy/Caddyfile" caddy:$CADDY_VERSION caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+        echo -e "${GREEN}✅ Caddyfile is valid${NC}"
+    else
+        echo -e "${RED}❌ Invalid Caddyfile configuration${NC}"
+        echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
+        return 1
+    fi
     if docker compose up -d; then
         echo -e "${GREEN}✅ Caddy services started successfully${NC}"
     else
@@ -622,10 +639,24 @@ EOF
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
 }
 
+validate_caddyfile() {
+    echo -e "${WHITE}🔍 Validating Caddyfile...${NC}"
+    
+    if [ ! -f "$APP_DIR/Caddyfile" ]; then
+        echo -e "${RED}❌ Caddyfile not found${NC}"
+        return 1
+    fi
+    
+    if timeout 30 docker run --rm -v "$APP_DIR/Caddyfile:/etc/caddy/Caddyfile" caddy:$CADDY_VERSION caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+        echo -e "${GREEN}✅ Caddyfile is valid${NC}"
+        return 0
+    else
+        echo -e "${RED}❌ Invalid Caddyfile configuration${NC}"
+        echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
+        return 1
+    fi
+}
 
-# Добавляем после функции create_default_html()
-
-# Template management functions
 show_template_options() {
     echo -e "${WHITE}🎨 Website Template Options${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
@@ -2522,7 +2553,11 @@ down_command() {
 
 restart_command() {
     check_running_as_root
-    
+    echo -e "${YELLOW}⚠️  Validate Caddyfile after editing? [Y/n]:${NC}"
+    read -p "" validate_choice
+    if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+        validate_caddyfile
+    fi
     echo -e "${WHITE}🔄 Restarting Caddy Services${NC}"
     down_command
     sleep 2
@@ -2530,32 +2565,56 @@ restart_command() {
 }
 
 status_command() {
-    if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        echo -e "${RED}❌ Caddy is not installed${NC}"
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "${RED}❌ Caddy not installed${NC}"
         return 1
     fi
-    
+
     echo -e "${WHITE}📊 Caddy Service Status${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     echo
-    
+
     cd "$APP_DIR"
     
-    # Check if services are running
-    local running_services=$(docker compose ps -q 2>/dev/null | wc -l)
-    local total_services=1
+    # Получаем статус контейнера
+    local container_status=$(docker compose ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}" 2>/dev/null)
+    local running_count=$(docker compose ps -q --status running 2>/dev/null | wc -l)
+    local total_count=$(docker compose ps -q 2>/dev/null | wc -l)
     
-    if [ "$running_services" -eq "$total_services" ]; then
-        echo -e "${GREEN}✅ All services are running ($running_services/$total_services)${NC}"
-    elif [ "$running_services" -gt 0 ]; then
-        echo -e "${YELLOW}⚠️  Some services are running ($running_services/$total_services)${NC}"
+    # Проверяем реальный статус
+    local actual_status=$(docker compose ps --format "{{.State}}" 2>/dev/null | head -1)
+    
+    if [ "$actual_status" = "running" ]; then
+        echo -e "${GREEN}✅ Status: Running${NC}"
+        echo -e "${GREEN}✅ All services are running ($running_count/$total_count)${NC}"
+    elif [ "$actual_status" = "restarting" ]; then
+        echo -e "${YELLOW}⚠️  Status: Restarting (Error)${NC}"
+        echo -e "${RED}❌ Service is failing and restarting ($running_count/$total_count)${NC}"
+        echo -e "${YELLOW}🔧 Action needed: Check logs for errors${NC}"
+    elif [ -n "$actual_status" ]; then
+        echo -e "${RED}❌ Status: $actual_status${NC}"
+        echo -e "${RED}❌ Services not running ($running_count/$total_count)${NC}"
     else
-        echo -e "${RED}❌ No services are running${NC}"
+        echo -e "${RED}❌ Status: Not running${NC}"
+        echo -e "${RED}❌ No services found${NC}"
     fi
-    
+
     echo
-    echo -e "${WHITE}📋 Container Status:${NC}"
-    docker compose ps
+    echo -e "${WHITE}📋 Container Details:${NC}"
+    if [ -n "$container_status" ]; then
+        echo "$container_status"
+    else
+        echo -e "${GRAY}No containers found${NC}"
+    fi
+
+    # Показать рекомендации при проблемах
+    if [ "$actual_status" = "restarting" ]; then
+        echo
+        echo -e "${YELLOW}🔧 Troubleshooting:${NC}"
+        echo -e "${GRAY}   1. Check logs: selfsteal logs${NC}"
+        echo -e "${GRAY}   2. Validate config: selfsteal edit${NC}"
+        echo -e "${GRAY}   3. Restart services: selfsteal restart${NC}"
+    fi
     
     # Show configuration summary
     if [ -f "$APP_DIR/.env" ]; then
@@ -2778,6 +2837,11 @@ edit_command() {
             ;;
         2)
             ${EDITOR:-nano} "$APP_DIR/Caddyfile"
+            echo -e "${YELLOW}⚠️  Validate Caddyfile after editing? [Y/n]:${NC}"
+            read -p "" validate_choice
+            if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+                validate_caddyfile
+            fi
             echo -e "${YELLOW}⚠️  Restart Caddy to apply changes: sudo $APP_NAME restart${NC}"
             ;;
         3)
@@ -3906,29 +3970,85 @@ main_menu() {
         echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
         echo
 
-        # Show current status
-        if [ -f "$APP_DIR/docker-compose.yml" ]; then
-            local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-            if [ "$running_services" -gt 0 ]; then
-                echo -e "${GREEN}✅ Status: Running${NC}"
-            else
-                echo -e "${RED}❌ Status: Stopped${NC}"
+
+        local menu_status="Not installed"
+        local status_color="$GRAY"
+        local domain=""
+        local port=""
+        
+        if [ -d "$APP_DIR" ]; then
+            if [ -f "$APP_DIR/.env" ]; then
+                domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+                port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
             fi
             
-            if [ -f "$APP_DIR/.env" ]; then
-                local domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
-                local port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" | cut -d'=' -f2)
-                printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
-                printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Port:" "$port"
-            fi
-        else
-            echo -e "${GRAY}📦 Status: Not Installed${NC}"
+            cd "$APP_DIR"
+            local container_state=$(docker compose ps --format "{{.State}}" 2>/dev/null | head -1)
+            
+            case "$container_state" in
+                "running")
+                    menu_status="Running"
+                    status_color="$GREEN"
+                    ;;
+                "restarting")
+                    menu_status="Error (Restarting)"
+                    status_color="$YELLOW"
+                    ;;
+                "exited"|"stopped")
+                    menu_status="Stopped"
+                    status_color="$RED"
+                    ;;
+                "paused")
+                    menu_status="Paused"
+                    status_color="$YELLOW"
+                    ;;
+                *)
+                    if [ -f "$APP_DIR/docker-compose.yml" ]; then
+                        menu_status="Not running"
+                        status_color="$RED"
+                    else
+                        menu_status="Not installed"
+                        status_color="$GRAY"
+                    fi
+                    ;;
+            esac
+        fi
+        
+        case "$menu_status" in
+            "Running")
+                echo -e "${status_color}✅ Status: $menu_status${NC}"
+                ;;
+            "Error (Restarting)")
+                echo -e "${status_color}⚠️  Status: $menu_status${NC}"
+                ;;
+            "Stopped"|"Not running")
+                echo -e "${status_color}❌ Status: $menu_status${NC}"
+                ;;
+            "Paused")
+                echo -e "${status_color}⏸️  Status: $menu_status${NC}"
+                ;;
+            *)
+                echo -e "${status_color}📦 Status: $menu_status${NC}"
+                ;;
+        esac
+        
+        if [ -n "$domain" ]; then
+            printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
+        fi
+        if [ -n "$port" ]; then
+            printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Port:" "$port"
+        fi
+        
+        if [ "$menu_status" = "Error (Restarting)" ]; then
+            echo
+            echo -e "${YELLOW}⚠️  Service is experiencing issues!${NC}"
+            echo -e "${GRAY}   Recommended: Check logs (option 7) or restart services (option 4)${NC}"
         fi
         
         echo
         echo -e "${WHITE}📋 Available Operations:${NC}"
         echo
-        
+
         echo -e "${WHITE}🔧 Service Management:${NC}"
         echo -e "   ${WHITE}1)${NC} 🚀 Install Caddy"
         echo -e "   ${WHITE}2)${NC} ▶️  Start services"
@@ -3936,21 +4056,38 @@ main_menu() {
         echo -e "   ${WHITE}4)${NC} 🔄 Restart services"
         echo -e "   ${WHITE}5)${NC} 📊 Service status"
         echo
+
         echo -e "${WHITE}🎨 Website Management:${NC}"
         echo -e "   ${WHITE}6)${NC} 🎨 Website templates"
         echo
+
         echo -e "${WHITE}📝 Configuration & Logs:${NC}"
         echo -e "   ${WHITE}7)${NC} 📝 View logs"
         echo -e "   ${WHITE}8)${NC} 📊 Log sizes"
         echo -e "   ${WHITE}9)${NC} 🧹 Clean logs"
         echo -e "   ${WHITE}10)${NC} ✏️  Edit configuration"
         echo
+
         echo -e "${WHITE}🗑️  Maintenance:${NC}"
         echo -e "   ${WHITE}11)${NC} 🗑️  Uninstall Caddy"
         echo -e "   ${WHITE}12)${NC} 🔄 Check for updates"
         echo
         echo -e "   ${GRAY}0)${NC} ⬅️  Exit"
         echo
+        case "$menu_status" in
+            "Not installed")
+                echo -e "${BLUE}💡 Tip: Start with option 1 to install Caddy${NC}"
+                ;;
+            "Stopped"|"Not running")
+                echo -e "${BLUE}💡 Tip: Use option 2 to start services${NC}"
+                ;;
+            "Error (Restarting)")
+                echo -e "${BLUE}💡 Tip: Check logs (7) to diagnose issues${NC}"
+                ;;
+            "Running")
+                echo -e "${BLUE}💡 Tip: Use option 6 to customize website templates${NC}"
+                ;;
+        esac
 
         read -p "$(echo -e "${WHITE}Select option [0-12]:${NC} ")" choice
 
