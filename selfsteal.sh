@@ -533,14 +533,7 @@ EOF
             roll_compression gzip
         }
         level ERROR
-        format json {
-            fields {
-                common_log
-                duration
-                status
-                -request>headers
-            }
-        }
+        format json 
     }
 }
 
