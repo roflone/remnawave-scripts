@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.1
+# VERSION=1.2
 
 set -e
-SCRIPT_VERSION="1.1"
+SCRIPT_VERSION="1.2"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
 
 # Configuration
-APP_NAME="caddy-selfsteal"
+APP_NAME="selfsteal"
 APP_DIR="/opt/caddy"
 CADDY_CONFIG_DIR="$APP_DIR"
-HTML_DIR="/opt/html"
+HTML_DIR="/opt/caddy/html"
 
 # Color definitions
 RED='\033[0;31m'
