@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=2.74
+# VERSION=2.8
 
 set -e
-SCRIPT_VERSION="2.74"
+SCRIPT_VERSION="2.8"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -262,14 +262,12 @@ install_remnawave_script() {
 
 
 ensure_backup_dirs() {
-    # Проверяем, что Remnawave установлен
     if [ ! -d "$APP_DIR" ]; then
         echo -e "\033[1;31m❌ Remnawave is not installed!\033[0m"
         echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
         return 1
     fi
     
-    # Создаем необходимые директории
     mkdir -p "$APP_DIR/logs" 2>/dev/null || true
     mkdir -p "$APP_DIR/backups" 2>/dev/null || true
     mkdir -p "$APP_DIR/temp" 2>/dev/null || true
@@ -585,7 +583,6 @@ schedule_configure_retention() {
     sleep 2
 }
 
-# Настройка Telegram
 schedule_configure_telegram() {
     clear
     echo -e "\033[1;37m📱 Configure Telegram Integration\033[0m"
@@ -596,8 +593,7 @@ schedule_configure_telegram() {
     
     if [[ $enable_telegram =~ ^[Yy]$ ]]; then
         schedule_update_config ".telegram.enabled" "true"
-        
-        # Устанавливаем параметры для официального API
+
         schedule_update_config ".telegram.use_custom_api" "false"
         schedule_update_config ".telegram.api_server" "\"https://api.telegram.org\""
         schedule_update_config ".telegram.max_file_size" "49"
@@ -666,22 +662,17 @@ schedule_configure_telegram() {
     sleep 2
 }
 
-# Функция обновления конфигурации
 schedule_update_config() {
     local key="$1"
     local value="$2"
-    
-    # Создаем конфиг если не существует
     if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
         echo '{}' > "$BACKUP_CONFIG_FILE"
     fi
-    
-    # Обновляем значение
+
     local temp_file=$(mktemp)
     jq "$key = $value" "$BACKUP_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$BACKUP_CONFIG_FILE"
 }
 
-# Функция получения статуса
 schedule_get_status() {
     if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT_FILE"; then
         echo "enabled"
@@ -690,7 +681,6 @@ schedule_get_status() {
     fi
 }
 
-# Включение/выключение планировщика
 schedule_toggle() {
     local status=$(schedule_get_status)
     
@@ -701,7 +691,6 @@ schedule_toggle() {
     fi
 }
 
-# Включение планировщика
 schedule_enable() {
     if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
         echo -e "\033[1;31m❌ No configuration found! Please configure backup settings first.\033[0m"
@@ -715,11 +704,9 @@ schedule_enable() {
         sleep 2
         return
     fi
-    
-    # Создаем скрипт планировщика
+
     schedule_create_backup_script
-    
-    # Добавляем в crontab
+
     local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
     
     # Удаляем старую запись если есть
@@ -730,7 +717,6 @@ schedule_enable() {
     sleep 2
 }
 
-# Отключение планировщика
 schedule_disable() {
     crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab -
     echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
@@ -1131,7 +1117,6 @@ EOF
     chmod +x "$BACKUP_SCRIPT_FILE"
 }
 
-# Тест создания резервной копии
 schedule_test_backup() {
     clear
     echo -e "\033[1;37m🧪 Testing Backup Creation\033[0m"
@@ -1147,12 +1132,10 @@ schedule_test_backup() {
     
     echo -e "\033[38;5;250mCreating test backup...\033[0m"
     
-    # Создаем скрипт если не существует
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
     fi
     
-    # Запускаем тест
     if bash "$BACKUP_SCRIPT_FILE"; then
         echo -e "\033[1;32m✅ Test backup completed successfully!\033[0m"
         echo -e "\033[38;5;250mCheck $BACKUP_DIR for the backup file\033[0m"
@@ -1164,7 +1147,6 @@ schedule_test_backup() {
     read -p "Press Enter to continue..."
 }
 
-# Тест Telegram
 schedule_test_telegram() {
     clear
     echo -e "\033[1;37m📱 Testing Telegram Integration\033[0m"
@@ -3764,10 +3746,12 @@ status_command() {
     
     echo
     
-    # Итоговое сообщение
+
     if is_remnawave_up; then
-        # Проверяем здоровье всех сервисов
-        local unhealthy_count=$(docker ps --format "{{.Names}}\t{{.Status}}" | grep "$APP_NAME" | grep -c "unhealthy" || echo "0")
+        local unhealthy_count=$(docker ps --format "{{.Names}}\t{{.Status}}" | grep "$APP_NAME" | grep -c "unhealthy" 2>/dev/null || echo "0")
+        if ! [[ "$unhealthy_count" =~ ^[0-9]+$ ]]; then
+            unhealthy_count=0
+        fi
         
         if [ "$unhealthy_count" -eq 0 ]; then
             echo -e "\033[1;32m🎉 All services are healthy and running!\033[0m"
@@ -3778,15 +3762,12 @@ status_command() {
         echo -e "\033[1;31m❌ Services are not running\033[0m"
         echo -e "\033[38;5;8m   Use 'sudo $APP_NAME up' to start services\033[0m"
     fi
-    
-    # Добавляем паузу только если запущено из меню (проверяем переменную окружения или родительский процесс)
     if [[ "${BASH_SOURCE[1]}" =~ "main_menu" ]] || [[ "$0" =~ "$APP_NAME" ]] && [[ "$1" != "--no-pause" ]]; then
         echo
         read -p "Press Enter to continue..."
     fi
 }
 
-# Замените logs_command на:
 logs_command() {
     check_running_as_root
     detect_compose
@@ -3805,7 +3786,6 @@ logs_command() {
     logs_menu
 }
 
-# Добавьте новую функцию logs_menu:
 logs_menu() {
     while true; do
         clear
@@ -3837,7 +3817,6 @@ logs_menu() {
     done
 }
 
-# Функции для просмотра логов:
 show_live_logs() {
     clear
     echo -e "\033[1;37m📱 Live Logs (Press Ctrl+C to exit)\033[0m"
@@ -3952,11 +3931,8 @@ update_command() {
     else
         echo -e "\033[1;32m✅ Script is up to date (v$current_script_version)\033[0m"
     fi
-    
-    # Переходим в директорию приложения
     cd "$APP_DIR" 2>/dev/null || { echo -e "\033[1;31m❌ Cannot access app directory\033[0m"; exit 1; }
-    
-    # Получаем список образов из compose файла
+
     echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking current images..."
     local compose_images=$($COMPOSE -f "$COMPOSE_FILE" config 2>/dev/null | grep "image:" | awk '{print $2}' | sort | uniq)
     
@@ -3969,14 +3945,12 @@ update_command() {
     echo "$compose_images" | while read image; do
         echo -e "\033[38;5;244m   $image\033[0m"
     done
-    
-    # Выполняем pull и анализируем вывод
+
     echo -e "\033[38;5;250m📝 Step 3:\033[0m Pulling latest images..."
     
     local pull_output=""
     local pull_exit_code=0
-    
-    # Захватываем полный вывод pull команды
+
     pull_output=$($COMPOSE -f "$COMPOSE_FILE" pull 2>&1) || pull_exit_code=$?
     
     if [ $pull_exit_code -ne 0 ]; then
@@ -3984,29 +3958,24 @@ update_command() {
         echo -e "\033[38;5;244m$pull_output\033[0m"
         exit 1
     fi
-    
-    # Анализируем вывод pull команды для определения обновлений
+
     local images_updated=false
     local update_indicators=""
-    
-    # Ищем индикаторы обновления в выводе
+
     if echo "$pull_output" | grep -qi "downloading\|downloaded\|pulling fs layer\|extracting\|pull complete"; then
         images_updated=true
         update_indicators="New layers downloaded"
     fi
-    
-    # Проверяем количество "up to date" сообщений
+
     local up_to_date_count=$(echo "$pull_output" | grep -ci "image is up to date\|already exists")
     local total_images_count=$(echo "$compose_images" | wc -l)
-    
-    # Если ВСЕ образы показали "up to date", то обновлений точно нет
+
     if [ "$up_to_date_count" -ge "$total_images_count" ] && [ "$total_images_count" -gt 0 ]; then
         if ! echo "$pull_output" | grep -qi "downloading\|downloaded\|pulling fs layer\|extracting\|pull complete"; then
             images_updated=false
         fi
     fi
-    
-    # Дополнительная проверка для надежности
+
     if echo "$pull_output" | grep -qi "digest.*differs\|newer image\|status.*downloaded"; then
         images_updated=true
         update_indicators="$update_indicators, Newer versions detected"
@@ -4462,7 +4431,6 @@ usage() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
 }
 
-# Обновляем usage_minimal()
 usage_minimal() {
     echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
     echo
@@ -4488,7 +4456,6 @@ usage_minimal() {
     echo -e "\033[38;5;8m👨‍💻 DigneZzZ | 📚 gig.ovh\033[0m"
 }
 
-# Обновляем usage_compact()
 usage_compact() {
     echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;8mPanel CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
@@ -4665,9 +4632,7 @@ command_help() {
     esac
 }
 
-# Обновляем smart_usage для обработки help
 smart_usage() {
-    # Проверяем, запрашивается ли help для конкретной команды
     if [ "$1" = "help" ] && [ -n "$2" ]; then
         command_help "$2"
         return
