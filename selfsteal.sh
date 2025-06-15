@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.3
+# VERSION=1.5
 
 set -e
-SCRIPT_VERSION="1.3"
+SCRIPT_VERSION="1.5"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
+CONTAINER_NAME="caddy-selfsteal"
+VOLUME_PREFIX="caddy"
 
 # Configuration
 APP_NAME="selfsteal"
@@ -485,14 +487,14 @@ EOF
 services:
   caddy:
     image: caddy:2.9.1
-    container_name: caddy-selfsteal
+    container_name: $CONTAINER_NAME
     restart: unless-stopped
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - $HTML_DIR:/var/www/html
       - ./logs:/var/log/caddy
-      - caddy_data_selfsteal:/data
-      - caddy_config_selfsteal:/config
+      - ${VOLUME_PREFIX}_data:/data
+      - ${VOLUME_PREFIX}_config:/config
     env_file:
       - .env
     network_mode: "host"
@@ -503,8 +505,8 @@ services:
         max-file: "3"
 
 volumes:
-  caddy_data_selfsteal:
-  caddy_config_selfsteal:
+  ${VOLUME_PREFIX}_data:
+  ${VOLUME_PREFIX}_config:
 EOF
 
     echo -e "${GREEN}✅ docker-compose.yml created${NC}"
@@ -2071,7 +2073,40 @@ EOF
 generate_random_data() {
     local -n data_ref=$1
     
-    # Generate random values
+    # Check if openssl is available
+    if ! command -v openssl >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️  openssl not found, using alternative method${NC}"
+        # Fallback на /dev/urandom
+        data_ref[meta_id]=$(head -c 16 /dev/urandom | xxd -p 2>/dev/null || echo "$(date +%s)$(($RANDOM * $RANDOM))")
+        data_ref[comment]=$(head -c 8 /dev/urandom | xxd -p 2>/dev/null || echo "$(date +%s)")
+        data_ref[class_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
+        data_ref[title_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
+        data_ref[id_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
+        
+        # Continue with the rest of the function...
+        local meta_names=("viewport-id" "session-id" "track-id" "render-id" "page-id" "config-id" "app-id" "user-id")
+        data_ref[meta_name]=${meta_names[$RANDOM % ${#meta_names[@]}]}
+        
+        local class_prefixes=("app" "ui" "main" "content" "page" "site" "web" "view")
+        local random_class_prefix=${class_prefixes[$RANDOM % ${#class_prefixes[@]}]}
+        data_ref[class]="$random_class_prefix-${data_ref[class_suffix]}"
+        
+        local title_prefixes=("Portal" "Platform" "Site" "Hub" "Center" "Service" "System" "Network")
+        local title_prefix=${title_prefixes[$RANDOM % ${#title_prefixes[@]}]}
+        data_ref[title]="${title_prefix}_${data_ref[title_suffix]}"
+        
+        local company_prefixes=("Tech" "Digital" "Smart" "Pro" "Elite" "Prime" "Global" "Advanced")
+        local company_suffix=${company_prefixes[$RANDOM % ${#company_prefixes[@]}]}
+        data_ref[footer]="Powered by ${company_suffix}Solutions_${data_ref[title_suffix]}"
+        
+        local colors=("#2c3e50" "#3498db" "#9b59b6" "#e74c3c" "#f39c12" "#27ae60" "#34495e" "#16a085")
+        data_ref[primary_color]=${colors[$RANDOM % ${#colors[@]}]}
+        data_ref[accent_color]=${colors[$RANDOM % ${#colors[@]}]}
+        
+        return
+    fi
+    
+    # Generate random values using openssl
     data_ref[meta_id]=$(openssl rand -hex 16)
     data_ref[comment]=$(openssl rand -hex 8)
     data_ref[class_suffix]=$(openssl rand -hex 4)
@@ -2541,7 +2576,7 @@ clean_logs_command() {
     
     # Docker logs
     local docker_logs_size
-    docker_logs_size=$(docker logs caddy 2>&1 | wc -c 2>/dev/null || echo "0")
+    docker_logs_size=$(docker logs $CONTAINER_NAME 2>&1 | wc -c 2>/dev/null || echo "0")
     docker_logs_size=$((docker_logs_size / 1024))
     echo -e "${GRAY}   Docker logs: ${WHITE}${docker_logs_size}KB${NC}"
     
@@ -2560,15 +2595,15 @@ clean_logs_command() {
         echo -e "${WHITE}🧹 Cleaning logs...${NC}"
         
         # Clean Docker logs by recreating container
-        if docker ps -q -f name=caddy >/dev/null 2>&1; then
+        if docker ps -q -f name=$CONTAINER_NAME >/dev/null 2>&1; then
             echo -e "${GRAY}   Stopping Caddy...${NC}"
-            cd "$APP_DIR" && docker compose stop caddy
+            cd "$APP_DIR" && docker compose stop
             
             echo -e "${GRAY}   Removing container to clear logs...${NC}"
-            docker rm caddy 2>/dev/null || true
+            docker rm $CONTAINER_NAME 2>/dev/null || true
             
             echo -e "${GRAY}   Starting Caddy...${NC}"
-            cd "$APP_DIR" && docker compose up -d caddy
+            cd "$APP_DIR" && docker compose up -d
         fi
         
         # Clean Caddy internal logs
@@ -2598,8 +2633,8 @@ logs_size_command() {
     
     # Docker logs
     local docker_logs_size
-    if docker ps -q -f name=caddy >/dev/null 2>&1; then
-        docker_logs_size=$(docker logs caddy 2>&1 | wc -c 2>/dev/null || echo "0")
+    if docker ps -q -f name=$CONTAINER_NAME >/dev/null 2>&1; then
+        docker_logs_size=$(docker logs $CONTAINER_NAME 2>&1 | wc -c 2>/dev/null || echo "0")
         docker_logs_size=$((docker_logs_size / 1024))
         echo -e "${WHITE}📋 Docker logs:${NC} ${GRAY}${docker_logs_size}KB${NC}"
     else
@@ -2608,7 +2643,7 @@ logs_size_command() {
     
     # Caddy access logs
     local caddy_data_dir
-    caddy_data_dir=$(cd "$APP_DIR" && docker volume inspect caddy_caddy_data --format '{{.Mountpoint}}' 2>/dev/null || echo "")
+    caddy_data_dir=$(cd "$APP_DIR" && docker volume inspect "${APP_DIR##*/}_${VOLUME_PREFIX}_data" --format '{{.Mountpoint}}' 2>/dev/null || echo "")
     
     if [ -n "$caddy_data_dir" ] && [ -d "$caddy_data_dir" ]; then
         local access_log="$caddy_data_dir/access.log"
@@ -2632,6 +2667,15 @@ logs_size_command() {
         echo -e "${WHITE}📄 Caddy logs:${NC} ${GRAY}Volume not accessible${NC}"
     fi
     
+    # Logs directory
+    if [ -d "$APP_DIR/logs" ]; then
+        local logs_dir_size
+        logs_dir_size=$(du -sk "$APP_DIR/logs" 2>/dev/null | cut -f1 || echo "0")
+        echo -e "${WHITE}📁 Logs directory:${NC} ${GRAY}${logs_dir_size}KB${NC}"
+    fi
+    
+    echo
+    echo -e "${GRAY}💡 Tip: Use 'sudo $APP_NAME clean-logs' to clean all logs${NC}"
     echo
 }
 
@@ -3807,14 +3851,14 @@ check_for_updates_silent() {
     # Simple silent check for updates
     if command -v curl >/dev/null 2>&1; then
         local remote_script_version
-        remote_script_version=$(curl -s "$UPDATE_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
+        remote_script_version=$(timeout 5 curl -s "$UPDATE_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
         
         if [ -n "$remote_script_version" ] && [ "$SCRIPT_VERSION" != "$remote_script_version" ]; then
             echo -e "${YELLOW}💡 Update available: v$remote_script_version (current: v$SCRIPT_VERSION)${NC}"
             echo -e "${GRAY}   Run 'sudo $APP_NAME update' to update${NC}"
             echo
         fi
-    fi >/dev/null 2>&1 || true  # Suppress any curl errors
+    fi 2>/dev/null || true  # Suppress any errors completely
 }
 
 # Manual update command
@@ -3890,8 +3934,8 @@ main_menu() {
             5) status_command; read -p "Press Enter to continue..." ;;
             6) template_command ;;
             7) logs_command ;;
-            8) logs_size_command ;;
-            9) clean_logs_command ;;
+            8) logs_size_command; read -p "Press Enter to continue..." ;;
+            9) clean_logs_command; read -p "Press Enter to continue..." ;;
             10) edit_command; read -p "Press Enter to continue..." ;;
             11) uninstall_command; read -p "Press Enter to continue..." ;;
             12) update_command; read -p "Press Enter to continue..." ;;
