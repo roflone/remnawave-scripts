@@ -7,7 +7,7 @@
 ### Способ 1: Прямая установка (рекомендуется)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/selfsteal.sh | bash
+sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh)" @ install
 ```
 
 ### Способ 2: Скачать и запустить
@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sel
 wget https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/selfsteal.sh
 chmod +x selfsteal.sh
 ./selfsteal.sh
+
+# После этого выбирайте пункт 1) 🚀 Install Caddy
 ```
 
 ## 📋 Системные требования
