@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.2
+# VERSION=1.3
 
 set -e
-SCRIPT_VERSION="1.2"
+SCRIPT_VERSION="1.3"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -485,7 +485,7 @@ EOF
 services:
   caddy:
     image: caddy:2.9.1
-    container_name: caddy-remnawave
+    container_name: caddy-selfsteal
     restart: unless-stopped
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
@@ -496,6 +496,11 @@ services:
     env_file:
       - .env
     network_mode: "host"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   caddy_data_selfsteal:
@@ -2517,6 +2522,119 @@ logs_command() {
     docker compose logs -f
 }
 
+
+# Clean logs function
+clean_logs_command() {
+    check_running_as_root
+    
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "${RED}❌ Caddy is not installed${NC}"
+        return 1
+    fi
+    
+    echo -e "${WHITE}🧹 Cleaning Logs${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
+    echo
+    
+    # Show current log sizes
+    echo -e "${WHITE}📊 Current log sizes:${NC}"
+    
+    # Docker logs
+    local docker_logs_size
+    docker_logs_size=$(docker logs caddy 2>&1 | wc -c 2>/dev/null || echo "0")
+    docker_logs_size=$((docker_logs_size / 1024))
+    echo -e "${GRAY}   Docker logs: ${WHITE}${docker_logs_size}KB${NC}"
+    
+    # Caddy access logs
+    local caddy_logs_path="$APP_DIR/caddy_data/_logs"
+    if [ -d "$caddy_logs_path" ]; then
+        local caddy_logs_size
+        caddy_logs_size=$(du -sk "$caddy_logs_path" 2>/dev/null | cut -f1 || echo "0")
+        echo -e "${GRAY}   Caddy logs: ${WHITE}${caddy_logs_size}KB${NC}"
+    fi
+    
+    echo
+    read -p "Clean all logs? [y/N]: " -r clean_choice
+    
+    if [[ $clean_choice =~ ^[Yy]$ ]]; then
+        echo -e "${WHITE}🧹 Cleaning logs...${NC}"
+        
+        # Clean Docker logs by recreating container
+        if docker ps -q -f name=caddy >/dev/null 2>&1; then
+            echo -e "${GRAY}   Stopping Caddy...${NC}"
+            cd "$APP_DIR" && docker compose stop caddy
+            
+            echo -e "${GRAY}   Removing container to clear logs...${NC}"
+            docker rm caddy 2>/dev/null || true
+            
+            echo -e "${GRAY}   Starting Caddy...${NC}"
+            cd "$APP_DIR" && docker compose up -d caddy
+        fi
+        
+        # Clean Caddy internal logs
+        if [ -d "$caddy_logs_path" ]; then
+            echo -e "${GRAY}   Cleaning Caddy access logs...${NC}"
+            rm -rf "$caddy_logs_path"/* 2>/dev/null || true
+        fi
+        
+        echo -e "${GREEN}✅ Logs cleaned successfully${NC}"
+    else
+        echo -e "${GRAY}Log cleanup cancelled${NC}"
+    fi
+}
+
+# Show log sizes function
+logs_size_command() {
+    check_running_as_root
+    
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "${RED}❌ Caddy is not installed${NC}"
+        return 1
+    fi
+    
+    echo -e "${WHITE}📊 Log Sizes${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
+    echo
+    
+    # Docker logs
+    local docker_logs_size
+    if docker ps -q -f name=caddy >/dev/null 2>&1; then
+        docker_logs_size=$(docker logs caddy 2>&1 | wc -c 2>/dev/null || echo "0")
+        docker_logs_size=$((docker_logs_size / 1024))
+        echo -e "${WHITE}📋 Docker logs:${NC} ${GRAY}${docker_logs_size}KB${NC}"
+    else
+        echo -e "${WHITE}📋 Docker logs:${NC} ${GRAY}Container not running${NC}"
+    fi
+    
+    # Caddy access logs
+    local caddy_data_dir
+    caddy_data_dir=$(cd "$APP_DIR" && docker volume inspect caddy_caddy_data --format '{{.Mountpoint}}' 2>/dev/null || echo "")
+    
+    if [ -n "$caddy_data_dir" ] && [ -d "$caddy_data_dir" ]; then
+        local access_log="$caddy_data_dir/access.log"
+        if [ -f "$access_log" ]; then
+            local access_log_size
+            access_log_size=$(du -k "$access_log" 2>/dev/null | cut -f1 || echo "0")
+            echo -e "${WHITE}📄 Access log:${NC} ${GRAY}${access_log_size}KB${NC}"
+        else
+            echo -e "${WHITE}📄 Access log:${NC} ${GRAY}Not found${NC}"
+        fi
+        
+        # Check for rotated logs
+        local rotated_logs
+        rotated_logs=$(find "$caddy_data_dir" -name "access.log.*" 2>/dev/null | wc -l || echo "0")
+        if [ "$rotated_logs" -gt 0 ]; then
+            local rotated_size
+            rotated_size=$(find "$caddy_data_dir" -name "access.log.*" -exec du -k {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+            echo -e "${WHITE}🔄 Rotated logs:${NC} ${GRAY}${rotated_size}KB (${rotated_logs} files)${NC}"
+        fi
+    else
+        echo -e "${WHITE}📄 Caddy logs:${NC} ${GRAY}Volume not accessible${NC}"
+    fi
+    
+    echo
+}
+
 stop_services() {
     if [ -f "$APP_DIR/docker-compose.yml" ]; then
         cd "$APP_DIR"
@@ -3552,6 +3670,8 @@ show_help() {
     printf "   ${CYAN}%-12s${NC} %s\n" "restart" "🔄 Restart Caddy services"
     printf "   ${CYAN}%-12s${NC} %s\n" "status" "📊 Show service status"
     printf "   ${CYAN}%-12s${NC} %s\n" "logs" "📝 Show service logs"
+    printf "   ${CYAN}%-12s${NC} %s\n" "logs-size" "📊 Show log sizes"
+    printf "   ${CYAN}%-12s${NC} %s\n" "clean-logs" "🧹 Clean all logs"
     printf "   ${CYAN}%-12s${NC} %s\n" "edit" "✏️  Edit configuration files"
     printf "   ${CYAN}%-12s${NC} %s\n" "uninstall" "🗑️  Remove Caddy installation"
     printf "   ${CYAN}%-12s${NC} %s\n" "template" "🎨 Manage website templates"
@@ -3749,16 +3869,18 @@ main_menu() {
         echo
         echo -e "${WHITE}📝 Configuration & Logs:${NC}"
         echo -e "   ${WHITE}7)${NC} 📝 View logs"
-        echo -e "   ${WHITE}8)${NC} ✏️  Edit configuration"
+        echo -e "   ${WHITE}8)${NC} 📊 Log sizes"
+        echo -e "   ${WHITE}9)${NC} 🧹 Clean logs"
+        echo -e "   ${WHITE}10)${NC} ✏️  Edit configuration"
         echo
         echo -e "${WHITE}🗑️  Maintenance:${NC}"
-        echo -e "   ${WHITE}9)${NC} 🗑️  Uninstall Caddy"
-        echo -e "   ${WHITE}10)${NC} 🔄 Check for updates"
+        echo -e "   ${WHITE}11)${NC} 🗑️  Uninstall Caddy"
+        echo -e "   ${WHITE}12)${NC} 🔄 Check for updates"
         echo
         echo -e "   ${GRAY}0)${NC} ⬅️  Exit"
         echo
 
-        read -p "$(echo -e "${WHITE}Select option [0-10]:${NC} ")" choice
+        read -p "$(echo -e "${WHITE}Select option [0-12]:${NC} ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -3768,9 +3890,11 @@ main_menu() {
             5) status_command; read -p "Press Enter to continue..." ;;
             6) template_command ;;
             7) logs_command ;;
-            8) edit_command; read -p "Press Enter to continue..." ;;
-            9) uninstall_command; read -p "Press Enter to continue..." ;;
-            10) update_command; read -p "Press Enter to continue..." ;;
+            8) logs_size_command ;;
+            9) clean_logs_command ;;
+            10) edit_command; read -p "Press Enter to continue..." ;;
+            11) uninstall_command; read -p "Press Enter to continue..." ;;
+            12) update_command; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "${RED}❌ Invalid option!${NC}"
@@ -3788,6 +3912,8 @@ case "$COMMAND" in
     restart) restart_command ;;
     status) status_command ;;
     logs) logs_command ;;
+    logs-size) logs_size_command ;;
+    clean-logs) clean_logs_command ;;
     edit) edit_command ;;
     uninstall) uninstall_command ;;
     template) template_command ;;
