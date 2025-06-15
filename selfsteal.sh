@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.0
+# VERSION=1.1
 
 set -e
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -29,12 +29,6 @@ NC='\033[0m' # No Color
 # Parse command line arguments
 COMMAND=""
 if [ $# -gt 0 ]; then
-    COMMAND="$1"
-    shift
-fi
-
-# Process additional arguments based on command
-while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h)
             show_help
@@ -45,13 +39,10 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo "Unknown option: $1" >&2
-            echo "Use '$APP_NAME --help' for usage information."
-            exit 1
+            COMMAND="$1"
             ;;
     esac
-done
-
+fi
 # Fetch IP address
 NODE_IP=$(curl -s -4 ifconfig.io 2>/dev/null || echo "127.0.0.1")
 if [ -z "$NODE_IP" ] || [ "$NODE_IP" = "" ]; then
@@ -2387,16 +2378,41 @@ EOF
     echo -e "${GREEN}✅ Default website created${NC}"
 }
 
-# Install management script
 install_management_script() {
     echo -e "${WHITE}🔧 Installing Management Script${NC}"
     
-    cp "$0" "/usr/local/bin/$APP_NAME"
-    chmod +x "/usr/local/bin/$APP_NAME"
+    # Определить путь к скрипту
+    local script_path
+    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "@" ]; then
+        script_path="$0"
+    else
+        # Попытаться найти скрипт в /tmp или скачать заново
+        local temp_script="/tmp/selfsteal-install.sh"
+        if curl -fsSL "$UPDATE_URL" -o "$temp_script" 2>/dev/null; then
+            script_path="$temp_script"
+            echo -e "${GRAY}📥 Downloaded script from remote source${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Could not install management script automatically${NC}"
+            echo -e "${GRAY}   You can download it manually from: $UPDATE_URL${NC}"
+            return 1
+        fi
+    fi
     
-    echo -e "${GREEN}✅ Management script installed: /usr/local/bin/$APP_NAME${NC}"
+    # Установить скрипт
+    if [ -f "$script_path" ]; then
+        cp "$script_path" "/usr/local/bin/$APP_NAME"
+        chmod +x "/usr/local/bin/$APP_NAME"
+        echo -e "${GREEN}✅ Management script installed: /usr/local/bin/$APP_NAME${NC}"
+        
+        # Очистить временный файл если использовался
+        if [ "$script_path" = "/tmp/selfsteal-install.sh" ]; then
+            rm -f "$script_path"
+        fi
+    else
+        echo -e "${RED}❌ Failed to install management script${NC}"
+        return 1
+    fi
 }
-
 # Service management functions
 up_command() {
     check_running_as_root
