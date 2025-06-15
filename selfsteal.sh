@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.5
+# VERSION=1.6
 
 set -e
-SCRIPT_VERSION="1.5"
+SCRIPT_VERSION="1.6"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -525,27 +525,64 @@ EOF
         }
     }
     auto_https disable_redirects
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MB
+            roll_keep 5
+            roll_keep_for 720h
+            roll_compression gzip
+        }
+        level ERROR
+        format json {
+            fields {
+                common_log
+                duration
+                status
+                -request>headers
+            }
+        }
+    }
 }
 
 http://{$SELF_STEAL_DOMAIN} {
     bind 0.0.0.0
     redir https://{$SELF_STEAL_DOMAIN}{uri} permanent
+    log {
+        output file /var/log/caddy/redirect.log {
+            roll_size 5MB
+            roll_keep 3
+            roll_keep_for 168h
+        }
+    }
 }
 
 https://{$SELF_STEAL_DOMAIN} {
     root * /var/www/html
     try_files {path} /index.html
     file_server
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MB
+            roll_keep 5
+            roll_keep_for 720h
+            roll_compression gzip
+        }
+        level ERROR
+        exclude /static/*
+        exclude *.ico
+    }
 }
 
 :{$SELF_STEAL_PORT} {
     tls internal
     respond 204
+    log off
 }
 
 :80 {
     bind 0.0.0.0
     respond 204
+    log off
 }
 EOF
 
