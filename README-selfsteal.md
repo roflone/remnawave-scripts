@@ -1,6 +1,6 @@
 # Caddy for Reality Selfsteal
 
-Caddy for Reality Selfsteal — это скрипт для автоматической установки и управления веб-сервером Caddy, используемым для маскировки трафика Reality в связке с Xray. Скрипт упрощает настройку, управление сервисами и выбор шаблонов веб-сайта для маскировки.
+Caddy for Reality Selfsteal — это скрипт для автоматической установки и управления веб-сервером Caddy, используемым для маскировки трафика Reality в связке с Xray. Скрипт упрощает настройку, управление сервисами и выбор шаблонов веб-сайта для маскировки. Порт 443 остается свободным для Xray.
 
 ![изображение](https://github.com/user-attachments/assets/fb82bb59-c6f5-48f4-a6a8-25540be6c03e)
 
@@ -50,7 +50,7 @@ sudo bash -c "curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-sc
 Затем запустите установку:
 
 ```bash
-sudo selfsteal install
+selfsteal install
 ```
 
 Следуйте инструкциям:
@@ -63,10 +63,16 @@ sudo selfsteal install
 
 ## Использование
 
-Скрипт предоставляет следующие команды:
+В скрипте реализовано интерактивное меню. Для этого достаточно выполнить команду:
 
 ```bash
-sudo selfsteal [команда]
+selfsteal
+```
+
+Каждую команду можно выполнить напрямую
+
+```bash
+selfsteal help
 ```
 
 ### Основные команды
@@ -76,7 +82,7 @@ sudo selfsteal [команда]
 - **down**: Остановить сервисы Caddy.
 - **restart**: Перезапустить сервисы.
 - **status**: Показать статус сервисов.
-- **logs**: Просмотреть логи Caddy.
+- **logs**: Просмотреть логи Caddy (отдельное меню).
 - **logs-size**: Показать размер логов.
 - **clean-logs**: Очистить все логи.
 - **edit**: Редактировать конфигурационные файлы (.env, Caddyfile, docker-compose.yml).
@@ -90,19 +96,19 @@ sudo selfsteal [команда]
 
 ```bash
 # Установить Caddy
-sudo selfsteal install
+selfsteal install
 
 # Проверить статус сервисов
-sudo selfsteal status
+selfsteal status
 
 # Просмотреть логи
-sudo selfsteal logs
+selfsteal logs
 
 # Изменить шаблон сайта
-sudo selfsteal template
+selfsteal template
 
 # Обновить скрипт
-sudo selfsteal update
+selfsteal update
 ```
 
 ## Управление шаблонами веб-сайта
