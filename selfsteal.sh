@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.1
+# VERSION=2.1.2
 
 set -e
-SCRIPT_VERSION="2.1.1"
+SCRIPT_VERSION="2.1.2"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -584,8 +584,8 @@ EOF
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
     
     # List of available templates
-    local templates=("1" "2" "3" "4" "5" "6" "7" "8" "9" "10")
-    local template_names=("10gag" "Converter" "Convertit" "Downloader" "FileCloud" "Games-site" "ModManager" "SpeedTest" "YouTube" "503 Error")
+    local templates=("1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11")
+    local template_names=("10gag" "Converter" "Convertit" "Downloader" "FileCloud" "Games-site" "ModManager" "SpeedTest" "YouTube" "503 Error v1" "503 Error v2")
     
     # Select random template
     local random_index=$((RANDOM % ${#templates[@]}))
@@ -771,13 +771,17 @@ download_template() {
             template_name="SpeedTest - Спидтест"
             ;;
         "9"|"youtube")
-            template_folder="YouTube%20endless%20captcha"
+            template_folder="YouTube"
             template_name="YouTube - Видеохостинг с капчей"
             ;;
         "10"|"503")
-            template_folder="503%20error%20pages/v1"
-            template_name="503 Error - Страница ошибки 503"
+            template_folder="503-1"
+            template_name="503 Error - Страница ошибки 503 - вариант 1"
             ;;
+        "11"|"503")
+            template_folder="503-2"
+            template_name="503 Error - Страница ошибки 503 - вариант 2"
+        ;;
         *)
             echo -e "${RED}❌ Unknown template type: $template_type${NC}"
             return 1
