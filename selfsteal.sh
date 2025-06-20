@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.0.2
+# VERSION=2.0.3
 
 set -e
-SCRIPT_VERSION="2.0.2"
+SCRIPT_VERSION="2.0.3"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -1066,13 +1066,13 @@ EOF
 </head>
 <body>
     <div class="container">
-        <h1>404</h1>
-        <h2>Page Not Found</h2>
+        <h1>404</h1>        <h2>Page Not Found</h2>
         <p>The page you are looking for does not exist.</p>
     </div>
 </body>
 </html>
-EOF    echo -e "${GREEN}✅ Default HTML content created${NC}"
+EOF
+    echo -e "${GREEN}✅ Default HTML content created${NC}"
 }
 
 # Function to show template options
