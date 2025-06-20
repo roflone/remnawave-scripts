@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.0
+# VERSION=3.1
 
 set -e
-SCRIPT_VERSION="3.0"
+SCRIPT_VERSION="3.1"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -914,7 +914,7 @@ if [ "$TELEGRAM_ENABLED" = "true" ]; then
         backup_info="🤖 *Scheduled Backup Created*\n\n"
         backup_info+="📦 *Name:* \`$backup_name\`\n"
         backup_info+="📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')\n"
-        backup_info+="� *Size:* $(du -sh "$final_backup_file" | cut -f1)\n"
+        backup_info+="🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)\n"
         backup_info+="🏷️ *Type:* Full System Backup\n"
         backup_info+="�️ *Server:* $(hostname)\n"
         backup_info+="✅ *Status:* Success"
@@ -5070,7 +5070,7 @@ update_command() {
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
         echo -e "\033[1;37m🎉 No updates available!\033[0m"
-        echo -e "\033[38;5;250m� All components are running the latest versions\033[0m"
+        echo -e "\033[38;5;250m🎯 All components are running the latest versions\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
         exit 0
     fi
@@ -5433,7 +5433,7 @@ usage() {
     echo -e "\033[1;37m⚡ $APP_NAME\033[0m \033[38;5;8mPanel Management CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     echo
-    echo -e "\033[1;37m� Installation & Updates:\033[0m"
+    echo -e "\033[1;37m🎯 Installation & Updates:\033[0m"
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install Remnawave panel"
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove panel completely"
@@ -5466,7 +5466,7 @@ usage() {
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "pm2-monitor" "📊 PM2 process monitor"
     echo
 
-    echo -e "\033[1;37m� Script Management:\033[0m"
+    echo -e "\033[1;37m📊 Script Management:\033[0m"
     printf "   \033[38;5;244m%-18s\033[0m %s\n" "install-script" "📥 Install this script globally"
     printf "   \033[38;5;244m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
     echo
