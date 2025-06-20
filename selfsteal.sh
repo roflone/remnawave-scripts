@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.0.6
+# VERSION=2.1.0
 
 set -e
-SCRIPT_VERSION="2.0.6"
+SCRIPT_VERSION="2.1.0"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -805,92 +805,67 @@ download_template() {
     rm -rf "$HTML_DIR"/*
     cd "$HTML_DIR"
     
-    # URL базового репозитория
+    # Используем GitHub API для получения списка файлов
+    local api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/contents/sni-templates/$template_folder"
     local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates"
     
-    echo -e "${WHITE}� Downloading files from repository...${NC}"
+    echo -e "${WHITE}📡 Fetching file list from GitHub API...${NC}"
     
-    # Скачиваем основные файлы шаблона
-    local files_downloaded=0
-    local failed_downloads=0
+    # Получаем список файлов через API
+    local files_json
+    files_json=$(curl -s "$api_url" 2>/dev/null)
     
-    # Список основных файлов для скачивания
-    local main_files=("index.html" "favicon.ico" "favicon.svg" "site.webmanifest")
-    local asset_files=("assets/style.css" "assets/script.js" "assets/main.js")
-    local icon_files=("apple-touch-icon.png" "favicon-96x96.png" "web-app-manifest-192x192.png" "web-app-manifest-512x512.png")
-    
-    # Скачиваем основные файлы
-    for file in "${main_files[@]}"; do
-        local url="$base_url/$template_folder/$file"
-        echo -e "${GRAY}   Downloading $file...${NC}"
+    if [ -n "$files_json" ] && echo "$files_json" | grep -q '"name"'; then
+        echo -e "${GREEN}✅ File list retrieved${NC}"
+        echo -e "${WHITE}📥 Downloading all files...${NC}"
         
-        if curl -fsSL "$url" -o "$file" 2>/dev/null; then
-            echo -e "${GREEN}   ✅ $file${NC}"
-            ((files_downloaded++))
-        else
-            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
-            ((failed_downloads++))
-        fi
-    done
-    
-    # Создаем папку assets если нужно
-    mkdir -p assets
-    
-    # Скачиваем файлы assets
-    for file in "${asset_files[@]}"; do
-        local url="$base_url/$template_folder/$file"
-        local filename=$(basename "$file")
-        echo -e "${GRAY}   Downloading assets/$filename...${NC}"
+        local files_downloaded=0
+        local failed_downloads=0
         
-        if curl -fsSL "$url" -o "assets/$filename" 2>/dev/null; then
-            echo -e "${GREEN}   ✅ assets/$filename${NC}"
-            ((files_downloaded++))
-        else
-            echo -e "${YELLOW}   ⚠️  assets/$filename (optional file not found)${NC}"
-            ((failed_downloads++))
-        fi
-    done
-    
-    # Скачиваем иконки
-    for file in "${icon_files[@]}"; do
-        local url="$base_url/$template_folder/$file"
-        echo -e "${GRAY}   Downloading $file...${NC}"
+        # Парсим JSON и скачиваем файлы
+        echo "$files_json" | grep -o '"download_url":"[^"]*"' | cut -d'"' -f4 | while read -r download_url; do
+            if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
+                local filename=$(basename "$download_url")
+                echo -e "${GRAY}   Downloading $filename...${NC}"
+                
+                if curl -fsSL "$download_url" -o "$filename" 2>/dev/null; then
+                    echo -e "${GREEN}   ✅ $filename${NC}"
+                    ((files_downloaded++))
+                else
+                    echo -e "${YELLOW}   ⚠️  $filename (failed)${NC}"
+                    ((failed_downloads++))
+                fi
+            fi
+        done
         
-        if curl -fsSL "$url" -o "$file" 2>/dev/null; then
-            echo -e "${GREEN}   ✅ $file${NC}"
-            ((files_downloaded++))
-        else
-            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
-            ((failed_downloads++))
+        # Проверяем наличие assets папки через API
+        local assets_api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/contents/sni-templates/$template_folder/assets"
+        local assets_json
+        assets_json=$(curl -s "$assets_api_url" 2>/dev/null)
+        
+        if [ -n "$assets_json" ] && echo "$assets_json" | grep -q '"name"'; then
+            mkdir -p assets
+            echo -e "${WHITE}📁 Downloading assets folder...${NC}"
+            
+            echo "$assets_json" | grep -o '"download_url":"[^"]*"' | cut -d'"' -f4 | while read -r download_url; do
+                if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
+                    local filename=$(basename "$download_url")
+                    echo -e "${GRAY}   Downloading assets/$filename...${NC}"
+                    
+                    if curl -fsSL "$download_url" -o "assets/$filename" 2>/dev/null; then
+                        echo -e "${GREEN}   ✅ assets/$filename${NC}"
+                    else
+                        echo -e "${YELLOW}   ⚠️  assets/$filename (failed)${NC}"
+                    fi
+                fi
+            done
         fi
-    done
-    
-    # Проверяем, что хотя бы index.html был скачан
-    if [ ! -f "index.html" ]; then
-        echo -e "${RED}❌ Failed to download index.html - this is critical!${NC}"
-        # Создаем базовый index.html как fallback
-        create_fallback_html "$template_name"
-        echo -e "${YELLOW}⚠️  Created fallback index.html${NC}"
+        
+        return 0
+    else
+        echo -e "${RED}❌ Failed to get file list from GitHub API${NC}"
+        return 1
     fi
-    
-    # Устанавливаем правильные права доступа
-    chmod -R 644 "$HTML_DIR"/* 2>/dev/null || true
-    find "$HTML_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
-    chown -R www-data:www-data "$HTML_DIR" 2>/dev/null || true
-    
-    echo
-    echo -e "${WHITE}📊 Download Summary:${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
-    printf "   ${WHITE}%-20s${NC} ${GREEN}%d${NC}\n" "Files downloaded:" "$files_downloaded"
-    printf "   ${WHITE}%-20s${NC} ${YELLOW}%d${NC}\n" "Files skipped:" "$failed_downloads"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Template:" "$template_name"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Location:" "$HTML_DIR"
-    
-    echo
-    echo -e "${GREEN}✅ Template downloaded successfully${NC}"
-    echo -e "${GRAY}   You can now customize the content in: $HTML_DIR${NC}"
-    
-    return 0
 }
 
 # Fallback функция для создания базового HTML если скачивание не удалось
