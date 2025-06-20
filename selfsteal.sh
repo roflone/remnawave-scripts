@@ -4,7 +4,7 @@
 # VERSION=1.8.1
 
 set -e
-SCRIPT_VERSION="1.8.1"
+SCRIPT_VERSION="2.0.1"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -576,12 +576,32 @@ https://{$SELF_STEAL_DOMAIN} {
     respond 204
     log off
 }
-EOF
-
-    echo -e "${GREEN}✅ Caddyfile created${NC}"
-
-    # Create default HTML content
-    create_default_html
+EOF    echo -e "${GREEN}✅ Caddyfile created${NC}"    # Install random template instead of default HTML
+    echo
+    echo -e "${WHITE}🎨 Installing Random Template${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
+    
+    # List of available templates
+    local templates=("1" "2" "3" "4" "5" "6" "7" "8" "9" "10")
+    local template_names=("10gag" "Converter" "Convertit" "Downloader" "FileCloud" "Games-site" "ModManager" "SpeedTest" "YouTube" "503 Error")
+    
+    # Select random template
+    local random_index=$((RANDOM % ${#templates[@]}))
+    local selected_template=${templates[$random_index]}
+    local selected_name=${template_names[$random_index]}
+    local installed_template=""
+    
+    echo -e "${CYAN}🎲 Selected template: ${selected_name}${NC}"
+    echo
+    
+    if download_template "$selected_template"; then
+        echo -e "${GREEN}✅ Random template installed successfully${NC}"
+        installed_template="$selected_name template"
+    else
+        echo -e "${YELLOW}⚠️  Failed to download template, creating fallback${NC}"
+        create_default_html
+        installed_template="Default template (fallback)"
+    fi
 
     # Install management script
     install_management_script
@@ -619,18 +639,18 @@ EOF
     echo -e "${WHITE}🎉 Installation Completed Successfully!${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
-    
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
+      printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installation Path:" "$APP_DIR"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTML Content:" "$HTML_DIR"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installed Template:" "$installed_template"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Management Command:" "$APP_NAME"
-    
-    echo
+      echo
     echo -e "${WHITE}📋 Next Steps:${NC}"
     echo -e "${GRAY}   • Configure your Xray Reality with:${NC}"
     echo -e "${GRAY}     - serverNames: [\"$domain\"]${NC}"
     echo -e "${GRAY}     - dest: \"127.0.0.1:$port\"${NC}"
+    echo -e "${GRAY}   • Change template: sudo $APP_NAME template${NC}"
     echo -e "${GRAY}   • Customize HTML content in: $HTML_DIR${NC}"
     echo -e "${GRAY}   • Check status: sudo $APP_NAME status${NC}"
     echo -e "${GRAY}   • View logs: sudo $APP_NAME logs${NC}"
@@ -660,14 +680,19 @@ show_template_options() {
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
     echo
     echo -e "${WHITE}Select template type:${NC}"
-    echo -e "   ${WHITE}1)${NC} ${CYAN}💼 Corporate Business${NC}"
-    echo -e "   ${WHITE}2)${NC} ${CYAN}🏢 Technology Company${NC}"
-    echo -e "   ${WHITE}3)${NC} ${CYAN}🌟 Modern Portfolio${NC}"
-    echo -e "   ${WHITE}4)${NC} ${CYAN}🔧 Service Platform${NC}"
-    echo -e "   ${WHITE}5)${NC} ${CYAN}📊 Data Analytics${NC}"
-    echo -e "   ${WHITE}6)${NC} ${CYAN}🎲 Random Generated${NC}"
-    echo -e "   ${WHITE}7)${NC} ${GRAY}📄 View Current Template${NC}"
-    echo -e "   ${WHITE}8)${NC} ${GRAY}📝 Keep Current Template${NC}"
+    echo -e "   ${WHITE}1)${NC} ${CYAN}� 10gag - Сайт мемов${NC}"
+    echo -e "   ${WHITE}2)${NC} ${CYAN}� Converter - Видеостудия-конвертер${NC}"
+    echo -e "   ${WHITE}3)${NC} ${CYAN}📁 Convertit - Конвертер файлов${NC}"
+    echo -e "   ${WHITE}4)${NC} ${CYAN}⬇️ Downloader - Даунлоадер${NC}"
+    echo -e "   ${WHITE}5)${NC} ${CYAN}☁️ FileCloud - Облачное хранилище${NC}"
+    echo -e "   ${WHITE}6)${NC} ${CYAN}🎮 Games-site - Ретро игровой портал${NC}"
+    echo -e "   ${WHITE}7)${NC} ${CYAN}🛠️ ModManager - Мод-менеджер для игр${NC}"
+    echo -e "   ${WHITE}8)${NC} ${CYAN}� SpeedTest - Спидтест${NC}"
+    echo -e "   ${WHITE}9)${NC} ${CYAN}📺 YouTube - Видеохостинг с капчей${NC}"
+    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503${NC}"
+    echo
+    echo -e "   ${WHITE}v)${NC} ${GRAY}📄 View Current Template${NC}"
+    echo -e "   ${WHITE}k)${NC} ${GRAY}📝 Keep Current Template${NC}"
     echo
     echo -e "   ${GRAY}0)${NC} ${GRAY}⬅️  Cancel${NC}"
     echo
@@ -711,24 +736,64 @@ show_current_template_info() {
     echo
 }
 
-generate_builtin_template() {
+download_template() {
     local template_type="$1"
+    local template_folder=""
+    local template_name=""
     
-    echo -e "${WHITE}🎨 Generating Built-in Template${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+    # Определяем папку для скачивания в зависимости от выбранного шаблона
+    case "$template_type" in
+        "1"|"10gag")
+            template_folder="10gag"
+            template_name="10gag - Сайт мемов"
+            ;;
+        "2"|"converter")
+            template_folder="converter"
+            template_name="Converter - Видеостудия-конвертер"
+            ;;
+        "3"|"convertit")
+            template_folder="convertit"
+            template_name="Convertit - Конвертер файлов"
+            ;;
+        "4"|"downloader")
+            template_folder="downloader"
+            template_name="Downloader - Даунлоадер"
+            ;;
+        "5"|"filecloud")
+            template_folder="filecloud"
+            template_name="FileCloud - Облачное хранилище"
+            ;;
+        "6"|"games-site")
+            template_folder="games-site"
+            template_name="Games-site - Ретро игровой портал"
+            ;;
+        "7"|"modmanager")
+            template_folder="modmanager"
+            template_name="ModManager - Мод-менеджер для игр"
+            ;;
+        "8"|"speedtest")
+            template_folder="speedtest"
+            template_name="SpeedTest - Спидтест"
+            ;;
+        "9"|"youtube")
+            template_folder="YouTube%20endless%20captcha"
+            template_name="YouTube - Видеохостинг с капчей"
+            ;;
+        "10"|"503")
+            template_folder="503%20error%20pages/v1"
+            template_name="503 Error - Страница ошибки 503"
+            ;;
+        *)
+            echo -e "${RED}❌ Unknown template type: $template_type${NC}"
+            return 1
+            ;;
+    esac
+    
+    echo -e "${WHITE}🎨 Downloading Template: $template_name${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
     
-    # Generate random data
-    local random_data
-    generate_random_data random_data
-    
-    # Get domain from config
-    local domain="localhost"
-    if [ -f "$APP_DIR/.env" ]; then
-        domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
-    fi
-    
-    # Create backup if content exists
+    # Создаем бэкап существующего контента если есть
     if [ -d "$HTML_DIR" ] && [ "$(ls -A "$HTML_DIR" 2>/dev/null)" ]; then
         local backup_dir="/tmp/caddy-html-backup-$(date +%Y%m%d_%H%M%S)"
         mkdir -p "$backup_dir"
@@ -740,1632 +805,162 @@ generate_builtin_template() {
         fi
     fi
     
-    # Clear and create directory
+    # Создаем директорию
     mkdir -p "$HTML_DIR"
     rm -rf "$HTML_DIR"/*
+    cd "$HTML_DIR"
     
-    case "$template_type" in
-        "corporate"|"1")
-            echo -e "${CYAN}💼 Generating Corporate Business template${NC}"
-            generate_corporate_template "$domain" random_data
-            ;;
-        "tech"|"2")
-            echo -e "${CYAN}🏢 Generating Technology Company template${NC}"
-            generate_tech_template "$domain" random_data
-            ;;
-        "portfolio"|"3")
-            echo -e "${CYAN}🌟 Generating Modern Portfolio template${NC}"
-            generate_portfolio_template "$domain" random_data
-            ;;
-        "service"|"4")
-            echo -e "${CYAN}🔧 Generating Service Platform template${NC}"
-            generate_service_template "$domain" random_data
-            ;;
-        "analytics"|"5")
-            echo -e "${CYAN}📊 Generating Data Analytics template${NC}"
-            generate_analytics_template "$domain" random_data
-            ;;
-        "random"|"6"|*)
-            local templates=("corporate" "tech" "portfolio" "service" "analytics")
-            local random_template=${templates[$RANDOM % ${#templates[@]}]}
-            echo -e "${CYAN}🎲 Generating Random template: $random_template${NC}"
-            generate_builtin_template "$random_template"
-            return
-            ;;
-    esac
+    # URL базового репозитория
+    local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates"
     
-    # Set proper permissions
-    chown -R www-data:www-data "$HTML_DIR" 2>/dev/null || true
-    chmod -R 644 "$HTML_DIR" 2>/dev/null || true
+    echo -e "${WHITE}� Downloading files from repository...${NC}"
+    
+    # Скачиваем основные файлы шаблона
+    local files_downloaded=0
+    local failed_downloads=0
+    
+    # Список основных файлов для скачивания
+    local main_files=("index.html" "favicon.ico" "favicon.svg" "site.webmanifest")
+    local asset_files=("assets/style.css" "assets/script.js" "assets/main.js")
+    local icon_files=("apple-touch-icon.png" "favicon-96x96.png" "web-app-manifest-192x192.png" "web-app-manifest-512x512.png")
+    
+    # Скачиваем основные файлы
+    for file in "${main_files[@]}"; do
+        local url="$base_url/$template_folder/$file"
+        echo -e "${GRAY}   Downloading $file...${NC}"
+        
+        if curl -fsSL "$url" -o "$file" 2>/dev/null; then
+            echo -e "${GREEN}   ✅ $file${NC}"
+            ((files_downloaded++))
+        else
+            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
+            ((failed_downloads++))
+        fi
+    done
+    
+    # Создаем папку assets если нужно
+    mkdir -p assets
+    
+    # Скачиваем файлы assets
+    for file in "${asset_files[@]}"; do
+        local url="$base_url/$template_folder/$file"
+        local filename=$(basename "$file")
+        echo -e "${GRAY}   Downloading assets/$filename...${NC}"
+        
+        if curl -fsSL "$url" -o "assets/$filename" 2>/dev/null; then
+            echo -e "${GREEN}   ✅ assets/$filename${NC}"
+            ((files_downloaded++))
+        else
+            echo -e "${YELLOW}   ⚠️  assets/$filename (optional file not found)${NC}"
+            ((failed_downloads++))
+        fi
+    done
+    
+    # Скачиваем иконки
+    for file in "${icon_files[@]}"; do
+        local url="$base_url/$template_folder/$file"
+        echo -e "${GRAY}   Downloading $file...${NC}"
+        
+        if curl -fsSL "$url" -o "$file" 2>/dev/null; then
+            echo -e "${GREEN}   ✅ $file${NC}"
+            ((files_downloaded++))
+        else
+            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
+            ((failed_downloads++))
+        fi
+    done
+    
+    # Проверяем, что хотя бы index.html был скачан
+    if [ ! -f "index.html" ]; then
+        echo -e "${RED}❌ Failed to download index.html - this is critical!${NC}"
+        # Создаем базовый index.html как fallback
+        create_fallback_html "$template_name"
+        echo -e "${YELLOW}⚠️  Created fallback index.html${NC}"
+    fi
+    
+    # Устанавливаем правильные права доступа
+    chmod -R 644 "$HTML_DIR"/* 2>/dev/null || true
     find "$HTML_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
+    chown -R www-data:www-data "$HTML_DIR" 2>/dev/null || true
     
-    echo -e "${GREEN}✅ Template generated successfully${NC}"
-    echo -e "${GRAY}   Type: $template_type${NC}"
-    echo -e "${GRAY}   Location: $HTML_DIR${NC}"
-    echo -e "${GRAY}   Customized with random identifiers${NC}"
+    echo
+    echo -e "${WHITE}📊 Download Summary:${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
+    printf "   ${WHITE}%-20s${NC} ${GREEN}%d${NC}\n" "Files downloaded:" "$files_downloaded"
+    printf "   ${WHITE}%-20s${NC} ${YELLOW}%d${NC}\n" "Files skipped:" "$failed_downloads"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Template:" "$template_name"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Location:" "$HTML_DIR"
+    
+    echo
+    echo -e "${GREEN}✅ Template downloaded successfully${NC}"
+    echo -e "${GRAY}   You can now customize the content in: $HTML_DIR${NC}"
     
     return 0
 }
 
-# Corporate Business Template
-generate_corporate_template() {
-    local domain="$1"
-    local -n data_ref=$2
+# Fallback функция для создания базового HTML если скачивание не удалось
+create_fallback_html() {
+    local template_name="$1"
     
-    cat > "$HTML_DIR/index.html" << EOF
-<!DOCTYPE html>
-<html lang="en" class="${data_ref[class]}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="${data_ref[meta_name]}" content="${data_ref[meta_id]}">
-    <title>${data_ref[title]} - Corporate Solutions</title>
-    <!-- ${data_ref[comment]} -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <header class="header">
-        <nav class="navbar">
-            <div class="nav-brand">${data_ref[title]}</div>
-            <ul class="nav-menu">
-                <li><a href="#home">Home</a></li>
-                <li><a href="#about">About</a></li>
-                <li><a href="#services">Services</a></li>
-                <li><a href="#contact">Contact</a></li>
-            </ul>
-        </nav>
-    </header>
-
-    <main>
-        <section id="home" class="hero">
-            <div class="hero-content">
-                <h1>Excellence in Business Solutions</h1>
-                <p>Leading the industry with innovative approaches and proven results</p>
-                <div class="hero-stats">
-                    <div class="stat">
-                        <span class="stat-number">500+</span>
-                        <span class="stat-label">Clients</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-number">15+</span>
-                        <span class="stat-label">Years</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-number">98%</span>
-                        <span class="stat-label">Success</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="about" class="about">
-            <div class="container">
-                <h2>About Our Company</h2>
-                <div class="about-grid">
-                    <div class="about-text">
-                        <p>We are a leading provider of comprehensive business solutions, dedicated to helping organizations achieve their strategic objectives through innovative technology and expert consultation.</p>
-                        <div class="features">
-                            <div class="feature">
-                                <div class="feature-icon">🎯</div>
-                                <h3>Strategic Focus</h3>
-                                <p>Targeted solutions for maximum impact</p>
-                            </div>
-                            <div class="feature">
-                                <div class="feature-icon">⚡</div>
-                                <h3>Fast Delivery</h3>
-                                <p>Rapid implementation and deployment</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="services" class="services">
-            <div class="container">
-                <h2>Our Services</h2>
-                <div class="services-grid">
-                    <div class="service-card">
-                        <div class="service-icon">💼</div>
-                        <h3>Business Consulting</h3>
-                        <p>Strategic planning and operational optimization</p>
-                    </div>
-                    <div class="service-card">
-                        <div class="service-icon">🔧</div>
-                        <h3>Technical Solutions</h3>
-                        <p>Advanced technology implementation</p>
-                    </div>
-                    <div class="service-card">
-                        <div class="service-icon">📈</div>
-                        <h3>Growth Strategy</h3>
-                        <p>Scalable business development plans</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-section">
-                    <h4>${data_ref[title]}</h4>
-                    <p>Professional business solutions for modern enterprises</p>
-                </div>
-                <div class="footer-section">
-                    <h4>Contact</h4>
-                    <p>Domain: $domain</p>
-                    <p>Status: Online</p>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p>&copy; 2024 ${data_ref[footer]}. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
-</body>
-</html>
-EOF
-
-    generate_corporate_css "${data_ref[class]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}" "${data_ref[comment]}"
-    generate_common_files "$domain" "${data_ref[title]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}"
-}
-
-# Technology Company Template
-generate_tech_template() {
-    local domain="$1"
-    local -n data_ref=$2
-    
-    cat > "$HTML_DIR/index.html" << EOF
-<!DOCTYPE html>
-<html lang="en" class="${data_ref[class]}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="${data_ref[meta_name]}" content="${data_ref[meta_id]}">
-    <title>${data_ref[title]} - Technology Innovation</title>
-    <!-- ${data_ref[comment]} -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div class="tech-grid-bg"></div>
-    
-    <header class="header">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <span class="brand-icon">⚡</span>
-                ${data_ref[title]}
-            </div>
-            <ul class="nav-menu">
-                <li><a href="#home">Platform</a></li>
-                <li><a href="#features">Features</a></li>
-                <li><a href="#api">API</a></li>
-                <li><a href="#docs">Docs</a></li>
-            </ul>
-        </nav>
-    </header>
-
-    <main>
-        <section id="home" class="hero-tech">
-            <div class="hero-content">
-                <div class="tech-badge">Advanced Technology</div>
-                <h1>Next-Generation Platform</h1>
-                <p>Powerful, scalable, and secure technology solutions for modern applications</p>
-                <div class="tech-features">
-                    <div class="tech-feature">
-                        <span class="feature-icon">🚀</span>
-                        <span>High Performance</span>
-                    </div>
-                    <div class="tech-feature">
-                        <span class="feature-icon">🔒</span>
-                        <span>Enterprise Security</span>
-                    </div>
-                    <div class="tech-feature">
-                        <span class="feature-icon">⚡</span>
-                        <span>Real-time Processing</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="features" class="features-section">
-            <div class="container">
-                <h2>Platform Capabilities</h2>
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="card-header">
-                            <span class="card-icon">🔧</span>
-                            <h3>Developer Tools</h3>
-                        </div>
-                        <p>Comprehensive SDK and API documentation</p>
-                        <div class="feature-stats">
-                            <span>99.9% Uptime</span>
-                        </div>
-                    </div>
-                    <div class="feature-card">
-                        <div class="card-header">
-                            <span class="card-icon">📊</span>
-                            <h3>Analytics</h3>
-                        </div>
-                        <p>Real-time monitoring and performance insights</p>
-                        <div class="feature-stats">
-                            <span>Real-time Data</span>
-                        </div>
-                    </div>
-                    <div class="feature-card">
-                        <div class="card-header">
-                            <span class="card-icon">🌐</span>
-                            <h3>Global CDN</h3>
-                        </div>
-                        <p>Worldwide content delivery network</p>
-                        <div class="feature-stats">
-                            <span>150+ Locations</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="api" class="api-section">
-            <div class="container">
-                <h2>API Integration</h2>
-                <div class="api-demo">
-                    <div class="code-block">
-                        <div class="code-header">
-                            <span>REST API</span>
-                            <span class="status-indicator"></span>
-                        </div>
-                        <pre><code>{
-  "status": "active",
-  "version": "2.0",
-  "endpoints": {
-    "data": "/api/v2/data",
-    "auth": "/api/v2/auth",
-    "status": "/api/v2/status"
-  }
-}</code></pre>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-grid">
-                <div class="footer-section">
-                    <h4>${data_ref[title]}</h4>
-                    <p>Advanced technology platform</p>
-                </div>
-                <div class="footer-section">
-                    <h4>System Status</h4>
-                    <div class="status-grid">
-                        <div class="status-item">
-                            <span class="status-dot active"></span>
-                            <span>API: Online</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-dot active"></span>
-                            <span>CDN: Active</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p>${data_ref[footer]} | $domain</p>
-            </div>
-        </div>
-    </footer>
-</body>
-</html>
-EOF
-
-    generate_tech_css "${data_ref[class]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}" "${data_ref[comment]}"
-    generate_common_files "$domain" "${data_ref[title]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}"
-}
-
-# Service Platform Template
-generate_service_template() {
-    local domain="$1"
-    local -n data_ref=$2
-    
-    cat > "$HTML_DIR/index.html" << EOF
-<!DOCTYPE html>
-<html lang="en" class="${data_ref[class]}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="${data_ref[meta_name]}" content="${data_ref[meta_id]}">
-    <title>${data_ref[title]} - Service Platform</title>
-    <!-- ${data_ref[comment]} -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <header class="header">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <span class="service-icon">🔧</span>
-                ${data_ref[title]}
-            </div>
-            <div class="nav-status">
-                <span class="status-dot"></span>
-                <span>All Systems Operational</span>
-            </div>
-        </nav>
-    </header>
-
-    <main>
-        <section class="hero-service">
-            <div class="service-dashboard">
-                <h1>Service Management Platform</h1>
-                <p>Comprehensive service monitoring and management solution</p>
-                
-                <div class="dashboard-grid">
-                    <div class="dashboard-card">
-                        <div class="card-icon">📊</div>
-                        <div class="card-content">
-                            <h3>System Health</h3>
-                            <div class="metric">98.7%</div>
-                            <span class="metric-label">Uptime</span>
-                        </div>
-                    </div>
-                    <div class="dashboard-card">
-                        <div class="card-icon">⚡</div>
-                        <div class="card-content">
-                            <h3>Performance</h3>
-                            <div class="metric">45ms</div>
-                            <span class="metric-label">Response Time</span>
-                        </div>
-                    </div>
-                    <div class="dashboard-card">
-                        <div class="card-icon">🔒</div>
-                        <div class="card-content">
-                            <h3>Security</h3>
-                            <div class="metric">Active</div>
-                            <span class="metric-label">Protection</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="services-overview">
-            <div class="container">
-                <h2>Service Components</h2>
-                <div class="components-list">
-                    <div class="component">
-                        <div class="component-status active"></div>
-                        <div class="component-info">
-                            <h3>Web Service</h3>
-                            <p>HTTP/HTTPS request handling</p>
-                        </div>
-                        <div class="component-metrics">
-                            <span>Online</span>
-                        </div>
-                    </div>
-                    <div class="component">
-                        <div class="component-status active"></div>
-                        <div class="component-info">
-                            <h3>Load Balancer</h3>
-                            <p>Traffic distribution and routing</p>
-                        </div>
-                        <div class="component-metrics">
-                            <span>Healthy</span>
-                        </div>
-                    </div>
-                    <div class="component">
-                        <div class="component-status active"></div>
-                        <div class="component-info">
-                            <h3>Security Layer</h3>
-                            <p>DDoS protection and filtering</p>
-                        </div>
-                        <div class="component-metrics">
-                            <span>Protected</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-info">
-                <h4>${data_ref[title]} Service Platform</h4>
-                <div class="service-details">
-                    <div class="detail-item">
-                        <span class="detail-label">Domain:</span>
-                        <span>$domain</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="detail-label">Status:</span>
-                        <span class="status-active">Operational</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="detail-label">Version:</span>
-                        <span>2.0.1</span>
-                    </div>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p>${data_ref[footer]}</p>
-            </div>
-        </div>
-    </footer>
-</body>
-</html>
-EOF
-
-    generate_service_css "${data_ref[class]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}" "${data_ref[comment]}"
-    generate_common_files "$domain" "${data_ref[title]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}"
-}
-
-# CSS Generators for each template type
-generate_corporate_css() {
-    local class_name="$1"
-    local primary_color="$2"
-    local accent_color="$3"
-    local comment="$4"
-    
-    cat > "$HTML_DIR/style.css" << EOF
-/* Corporate Business Template - $comment */
-:root {
-    --primary: $primary_color;
-    --accent: $accent_color;
-    --text-dark: #2c3e50;
-    --text-light: #7f8c8d;
-    --bg-light: #f8f9fa;
-    --border: #e9ecef;
-}
-
-.$class_name {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.6;
-    color: var(--text-dark);
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.header {
-    background: white;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-}
-
-.navbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-.nav-brand {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--primary);
-}
-
-.nav-menu {
-    display: flex;
-    list-style: none;
-    gap: 2rem;
-}
-
-.nav-menu a {
-    text-decoration: none;
-    color: var(--text-dark);
-    font-weight: 500;
-    transition: color 0.3s ease;
-}
-
-.nav-menu a:hover {
-    color: var(--primary);
-}
-
-main {
-    margin-top: 80px;
-}
-
-.hero {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-    color: white;
-    padding: 5rem 2rem;
-    text-align: center;
-}
-
-.hero h1 {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    font-weight: 700;
-}
-
-.hero p {
-    font-size: 1.2rem;
-    margin-bottom: 3rem;
-    opacity: 0.9;
-}
-
-.hero-stats {
-    display: flex;
-    justify-content: center;
-    gap: 3rem;
-    flex-wrap: wrap;
-}
-
-.stat {
-    text-align: center;
-}
-
-.stat-number {
-    display: block;
-    font-size: 2.5rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-}
-
-.stat-label {
-    font-size: 0.9rem;
-    opacity: 0.8;
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 2rem;
-}
-
-.about, .services {
-    padding: 5rem 0;
-}
-
-.about h2, .services h2 {
-    text-align: center;
-    font-size: 2.5rem;
-    margin-bottom: 3rem;
-    color: var(--text-dark);
-}
-
-.features {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 2rem;
-    margin-top: 3rem;
-}
-
-.feature {
-    text-align: center;
-    padding: 2rem;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    transition: transform 0.3s ease;
-}
-
-.feature:hover {
-    transform: translateY(-5px);
-}
-
-.feature-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-}
-
-.services {
-    background: var(--bg-light);
-}
-
-.services-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2rem;
-}
-
-.service-card {
-    background: white;
-    padding: 2rem;
-    border-radius: 10px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-    text-align: center;
-    transition: all 0.3s ease;
-}
-
-.service-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-}
-
-.service-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-}
-
-.footer {
-    background: var(--text-dark);
-    color: white;
-    padding: 3rem 0 1rem;
-}
-
-.footer-content {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 2rem;
-    margin-bottom: 2rem;
-}
-
-.footer-bottom {
-    text-align: center;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    opacity: 0.7;
-}
-
-@media (max-width: 768px) {
-    .hero h1 {
-        font-size: 2rem;
-    }
-    
-    .hero-stats {
-        gap: 1.5rem;
-    }
-    
-    .navbar {
-        padding: 1rem;
-    }
-    
-    .nav-menu {
-        gap: 1rem;
-    }
-}
-EOF
-}
-
-generate_tech_css() {
-    local class_name="$1"
-    local primary_color="$2"
-    local accent_color="$3"
-    local comment="$4"
-    
-    cat > "$HTML_DIR/style.css" << EOF
-/* Technology Template - $comment */
-:root {
-    --primary: $primary_color;
-    --accent: $accent_color;
-    --dark: #1a1a1a;
-    --gray: #2d2d2d;
-    --light-gray: #f5f5f5;
-    --border: #333;
-}
-
-.$class_name {
-    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-    background: var(--dark);
-    color: white;
-    min-height: 100vh;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.tech-grid-bg {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-image: 
-        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-    background-size: 20px 20px;
-    z-index: -1;
-}
-
-.header {
-    background: rgba(0,0,0,0.9);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--border);
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-}
-
-.navbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-.nav-brand {
-    display: flex;
-    align-items: center;
-    font-size: 1.2rem;
-    font-weight: 600;
-    color: var(--primary);
-}
-
-.brand-icon {
-    margin-right: 0.5rem;
-    font-size: 1.5rem;
-}
-
-.nav-menu {
-    display: flex;
-    list-style: none;
-    gap: 2rem;
-}
-
-.nav-menu a {
-    text-decoration: none;
-    color: #ccc;
-    font-weight: 500;
-    transition: color 0.3s ease;
-    padding: 0.5rem 1rem;
-    border-radius: 5px;
-}
-
-.nav-menu a:hover {
-    color: var(--primary);
-    background: rgba(255,255,255,0.05);
-}
-
-main {
-    margin-top: 80px;
-}
-
-.hero-tech {
-    padding: 5rem 2rem;
-    text-align: center;
-    background: linear-gradient(135deg, var(--dark) 0%, var(--gray) 100%);
-}
-
-.tech-badge {
-    display: inline-block;
-    background: var(--primary);
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    margin-bottom: 2rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.hero-tech h1 {
-    font-size: 3.5rem;
-    margin-bottom: 1rem;
-    background: linear-gradient(45deg, var(--primary), var(--accent));
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.tech-features {
-    display: flex;
-    justify-content: center;
-    gap: 2rem;
-    margin-top: 3rem;
-    flex-wrap: wrap;
-}
-
-.tech-feature {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 1rem 1.5rem;
-    background: rgba(255,255,255,0.05);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 2rem;
-}
-
-.features-section {
-    padding: 5rem 0;
-    background: var(--gray);
-}
-
-.features-section h2 {
-    text-align: center;
-    font-size: 2.5rem;
-    margin-bottom: 3rem;
-}
-
-.features-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2rem;
-}
-
-.feature-card {
-    background: var(--dark);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 2rem;
-    transition: all 0.3s ease;
-}
-
-.feature-card:hover {
-    border-color: var(--primary);
-    transform: translateY(-5px);
-}
-
-.card-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-.card-icon {
-    font-size: 2rem;
-}
-
-.feature-stats {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    font-size: 0.9rem;
-    color: var(--primary);
-}
-
-.api-section {
-    padding: 5rem 0;
-}
-
-.api-section h2 {
-    text-align: center;
-    font-size: 2.5rem;
-    margin-bottom: 3rem;
-}
-
-.code-block {
-    background: #000;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-}
-
-.code-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background: var(--gray);
-    border-bottom: 1px solid var(--border);
-}
-
-.status-indicator {
-    width: 10px;
-    height: 10px;
-    background: #4CAF50;
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-}
-
-pre {
-    padding: 2rem;
-    overflow-x: auto;
-}
-
-code {
-    color: #f8f8f2;
-    font-family: 'SF Mono', Monaco, monospace;
-}
-
-.footer {
-    background: #000;
-    padding: 3rem 0 1rem;
-    border-top: 1px solid var(--border);
-}
-
-.footer-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 2rem;
-    margin-bottom: 2rem;
-}
-
-.status-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.status-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #4CAF50;
-}
-
-.status-dot.active {
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-@media (max-width: 768px) {
-    .hero-tech h1 {
-        font-size: 2.5rem;
-    }
-    
-    .tech-features {
-        gap: 1rem;
-    }
-    
-    .tech-feature {
-        padding: 0.75rem 1rem;
-    }
-}
-EOF
-}
-
-generate_service_css() {
-    local class_name="$1"
-    local primary_color="$2"
-    local accent_color="$3"
-    local comment="$4"
-    
-    cat > "$HTML_DIR/style.css" << EOF
-/* Service Platform Template - $comment */
-:root {
-    --primary: $primary_color;
-    --accent: $accent_color;
-    --success: #28a745;
-    --warning: #ffc107;
-    --danger: #dc3545;
-    --bg: #f8f9fa;
-    --card-bg: white;
-    --text: #343a40;
-    --border: #dee2e6;
-}
-
-.$class_name {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.header {
-    background: var(--card-bg);
-    border-bottom: 2px solid var(--border);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-}
-
-.navbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-.nav-brand {
-    display: flex;
-    align-items: center;
-    font-size: 1.3rem;
-    font-weight: 600;
-    color: var(--primary);
-}
-
-.service-icon {
-    margin-right: 0.5rem;
-    font-size: 1.5rem;
-}
-
-.nav-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-    color: var(--success);
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    background: var(--success);
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-}
-
-main {
-    margin-top: 80px;
-}
-
-.hero-service {
-    padding: 4rem 2rem;
-    background: var(--card-bg);
-}
-
-.service-dashboard {
-    max-width: 1200px;
-    margin: 0 auto;
-    text-align: center;
-}
-
-.service-dashboard h1 {
-    font-size: 2.5rem;
-    margin-bottom: 1rem;
-    color: var(--text);
-}
-
-.service-dashboard p {
-    font-size: 1.1rem;
-    color: #6c757d;
-    margin-bottom: 3rem;
-}
-
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 2rem;
-    margin-top: 3rem;
-}
-
-.dashboard-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 2rem;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    transition: all 0.3s ease;
-}
-
-.dashboard-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-}
-
-.card-icon {
-    font-size: 2.5rem;
-    margin-bottom: 1rem;
-}
-
-.card-content h3 {
-    font-size: 1.1rem;
-    margin-bottom: 1rem;
-    color: #6c757d;
-}
-
-.metric {
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: var(--primary);
-    margin-bottom: 0.5rem;
-}
-
-.metric-label {
-    font-size: 0.9rem;
-    color: #6c757d;
-}
-
-.services-overview {
-    padding: 4rem 0;
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 2rem;
-}
-
-.services-overview h2 {
-    text-align: center;
-    font-size: 2rem;
-    margin-bottom: 3rem;
-    color: var(--text);
-}
-
-.components-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.component {
-    display: flex;
-    align-items: center;
-    padding: 1.5rem;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    transition: all 0.3s ease;
-}
-
-.component:hover {
-    border-color: var(--primary);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-}
-
-.component-status {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    margin-right: 1rem;
-    flex-shrink: 0;
-}
-
-.component-status.active {
-    background: var(--success);
-    animation: pulse 2s infinite;
-}
-
-.component-info {
-    flex: 1;
-}
-
-.component-info h3 {
-    font-size: 1.1rem;
-    margin-bottom: 0.25rem;
-    color: var(--text);
-}
-
-.component-info p {
-    color: #6c757d;
-    font-size: 0.9rem;
-}
-
-.component-metrics {
-    color: var(--success);
-    font-weight: 600;
-    font-size: 0.9rem;
-}
-
-.footer {
-    background: var(--text);
-    color: white;
-    padding: 3rem 0 1rem;
-}
-
-.footer-info h4 {
-    margin-bottom: 1rem;
-}
-
-.service-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.detail-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.5rem 0;
-}
-
-.detail-label {
-    font-weight: 600;
-    opacity: 0.8;
-}
-
-.status-active {
-    color: var(--success);
-    font-weight: 600;
-}
-
-.footer-bottom {
-    text-align: center;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    opacity: 0.7;
-    margin-top: 2rem;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-}
-
-@media (max-width: 768px) {
-    .navbar {
-        flex-direction: column;
-        gap: 1rem;
-        padding: 1rem;
-    }
-    
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .component {
-        flex-direction: column;
-        text-align: center;
-        gap: 1rem;
-    }
-    
-    .detail-item {
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-}
-EOF
-}
-
-# Generate common files (404, robots.txt, etc)
-generate_common_files() {
-    local domain="$1"
-    local title="$2"
-    local primary_color="$3"
-    local accent_color="$4"
-    
-    # 404 page
-    cat > "$HTML_DIR/404.html" << EOF
+    cat > "index.html" << EOF
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>404 - Page Not Found</title>
+    <title>$template_name</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, $primary_color 0%, $accent_color 100%);
-            color: white;
-            margin: 0;
-            padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            text-align: center;
+            color: white;
         }
         .container {
-            max-width: 500px;
+            text-align: center;
+            max-width: 600px;
+            padding: 2rem;
         }
         h1 {
-            font-size: 5rem;
-            margin: 0 0 1rem 0;
-            opacity: 0.9;
-            font-weight: 700;
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }
         p {
             font-size: 1.2rem;
-            margin: 1rem 0 2rem 0;
-            opacity: 0.8;
+            opacity: 0.9;
+            margin-bottom: 2rem;
         }
-        a {
-            color: white;
-            text-decoration: none;
-            border: 2px solid white;
-            padding: 12px 24px;
-            border-radius: 25px;
-            transition: all 0.3s ease;
-            display: inline-block;
-            font-weight: 500;
-        }
-        a:hover {
-            background: white;
-            color: $primary_color;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        .error-icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-            opacity: 0.7;
+        .status {
+            background: rgba(255,255,255,0.1);
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="error-icon">🔍</div>
-        <h1>404</h1>
-        <p>The page you're looking for could not be found.</p>
-        <a href="/">← Return Home</a>
+        <h1>🚀 Service Ready</h1>
+        <p>$template_name template is now active</p>
+        <div class="status">
+            <p>✅ System Online</p>
+        </div>
     </div>
 </body>
 </html>
 EOF
-
-    # robots.txt
-    cat > "$HTML_DIR/robots.txt" << EOF
-User-agent: *
-Allow: /
-
-Sitemap: https://$domain/sitemap.xml
-EOF
-
-    # Basic sitemap.xml
-    cat > "$HTML_DIR/sitemap.xml" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-    <url>
-        <loc>https://$domain/</loc>
-        <lastmod>$(date +%Y-%m-%d)</lastmod>
-        <priority>1.0</priority>
-    </url>
-</urlset>
-EOF
 }
 
-
-
-
-# Generate random customization data
-generate_random_data() {
-    local -n data_ref=$1
-    
-    # Check if openssl is available
-    if ! command -v openssl >/dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  openssl not found, using alternative method${NC}"
-        # Fallback на /dev/urandom
-        data_ref[meta_id]=$(head -c 16 /dev/urandom | xxd -p 2>/dev/null || echo "$(date +%s)$(($RANDOM * $RANDOM))")
-        data_ref[comment]=$(head -c 8 /dev/urandom | xxd -p 2>/dev/null || echo "$(date +%s)")
-        data_ref[class_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
-        data_ref[title_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
-        data_ref[id_suffix]=$(head -c 4 /dev/urandom | xxd -p 2>/dev/null || echo "$RANDOM")
-        
-        # Continue with the rest of the function...
-        local meta_names=("viewport-id" "session-id" "track-id" "render-id" "page-id" "config-id" "app-id" "user-id")
-        data_ref[meta_name]=${meta_names[$RANDOM % ${#meta_names[@]}]}
-        
-        local class_prefixes=("app" "ui" "main" "content" "page" "site" "web" "view")
-        local random_class_prefix=${class_prefixes[$RANDOM % ${#class_prefixes[@]}]}
-        data_ref[class]="$random_class_prefix-${data_ref[class_suffix]}"
-        
-        local title_prefixes=("Portal" "Platform" "Site" "Hub" "Center" "Service" "System" "Network")
-        local title_prefix=${title_prefixes[$RANDOM % ${#title_prefixes[@]}]}
-        data_ref[title]="${title_prefix}_${data_ref[title_suffix]}"
-        
-        local company_prefixes=("Tech" "Digital" "Smart" "Pro" "Elite" "Prime" "Global" "Advanced")
-        local company_suffix=${company_prefixes[$RANDOM % ${#company_prefixes[@]}]}
-        data_ref[footer]="Powered by ${company_suffix}Solutions_${data_ref[title_suffix]}"
-        
-        local colors=("#2c3e50" "#3498db" "#9b59b6" "#e74c3c" "#f39c12" "#27ae60" "#34495e" "#16a085")
-        data_ref[primary_color]=${colors[$RANDOM % ${#colors[@]}]}
-        data_ref[accent_color]=${colors[$RANDOM % ${#colors[@]}]}
-        
-        return
-    fi
-    
-    # Generate random values using openssl
-    data_ref[meta_id]=$(openssl rand -hex 16)
-    data_ref[comment]=$(openssl rand -hex 8)
-    data_ref[class_suffix]=$(openssl rand -hex 4)
-    data_ref[title_suffix]=$(openssl rand -hex 4)
-    data_ref[id_suffix]=$(openssl rand -hex 4)
-    
-    # Random meta name
-    local meta_names=("viewport-id" "session-id" "track-id" "render-id" "page-id" "config-id" "app-id" "user-id")
-    data_ref[meta_name]=${meta_names[$RANDOM % ${#meta_names[@]}]}
-    
-    # Random class prefix
-    local class_prefixes=("app" "ui" "main" "content" "page" "site" "web" "view")
-    local random_class_prefix=${class_prefixes[$RANDOM % ${#class_prefixes[@]}]}
-    data_ref[class]="$random_class_prefix-${data_ref[class_suffix]}"
-    
-    # Random titles and text
-    local title_prefixes=("Portal" "Platform" "Site" "Hub" "Center" "Service" "System" "Network")
-    local title_prefix=${title_prefixes[$RANDOM % ${#title_prefixes[@]}]}
-    data_ref[title]="${title_prefix}_${data_ref[title_suffix]}"
-    
-    local company_prefixes=("Tech" "Digital" "Smart" "Pro" "Elite" "Prime" "Global" "Advanced")
-    local company_suffix=${company_prefixes[$RANDOM % ${#company_prefixes[@]}]}
-    data_ref[footer]="Powered by ${company_suffix}Solutions_${data_ref[title_suffix]}"
-    
-    # Random colors for enhanced customization
-    local colors=("#2c3e50" "#3498db" "#9b59b6" "#e74c3c" "#f39c12" "#27ae60" "#34495e" "#16a085")
-    data_ref[primary_color]=${colors[$RANDOM % ${#colors[@]}]}
-    data_ref[accent_color]=${colors[$RANDOM % ${#colors[@]}]}
-}
-
-
-# Template management command
-template_command() {
-    check_running_as_root
-    if ! docker --version >/dev/null 2>&1; then
-        echo -e "${RED}❌ Docker is not available${NC}"
-        return 1
-    fi
-
-    if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy is not installed. Run 'sudo $APP_NAME install' first.${NC}"
-        return 1
-    fi
-    
-
-    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-    if [ "$running_services" -gt 0 ]; then
-        echo -e "${YELLOW}⚠️  Caddy is currently running${NC}"
-        echo -e "${GRAY}   Template changes will be applied immediately${NC}"
-        echo
-        read -p "Continue with template generation? [Y/n]: " -r continue_template
-        if [[ $continue_template =~ ^[Nn]$ ]]; then
-            return 0
-        fi
-    fi
-    
-    
-    while true; do
-        clear
-        show_template_options
-        
-        read -p "Select template option [0-8]: " choice
-        
-        case "$choice" in
-            1)
-                echo
-                if generate_builtin_template "corporate"; then
-                    echo -e "${GREEN}🎉 Corporate template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate corporate template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            2)
-                echo
-                if generate_builtin_template "tech"; then
-                    echo -e "${GREEN}🎉 Technology template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate technology template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            3)
-                echo
-                if generate_builtin_template "portfolio"; then
-                    echo -e "${GREEN}🎉 Portfolio template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate portfolio template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            4)
-                echo
-                if generate_builtin_template "service"; then
-                    echo -e "${GREEN}🎉 Service template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate service template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            5)
-                echo
-                if generate_builtin_template "analytics"; then
-                    echo -e "${GREEN}🎉 Analytics template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate analytics template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            6)
-                echo
-                if generate_builtin_template "random"; then
-                    echo -e "${GREEN}🎉 Random template generated successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to generate random template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            7)
-                echo
-                show_current_template_info
-                read -p "Press Enter to continue..."
-                ;;
-            8)
-                echo -e "${GRAY}Current template preserved${NC}"
-                read -p "Press Enter to continue..."
-                ;;
-            0)
-                return 0
-                ;;
-            *)
-                echo -e "${RED}❌ Invalid option!${NC}"
-                sleep 1
-                ;;
-        esac
-    done
-}
-
-
-
-
-# Create default HTML content
+# Create default HTML content for initial installation
 create_default_html() {
     echo -e "${WHITE}🌐 Creating Default Website${NC}"
     
@@ -2402,6 +997,7 @@ create_default_html() {
         p {
             color: #666;
             line-height: 1.6;
+            margin-bottom: 15px;
         }
         .status {
             display: inline-block;
@@ -2412,14 +1008,38 @@ create_default_html() {
             font-size: 14px;
             margin-top: 20px;
         }
+        .info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border-left: 4px solid #667eea;
+        }
+        .info h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .command {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🌐 Website Online</h1>
-        <p>This is a default page served by Caddy.<br>
-        The service is running correctly and ready to serve your content.</p>
+        <h1>🌐 Caddy for Reality Selfsteal</h1>
+        <p>Caddy server is running correctly and ready to serve your content.</p>
         <div class="status">✅ Service Active</div>
+        <div class="info">
+            <h3>🎨 Ready for Templates</h3>
+            <p>Use the template manager to install website templates:</p>
+            <div class="command">sudo selfsteal template</div>
+            <p>Choose from 10 pre-built AI-generated templates including meme sites, downloaders, file converters, and more!</p>
+        </div>
     </div>
 </body>
 </html>
@@ -2454,8 +1074,12 @@ EOF
         }
         h1 {
             color: #e74c3c;
-            font-size: 3em;
+            font-size: 4rem;
             margin-bottom: 20px;
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 15px;
         }
         p {
             color: #666;
@@ -2466,14 +1090,262 @@ EOF
 <body>
     <div class="container">
         <h1>404</h1>
-        <p>The page you're looking for could not be found.</p>
+        <h2>Page Not Found</h2>
+        <p>The page you are looking for does not exist.</p>
     </div>
 </body>
 </html>
 EOF
 
-    echo -e "${GREEN}✅ Default website created${NC}"
+    echo -e "${GREEN}✅ Default HTML content created${NC}"
 }
+
+
+# Template management command
+template_command() {
+    check_running_as_root
+    if ! docker --version >/dev/null 2>&1; then
+        echo -e "${RED}❌ Docker is not available${NC}"
+        return 1
+    fi
+
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "${RED}❌ Caddy is not installed. Run 'sudo $APP_NAME install' first.${NC}"
+        return 1
+    fi
+    
+
+    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+    if [ "$running_services" -gt 0 ]; then
+        echo -e "${YELLOW}⚠️  Caddy is currently running${NC}"
+        echo -e "${GRAY}   Template changes will be applied immediately${NC}"
+        echo
+        read -p "Continue with template download? [Y/n]: " -r continue_template
+        if [[ $continue_template =~ ^[Nn]$ ]]; then
+            return 0
+        fi
+    fi
+    
+    
+    while true; do
+        clear
+        show_template_options
+        
+        read -p "Select template option [0-10, v, k]: " choice
+        
+        case "$choice" in
+            1)
+                echo
+                if download_template "1"; then
+                    echo -e "${GREEN}🎉 10gag template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download 10gag template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                echo
+                if download_template "2"; then
+                    echo -e "${GREEN}🎉 Converter template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download converter template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                echo
+                if download_template "3"; then
+                    echo -e "${GREEN}🎉 Convertit template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download convertit template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                echo
+                if download_template "4"; then
+                    echo -e "${GREEN}🎉 Downloader template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download downloader template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                echo
+                if download_template "5"; then
+                    echo -e "${GREEN}🎉 FileCloud template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download filecloud template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            6)
+                echo
+                if download_template "6"; then
+                    echo -e "${GREEN}🎉 Games-site template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download games-site template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            7)
+                echo
+                if download_template "7"; then
+                    echo -e "${GREEN}🎉 ModManager template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download modmanager template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            8)
+                echo
+                if download_template "8"; then
+                    echo -e "${GREEN}🎉 SpeedTest template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download speedtest template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            9)
+                echo
+                if download_template "9"; then
+                    echo -e "${GREEN}🎉 YouTube template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download youtube template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            10)
+                echo
+                if download_template "10"; then
+                    echo -e "${GREEN}🎉 503 Error template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download 503 error template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            v|V)
+                echo
+                show_current_template_info
+                read -p "Press Enter to continue..."
+                ;;
+            k|K)
+                echo -e "${GRAY}Current template preserved${NC}"
+                read -p "Press Enter to continue..."
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid option!${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+
+
 
 install_management_script() {
     echo -e "${WHITE}🔧 Installing Management Script${NC}"
@@ -2856,939 +1728,6 @@ edit_command() {
 }
 
 
-# Modern Portfolio Template
-generate_portfolio_template() {
-    local domain="$1"
-    local -n data_ref=$2
-    
-    cat > "$HTML_DIR/index.html" << EOF
-<!DOCTYPE html>
-<html lang="en" class="${data_ref[class]}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="${data_ref[meta_name]}" content="${data_ref[meta_id]}">
-    <title>${data_ref[title]} - Creative Portfolio</title>
-    <!-- ${data_ref[comment]} -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <header class="header">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <span class="portfolio-icon">✨</span>
-                ${data_ref[title]}
-            </div>
-            <ul class="nav-menu">
-                <li><a href="#home">Home</a></li>
-                <li><a href="#portfolio">Portfolio</a></li>
-                <li><a href="#about">About</a></li>
-                <li><a href="#contact">Contact</a></li>
-            </ul>
-        </nav>
-    </header>
-
-    <main>
-        <section id="home" class="hero-portfolio">
-            <div class="hero-content">
-                <div class="hero-text">
-                    <h1>Creative Professional</h1>
-                    <p>Crafting exceptional digital experiences with passion and precision</p>
-                    <div class="hero-badges">
-                        <span class="badge">Design</span>
-                        <span class="badge">Development</span>
-                        <span class="badge">Innovation</span>
-                    </div>
-                </div>
-                <div class="hero-visual">
-                    <div class="floating-card">
-                        <div class="card-icon">🎨</div>
-                        <h3>Creative Design</h3>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="portfolio" class="portfolio-section">
-            <div class="container">
-                <h2>Featured Work</h2>
-                <div class="portfolio-grid">
-                    <div class="portfolio-item">
-                        <div class="portfolio-image">
-                            <div class="portfolio-overlay">
-                                <h3>Web Application</h3>
-                                <p>Full-stack development</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="portfolio-item">
-                        <div class="portfolio-image">
-                            <div class="portfolio-overlay">
-                                <h3>Mobile App</h3>
-                                <p>iOS & Android development</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="portfolio-item">
-                        <div class="portfolio-image">
-                            <div class="portfolio-overlay">
-                                <h3>Brand Identity</h3>
-                                <p>Visual design & branding</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="about" class="about-section">
-            <div class="container">
-                <div class="about-content">
-                    <div class="about-text">
-                        <h2>About Me</h2>
-                        <p>I'm a passionate creator who brings ideas to life through thoughtful design and clean code. With years of experience in digital craftsmanship, I help brands and individuals tell their stories in compelling ways.</p>
-                        <div class="skills">
-                            <div class="skill-item">
-                                <span class="skill-icon">💻</span>
-                                <span>Development</span>
-                            </div>
-                            <div class="skill-item">
-                                <span class="skill-icon">🎨</span>
-                                <span>Design</span>
-                            </div>
-                            <div class="skill-item">
-                                <span class="skill-icon">📱</span>
-                                <span>Mobile</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <h4>${data_ref[title]}</h4>
-                <p>Creative professional portfolio</p>
-                <div class="footer-links">
-                    <span>Domain: $domain</span>
-                    <span>Status: Online</span>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p>${data_ref[footer]}</p>
-            </div>
-        </div>
-    </footer>
-</body>
-</html>
-EOF
-
-    generate_portfolio_css "${data_ref[class]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}" "${data_ref[comment]}"
-    generate_common_files "$domain" "${data_ref[title]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}"
-}
-
-# Data Analytics Template
-generate_analytics_template() {
-    local domain="$1"
-    local -n data_ref=$2
-    
-    cat > "$HTML_DIR/index.html" << EOF
-<!DOCTYPE html>
-<html lang="en" class="${data_ref[class]}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="${data_ref[meta_name]}" content="${data_ref[meta_id]}">
-    <title>${data_ref[title]} - Analytics Dashboard</title>
-    <!-- ${data_ref[comment]} -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div class="analytics-bg"></div>
-    
-    <header class="header">
-        <nav class="navbar">
-            <div class="nav-brand">
-                <span class="analytics-icon">📊</span>
-                ${data_ref[title]}
-            </div>
-            <div class="nav-actions">
-                <span class="data-indicator">
-                    <span class="indicator-dot"></span>
-                    Live Data
-                </span>
-            </div>
-        </nav>
-    </header>
-
-    <main>
-        <section class="dashboard">
-            <div class="dashboard-header">
-                <h1>Analytics Dashboard</h1>
-                <p>Real-time data insights and performance metrics</p>
-            </div>
-            
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon">👥</span>
-                        <h3>Active Users</h3>
-                    </div>
-                    <div class="metric-value">2,847</div>
-                    <div class="metric-change positive">+12.5%</div>
-                </div>
-                
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon">📈</span>
-                        <h3>Revenue</h3>
-                    </div>
-                    <div class="metric-value">$89,320</div>
-                    <div class="metric-change positive">+8.3%</div>
-                </div>
-                
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon">⚡</span>
-                        <h3>Performance</h3>
-                    </div>
-                    <div class="metric-value">98.7%</div>
-                    <div class="metric-change neutral">+0.2%</div>
-                </div>
-                
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <span class="metric-icon">🎯</span>
-                        <h3>Conversion</h3>
-                    </div>
-                    <div class="metric-value">4.23%</div>
-                    <div class="metric-change positive">+1.1%</div>
-                </div>
-            </div>
-            
-            <div class="charts-section">
-                <div class="chart-container">
-                    <h3>Traffic Overview</h3>
-                    <div class="chart-placeholder">
-                        <div class="chart-bars">
-                            <div class="bar" style="height: 60%"></div>
-                            <div class="bar" style="height: 80%"></div>
-                            <div class="bar" style="height: 45%"></div>
-                            <div class="bar" style="height: 90%"></div>
-                            <div class="bar" style="height: 70%"></div>
-                            <div class="bar" style="height: 85%"></div>
-                            <div class="bar" style="height: 95%"></div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="stats-panel">
-                    <h3>System Health</h3>
-                    <div class="health-items">
-                        <div class="health-item">
-                            <span class="health-status active"></span>
-                            <span>API Services</span>
-                            <span class="health-value">Online</span>
-                        </div>
-                        <div class="health-item">
-                            <span class="health-status active"></span>
-                            <span>Database</span>
-                            <span class="health-value">Healthy</span>
-                        </div>
-                        <div class="health-item">
-                            <span class="health-status active"></span>
-                            <span>Cache Layer</span>
-                            <span class="health-value">Optimal</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <h4>${data_ref[title]} Analytics</h4>
-                <div class="footer-stats">
-                    <div class="footer-stat">
-                        <span class="stat-label">Domain:</span>
-                        <span>$domain</span>
-                    </div>
-                    <div class="footer-stat">
-                        <span class="stat-label">Last Update:</span>
-                        <span>$(date '+%H:%M')</span>
-                    </div>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p>${data_ref[footer]}</p>
-            </div>
-        </div>
-    </footer>
-</body>
-</html>
-EOF
-
-    generate_analytics_css "${data_ref[class]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}" "${data_ref[comment]}"
-    generate_common_files "$domain" "${data_ref[title]}" "${data_ref[primary_color]}" "${data_ref[accent_color]}"
-}
-
-generate_portfolio_css() {
-    local class_name="$1"
-    local primary_color="$2"
-    local accent_color="$3"
-    local comment="$4"
-    
-    cat > "$HTML_DIR/style.css" << EOF
-/* Portfolio Template - $comment */
-:root {
-    --primary: $primary_color;
-    --accent: $accent_color;
-    --gradient: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-    --bg: #fafafa;
-    --card-bg: white;
-    --text: #2c2c2c;
-    --text-light: #666;
-    --shadow: 0 10px 40px rgba(0,0,0,0.1);
-}
-
-.$class_name {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.6;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.header {
-    background: var(--card-bg);
-    box-shadow: 0 2px 20px rgba(0,0,0,0.05);
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-}
-
-.navbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-.nav-brand {
-    display: flex;
-    align-items: center;
-    font-size: 1.5rem;
-    font-weight: 700;
-    background: var(--gradient);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.portfolio-icon {
-    margin-right: 0.5rem;
-    font-size: 1.8rem;
-}
-
-.nav-menu {
-    display: flex;
-    list-style: none;
-    gap: 2rem;
-}
-
-.nav-menu a {
-    text-decoration: none;
-    color: var(--text);
-    font-weight: 500;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    transition: all 0.3s ease;
-}
-
-.nav-menu a:hover {
-    background: var(--primary);
-    color: white;
-}
-
-main {
-    margin-top: 80px;
-}
-
-.hero-portfolio {
-    padding: 5rem 2rem;
-    background: var(--card-bg);
-    position: relative;
-    overflow: hidden;
-}
-
-.hero-content {
-    max-width: 1200px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4rem;
-    align-items: center;
-}
-
-.hero-text h1 {
-    font-size: 3.5rem;
-    font-weight: 800;
-    background: var(--gradient);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 1rem;
-}
-
-.hero-text p {
-    font-size: 1.2rem;
-    color: var(--text-light);
-    margin-bottom: 2rem;
-}
-
-.hero-badges {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-
-.badge {
-    padding: 0.5rem 1rem;
-    background: var(--gradient);
-    color: white;
-    border-radius: 25px;
-    font-size: 0.9rem;
-    font-weight: 600;
-}
-
-.floating-card {
-    background: var(--card-bg);
-    padding: 2rem;
-    border-radius: 20px;
-    box-shadow: var(--shadow);
-    text-align: center;
-    animation: float 6s ease-in-out infinite;
-}
-
-@keyframes float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-20px); }
-}
-
-.card-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 2rem;
-}
-
-.portfolio-section {
-    padding: 5rem 0;
-}
-
-.portfolio-section h2 {
-    text-align: center;
-    font-size: 2.5rem;
-    margin-bottom: 3rem;
-    color: var(--text);
-}
-
-.portfolio-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 2rem;
-}
-
-.portfolio-item {
-    border-radius: 15px;
-    overflow: hidden;
-    box-shadow: var(--shadow);
-    transition: transform 0.3s ease;
-}
-
-.portfolio-item:hover {
-    transform: translateY(-10px);
-}
-
-.portfolio-image {
-    height: 250px;
-    background: var(--gradient);
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.portfolio-overlay {
-    text-align: center;
-    color: white;
-}
-
-.portfolio-overlay h3 {
-    font-size: 1.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.about-section {
-    padding: 5rem 0;
-    background: var(--card-bg);
-}
-
-.about-section h2 {
-    font-size: 2.5rem;
-    margin-bottom: 2rem;
-    color: var(--text);
-}
-
-.skills {
-    display: flex;
-    gap: 2rem;
-    margin-top: 2rem;
-}
-
-.skill-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 1rem 1.5rem;
-    background: var(--bg);
-    border-radius: 10px;
-    border: 2px solid transparent;
-    transition: border-color 0.3s ease;
-}
-
-.skill-item:hover {
-    border-color: var(--primary);
-}
-
-.skill-icon {
-    font-size: 1.5rem;
-}
-
-.footer {
-    background: var(--text);
-    color: white;
-    padding: 3rem 0 1rem;
-}
-
-.footer-content {
-    text-align: center;
-    margin-bottom: 2rem;
-}
-
-.footer-links {
-    display: flex;
-    justify-content: center;
-    gap: 2rem;
-    margin-top: 1rem;
-    font-size: 0.9rem;
-    opacity: 0.8;
-}
-
-.footer-bottom {
-    text-align: center;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    opacity: 0.7;
-}
-
-@media (max-width: 768px) {
-    .hero-content {
-        grid-template-columns: 1fr;
-        text-align: center;
-    }
-    
-    .hero-text h1 {
-        font-size: 2.5rem;
-    }
-    
-    .skills {
-        flex-direction: column;
-    }
-    
-    .footer-links {
-        flex-direction: column;
-        gap: 1rem;
-    }
-}
-EOF
-}
-
-generate_analytics_css() {
-    local class_name="$1"
-    local primary_color="$2"
-    local accent_color="$3"
-    local comment="$4"
-    
-    cat > "$HTML_DIR/style.css" << EOF
-/* Analytics Dashboard Template - $comment */
-:root {
-    --primary: $primary_color;
-    --accent: $accent_color;
-    --bg: #f8fafc;
-    --dark: #1a202c;
-    --card-bg: white;
-    --text: #2d3748;
-    --text-light: #718096;
-    --border: #e2e8f0;
-    --success: #48bb78;
-    --warning: #ed8936;
-    --shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
-}
-
-.$class_name {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.analytics-bg {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: 
-        radial-gradient(circle at 25% 25%, rgba(99, 102, 241, 0.05) 0%, transparent 50%),
-        radial-gradient(circle at 75% 75%, rgba(236, 72, 153, 0.05) 0%, transparent 50%);
-    z-index: -1;
-}
-
-.header {
-    background: var(--card-bg);
-    box-shadow: var(--shadow);
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-    border-bottom: 1px solid var(--border);
-}
-
-.navbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-}
-
-.nav-brand {
-    display: flex;
-    align-items: center;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--primary);
-}
-
-.analytics-icon {
-    margin-right: 0.5rem;
-    font-size: 1.8rem;
-}
-
-.data-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--success);
-    font-size: 0.9rem;
-    font-weight: 600;
-}
-
-.indicator-dot {
-    width: 8px;
-    height: 8px;
-    background: var(--success);
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-}
-
-main {
-    margin-top: 80px;
-    padding: 2rem;
-}
-
-.dashboard {
-    max-width: 1400px;
-    margin: 0 auto;
-}
-
-.dashboard-header {
-    text-align: center;
-    margin-bottom: 3rem;
-}
-
-.dashboard-header h1 {
-    font-size: 2.5rem;
-    font-weight: 800;
-    color: var(--text);
-    margin-bottom: 0.5rem;
-}
-
-.dashboard-header p {
-    color: var(--text-light);
-    font-size: 1.1rem;
-}
-
-.metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 3rem;
-}
-
-.metric-card {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 2rem;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-    transition: all 0.3s ease;
-}
-
-.metric-card:hover {
-    box-shadow: var(--shadow-lg);
-    transform: translateY(-2px);
-}
-
-.metric-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-}
-
-.metric-icon {
-    font-size: 1.5rem;
-}
-
-.metric-header h3 {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-light);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.metric-value {
-    font-size: 2.5rem;
-    font-weight: 800;
-    color: var(--text);
-    margin-bottom: 0.5rem;
-}
-
-.metric-change {
-    font-size: 0.9rem;
-    font-weight: 600;
-    padding: 0.25rem 0.5rem;
-    border-radius: 6px;
-    display: inline-block;
-}
-
-.metric-change.positive {
-    background: rgba(72, 187, 120, 0.1);
-    color: var(--success);
-}
-
-.metric-change.neutral {
-    background: rgba(237, 137, 54, 0.1);
-    color: var(--warning);
-}
-
-.charts-section {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 2rem;
-}
-
-.chart-container {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 2rem;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-}
-
-.chart-container h3 {
-    font-size: 1.2rem;
-    margin-bottom: 2rem;
-    color: var(--text);
-}
-
-.chart-placeholder {
-    height: 200px;
-    background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-    border-radius: 8px;
-    padding: 1rem;
-    display: flex;
-    align-items: end;
-    justify-content: center;
-}
-
-.chart-bars {
-    display: flex;
-    align-items: end;
-    gap: 8px;
-    height: 100%;
-    width: 100%;
-    max-width: 300px;
-}
-
-.bar {
-    background: rgba(255,255,255,0.8);
-    border-radius: 4px 4px 0 0;
-    flex: 1;
-    min-height: 20px;
-    animation: growUp 1s ease-out;
-}
-
-@keyframes growUp {
-    from { height: 0; }
-}
-
-.stats-panel {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 2rem;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-    height: fit-content;
-}
-
-.stats-panel h3 {
-    font-size: 1.2rem;
-    margin-bottom: 1.5rem;
-    color: var(--text);
-}
-
-.health-items {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.health-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem;
-    background: var(--bg);
-    border-radius: 8px;
-    transition: background 0.3s ease;
-}
-
-.health-item:hover {
-    background: rgba(99, 102, 241, 0.05);
-}
-
-.health-status {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-right: 1rem;
-}
-
-.health-status.active {
-    background: var(--success);
-    animation: pulse 2s infinite;
-}
-
-.health-value {
-    font-weight: 600;
-    color: var(--success);
-}
-
-.footer {
-    background: var(--dark);
-    color: white;
-    padding: 2rem;
-    margin-top: 3rem;
-}
-
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
-}
-
-.footer-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-}
-
-.footer-stats {
-    display: flex;
-    gap: 2rem;
-}
-
-.footer-stat {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-}
-
-.stat-label {
-    opacity: 0.7;
-}
-
-.footer-bottom {
-    text-align: center;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    opacity: 0.7;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-@media (max-width: 768px) {
-    .charts-section {
-        grid-template-columns: 1fr;
-    }
-    
-    .footer-content {
-        flex-direction: column;
-        gap: 1rem;
-        text-align: center;
-    }
-    
-    .footer-stats {
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-}
-EOF
-}
 
 
 show_help() {
