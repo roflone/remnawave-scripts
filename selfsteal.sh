@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=1.8.1
+# VERSION=2.0.1
 
 set -e
 SCRIPT_VERSION="2.0.1"
