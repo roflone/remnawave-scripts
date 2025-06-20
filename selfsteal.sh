@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.0
+# VERSION=2.1.1
 
 set -e
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.1.1"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -788,84 +788,204 @@ download_template() {
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
     
-    # # Создаем бэкап существующего контента если есть
-    # if [ -d "$HTML_DIR" ] && [ "$(ls -A "$HTML_DIR" 2>/dev/null)" ]; then
-    #     local backup_dir="/tmp/caddy-html-backup-$(date +%Y%m%d_%H%M%S)"
-    #     mkdir -p "$backup_dir"
-    #     if cp -a "$HTML_DIR"/* "$backup_dir/" 2>/dev/null; then
-    #         echo -e "${GRAY}💾 Backup created: $backup_dir${NC}"
-    #         echo -e "${GRAY}   Use 'cp -a $backup_dir/* $HTML_DIR/' to restore${NC}"
-    #     else
-    #         echo -e "${YELLOW}⚠️  Could not create backup (continuing anyway)${NC}"
-    #     fi
-    # fi
-    
     # Создаем директорию
     mkdir -p "$HTML_DIR"
     rm -rf "$HTML_DIR"/*
     cd "$HTML_DIR"
     
-    # Используем GitHub API для получения списка файлов
-    local api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/contents/sni-templates/$template_folder"
-    local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates"
-    
-    echo -e "${WHITE}📡 Fetching file list from GitHub API...${NC}"
-    
-    # Получаем список файлов через API
-    local files_json
-    files_json=$(curl -s "$api_url" 2>/dev/null)
-    
-    if [ -n "$files_json" ] && echo "$files_json" | grep -q '"name"'; then
-        echo -e "${GREEN}✅ File list retrieved${NC}"
-        echo -e "${WHITE}📥 Downloading all files...${NC}"
+    # Попробуем сначала через git (если доступен)
+    if command -v git >/dev/null 2>&1; then
+        echo -e "${WHITE}📦 Using Git for download...${NC}"
         
-        local files_downloaded=0
-        local failed_downloads=0
+        # Создаем временную директорию
+        local temp_dir="/tmp/selfsteal-template-$$"
+        mkdir -p "$temp_dir"
         
-        # Парсим JSON и скачиваем файлы
-        echo "$files_json" | grep -o '"download_url":"[^"]*"' | cut -d'"' -f4 | while read -r download_url; do
-            if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
-                local filename=$(basename "$download_url")
-                echo -e "${GRAY}   Downloading $filename...${NC}"
-                
-                if curl -fsSL "$download_url" -o "$filename" 2>/dev/null; then
-                    echo -e "${GREEN}   ✅ $filename${NC}"
-                    ((files_downloaded++))
-                else
-                    echo -e "${YELLOW}   ⚠️  $filename (failed)${NC}"
-                    ((failed_downloads++))
-                fi
-            fi
-        done
-        
-        # Проверяем наличие assets папки через API
-        local assets_api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/contents/sni-templates/$template_folder/assets"
-        local assets_json
-        assets_json=$(curl -s "$assets_api_url" 2>/dev/null)
-        
-        if [ -n "$assets_json" ] && echo "$assets_json" | grep -q '"name"'; then
-            mkdir -p assets
-            echo -e "${WHITE}📁 Downloading assets folder...${NC}"
+        # Клонируем только нужную папку через sparse-checkout
+        if git clone --filter=blob:none --sparse "https://github.com/DigneZzZ/remnawave-scripts.git" "$temp_dir" 2>/dev/null; then
+            cd "$temp_dir"
+            git sparse-checkout set "sni-templates/$template_folder" 2>/dev/null
             
-            echo "$assets_json" | grep -o '"download_url":"[^"]*"' | cut -d'"' -f4 | while read -r download_url; do
-                if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
-                    local filename=$(basename "$download_url")
-                    echo -e "${GRAY}   Downloading assets/$filename...${NC}"
+            # Копируем файлы
+            local source_path="$temp_dir/sni-templates/$template_folder"
+            if [ -d "$source_path" ]; then
+                if cp -r "$source_path"/* "$HTML_DIR/" 2>/dev/null; then
+                    local files_copied=$(find "$HTML_DIR" -type f | wc -l)
+                    echo -e "${GREEN}✅ Template files copied: $files_copied files${NC}"
                     
-                    if curl -fsSL "$download_url" -o "assets/$filename" 2>/dev/null; then
-                        echo -e "${GREEN}   ✅ assets/$filename${NC}"
-                    else
-                        echo -e "${YELLOW}   ⚠️  assets/$filename (failed)${NC}"
-                    fi
+                    # Очистка
+                    rm -rf "$temp_dir"
+                    
+                    # Устанавливаем правильные права доступа
+                    setup_file_permissions
+                    
+                    show_download_summary "$files_copied" "$template_name"
+                    return 0
+                else
+                    echo -e "${YELLOW}⚠️  Git method failed, trying wget...${NC}"
                 fi
-            done
+            else
+                echo -e "${YELLOW}⚠️  Template not found in repository, trying wget...${NC}"
+            fi
+            
+            # Очистка в случае неудачи
+            rm -rf "$temp_dir"
+        else
+            echo -e "${YELLOW}⚠️  Git clone failed, trying wget...${NC}"
         fi
+    fi
+    
+    # Fallback: используем wget для рекурсивного скачивания
+    if command -v wget >/dev/null 2>&1; then
+        echo -e "${WHITE}📦 Using wget for recursive download...${NC}"
         
+        local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates/$template_folder"
+        
+        # Получаем структуру папки через GitHub API
+        local api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/git/trees/main?recursive=1"
+        local tree_data
+        tree_data=$(curl -s "$api_url" 2>/dev/null)
+        
+        if [ -n "$tree_data" ] && echo "$tree_data" | grep -q '"path"'; then
+            echo -e "${GREEN}✅ Repository structure retrieved${NC}"
+            echo -e "${WHITE}📥 Downloading files...${NC}"
+            
+            # Извлекаем пути файлов для нашего шаблона
+            local template_files
+            template_files=$(echo "$tree_data" | grep -o "\"path\":[^,]*" | sed 's/"path":"//' | sed 's/"//' | grep "^sni-templates/$template_folder/")
+            
+            local files_downloaded=0
+            local failed_downloads=0
+            
+            if [ -n "$template_files" ]; then
+                while IFS= read -r file_path; do
+                    if [ -n "$file_path" ]; then
+                        # Получаем относительный путь (убираем sni-templates/$template_folder/)
+                        local relative_path="${file_path#sni-templates/$template_folder/}"
+                        local file_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/$file_path"
+                        
+                        # Создаем директорию если нужно
+                        local file_dir=$(dirname "$relative_path")
+                        if [ "$file_dir" != "." ]; then
+                            mkdir -p "$file_dir"
+                        fi
+                        
+                        echo -e "${GRAY}   Downloading $relative_path...${NC}"
+                        
+                        if wget -q "$file_url" -O "$relative_path" 2>/dev/null; then
+                            echo -e "${GREEN}   ✅ $relative_path${NC}"
+                            ((files_downloaded++))
+                        else
+                            echo -e "${YELLOW}   ⚠️  $relative_path (failed)${NC}"
+                            ((failed_downloads++))
+                        fi
+                    fi
+                done <<< "$template_files"
+                
+                if [ $files_downloaded -gt 0 ]; then
+                    setup_file_permissions
+                    show_download_summary "$files_downloaded" "$template_name"
+                    return 0
+                fi
+            else
+                echo -e "${YELLOW}⚠️  No files found for template, trying curl fallback...${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Could not get repository structure, trying curl fallback...${NC}"
+        fi
+    fi
+    
+    # Последний fallback: curl с предопределенным списком файлов
+    echo -e "${WHITE}📦 Using curl fallback method...${NC}"
+    
+    # Базовые файлы, которые должны быть в большинстве шаблонов
+    local common_files=("index.html" "favicon.ico" "favicon.svg" "site.webmanifest" "apple-touch-icon.png" "favicon-96x96.png" "web-app-manifest-192x192.png" "web-app-manifest-512x512.png")
+    local asset_files=("assets/style.css" "assets/script.js" "assets/main.js")
+    
+    local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates/$template_folder"
+    local files_downloaded=0
+    local failed_downloads=0
+    
+    echo -e "${WHITE}📥 Downloading common files...${NC}"
+    
+    # Скачиваем основные файлы
+    for file in "${common_files[@]}"; do
+        local url="$base_url/$file"
+        echo -e "${GRAY}   Downloading $file...${NC}"
+        
+        if curl -fsSL "$url" -o "$file" 2>/dev/null; then
+            echo -e "${GREEN}   ✅ $file${NC}"
+            ((files_downloaded++))
+        else
+            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
+            ((failed_downloads++))
+        fi
+    done
+    
+    # Скачиваем файлы assets
+    mkdir -p assets
+    echo -e "${WHITE}📁 Downloading assets...${NC}"
+    
+    for file in "${asset_files[@]}"; do
+        local url="$base_url/$file"
+        local filename=$(basename "$file")
+        echo -e "${GRAY}   Downloading assets/$filename...${NC}"
+        
+        if curl -fsSL "$url" -o "assets/$filename" 2>/dev/null; then
+            echo -e "${GREEN}   ✅ assets/$filename${NC}"
+            ((files_downloaded++))
+        else
+            echo -e "${YELLOW}   ⚠️  assets/$filename (optional file not found)${NC}"
+            ((failed_downloads++))
+        fi
+    done
+    
+    if [ $files_downloaded -gt 0 ]; then
+        setup_file_permissions
+        show_download_summary "$files_downloaded" "$template_name"
         return 0
     else
-        echo -e "${RED}❌ Failed to get file list from GitHub API${NC}"
+        echo -e "${RED}❌ Failed to download any files${NC}"
+        echo -e "${YELLOW}⚠️  Creating fallback template...${NC}"
+        create_fallback_html "$template_name"
         return 1
     fi
+}
+
+# Функция для установки правильных прав доступа
+setup_file_permissions() {
+    echo -e "${WHITE}🔒 Setting up file permissions...${NC}"
+    
+    # Устанавливаем права на файлы
+    chmod -R 644 "$HTML_DIR"/* 2>/dev/null || true
+    
+    # Устанавливаем права на директории
+    find "$HTML_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
+    
+    # Устанавливаем владельца (если возможно)
+    chown -R www-data:www-data "$HTML_DIR" 2>/dev/null || true
+    
+    echo -e "${GREEN}✅ File permissions configured${NC}"
+}
+
+# Функция для показа итогов скачивания
+show_download_summary() {
+    local files_count="$1"
+    local template_name="$2"
+    
+    echo
+    echo -e "${WHITE}📊 Download Summary:${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
+    printf "   ${WHITE}%-20s${NC} ${GREEN}%d${NC}\n" "Files downloaded:" "$files_count"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Template:" "$template_name"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Location:" "$HTML_DIR"
+    
+    # Показать размер
+    local total_size=$(du -sh "$HTML_DIR" 2>/dev/null | cut -f1 || echo "Unknown")
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Total size:" "$total_size"
+    
+    echo
+    echo -e "${GREEN}✅ Template downloaded successfully${NC}"
 }
 
 # Fallback функция для создания базового HTML если скачивание не удалось
