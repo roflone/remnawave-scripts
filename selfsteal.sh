@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.0.1
+# VERSION=2.0.2
 
 set -e
-SCRIPT_VERSION="2.0.1"
+SCRIPT_VERSION="2.0.2"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -675,29 +675,6 @@ validate_caddyfile() {
     fi
 }
 
-show_template_options() {
-    echo -e "${WHITE}🎨 Website Template Options${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
-    echo
-    echo -e "${WHITE}Select template type:${NC}"
-    echo -e "   ${WHITE}1)${NC} ${CYAN}� 10gag - Сайт мемов${NC}"
-    echo -e "   ${WHITE}2)${NC} ${CYAN}� Converter - Видеостудия-конвертер${NC}"
-    echo -e "   ${WHITE}3)${NC} ${CYAN}📁 Convertit - Конвертер файлов${NC}"
-    echo -e "   ${WHITE}4)${NC} ${CYAN}⬇️ Downloader - Даунлоадер${NC}"
-    echo -e "   ${WHITE}5)${NC} ${CYAN}☁️ FileCloud - Облачное хранилище${NC}"
-    echo -e "   ${WHITE}6)${NC} ${CYAN}🎮 Games-site - Ретро игровой портал${NC}"
-    echo -e "   ${WHITE}7)${NC} ${CYAN}🛠️ ModManager - Мод-менеджер для игр${NC}"
-    echo -e "   ${WHITE}8)${NC} ${CYAN}� SpeedTest - Спидтест${NC}"
-    echo -e "   ${WHITE}9)${NC} ${CYAN}📺 YouTube - Видеохостинг с капчей${NC}"
-    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503${NC}"
-    echo
-    echo -e "   ${WHITE}v)${NC} ${GRAY}📄 View Current Template${NC}"
-    echo -e "   ${WHITE}k)${NC} ${GRAY}📝 Keep Current Template${NC}"
-    echo
-    echo -e "   ${GRAY}0)${NC} ${GRAY}⬅️  Cancel${NC}"
-    echo
-}
-
 show_current_template_info() {
     echo -e "${WHITE}📄 Current Template Information${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
@@ -1095,9 +1072,31 @@ EOF
     </div>
 </body>
 </html>
-EOF
+EOF    echo -e "${GREEN}✅ Default HTML content created${NC}"
+}
 
-    echo -e "${GREEN}✅ Default HTML content created${NC}"
+# Function to show template options
+show_template_options() {
+    echo -e "${WHITE}🎨 Website Template Options${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
+    echo
+    echo -e "${WHITE}Select template type:${NC}"
+    echo -e "   ${WHITE}1)${NC} ${CYAN}😂 10gag - Сайт мемов${NC}"
+    echo -e "   ${WHITE}2)${NC} ${CYAN}🎬 Converter - Видеостудия-конвертер${NC}"
+    echo -e "   ${WHITE}3)${NC} ${CYAN}📁 Convertit - Конвертер файлов${NC}"
+    echo -e "   ${WHITE}4)${NC} ${CYAN}⬇️ Downloader - Даунлоадер${NC}"
+    echo -e "   ${WHITE}5)${NC} ${CYAN}☁️ FileCloud - Облачное хранилище${NC}"
+    echo -e "   ${WHITE}6)${NC} ${CYAN}🎮 Games-site - Ретро игровой портал${NC}"
+    echo -e "   ${WHITE}7)${NC} ${CYAN}🛠️ ModManager - Мод-менеджер для игр${NC}"
+    echo -e "   ${WHITE}8)${NC} ${CYAN}🚀 SpeedTest - Спидтест${NC}"
+    echo -e "   ${WHITE}9)${NC} ${CYAN}📺 YouTube - Видеохостинг с капчей${NC}"
+    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503${NC}"
+    echo
+    echo -e "   ${WHITE}v)${NC} ${GRAY}📄 View Current Template${NC}"
+    echo -e "   ${WHITE}k)${NC} ${GRAY}📝 Keep Current Template${NC}"
+    echo
+    echo -e "   ${GRAY}0)${NC} ${GRAY}⬅️  Cancel${NC}"
+    echo
 }
 
 
