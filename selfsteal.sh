@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.0.3
+# VERSION=2.0.5
 
 set -e
-SCRIPT_VERSION="2.0.3"
+SCRIPT_VERSION="2.0.5"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -576,7 +576,9 @@ https://{$SELF_STEAL_DOMAIN} {
     respond 204
     log off
 }
-EOF    echo -e "${GREEN}✅ Caddyfile created${NC}"    # Install random template instead of default HTML
+EOF
+
+    echo -e "${GREEN}✅ Caddyfile created${NC}"    # Install random template instead of default HTML
     echo
     echo -e "${WHITE}🎨 Installing Random Template${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
@@ -658,14 +660,29 @@ EOF    echo -e "${GREEN}✅ Caddyfile created${NC}"    # Install random template
 }
 
 validate_caddyfile() {
-    echo -e "${WHITE}🔍 Validating Caddyfile...${NC}"
+    echo -e "${BLUE}🔍 Validating Caddyfile...${NC}"
     
-    if [ ! -f "$APP_DIR/Caddyfile" ]; then
-        echo -e "${RED}❌ Caddyfile not found${NC}"
-        return 1
+    # Загружаем переменные из .env файла для валидации
+    if [ -f "$APP_DIR/.env" ]; then
+        export $(grep -v '^#' "$APP_DIR/.env" | xargs)
     fi
     
-    if timeout 30 docker run --rm -v "$APP_DIR/Caddyfile:/etc/caddy/Caddyfile" caddy:$CADDY_VERSION caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+    # Проверяем, что обязательные переменные установлены
+    if [ -z "$SELF_STEAL_DOMAIN" ] || [ -z "$SELF_STEAL_PORT" ]; then
+        echo -e "${YELLOW}⚠️ Environment variables not set, using defaults for validation${NC}"
+        export SELF_STEAL_DOMAIN="example.com"
+        export SELF_STEAL_PORT="9443"
+    fi
+    
+    # Валидация с теми же volume что и в рабочем контейнере
+    if docker run --rm \
+        -v "$APP_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" \
+        -v "/etc/letsencrypt:/etc/letsencrypt:ro" \
+        -v "$APP_DIR/html:/var/www/html:ro" \
+        -e "SELF_STEAL_DOMAIN=$SELF_STEAL_DOMAIN" \
+        -e "SELF_STEAL_PORT=$SELF_STEAL_PORT" \
+        caddy:${CADDY_VERSION}-alpine \
+        caddy validate --config /etc/caddy/Caddyfile 2>&1; then
         echo -e "${GREEN}✅ Caddyfile is valid${NC}"
         return 0
     else
@@ -770,17 +787,17 @@ download_template() {
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
     
-    # Создаем бэкап существующего контента если есть
-    if [ -d "$HTML_DIR" ] && [ "$(ls -A "$HTML_DIR" 2>/dev/null)" ]; then
-        local backup_dir="/tmp/caddy-html-backup-$(date +%Y%m%d_%H%M%S)"
-        mkdir -p "$backup_dir"
-        if cp -a "$HTML_DIR"/* "$backup_dir/" 2>/dev/null; then
-            echo -e "${GRAY}💾 Backup created: $backup_dir${NC}"
-            echo -e "${GRAY}   Use 'cp -a $backup_dir/* $HTML_DIR/' to restore${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Could not create backup (continuing anyway)${NC}"
-        fi
-    fi
+    # # Создаем бэкап существующего контента если есть
+    # if [ -d "$HTML_DIR" ] && [ "$(ls -A "$HTML_DIR" 2>/dev/null)" ]; then
+    #     local backup_dir="/tmp/caddy-html-backup-$(date +%Y%m%d_%H%M%S)"
+    #     mkdir -p "$backup_dir"
+    #     if cp -a "$HTML_DIR"/* "$backup_dir/" 2>/dev/null; then
+    #         echo -e "${GRAY}💾 Backup created: $backup_dir${NC}"
+    #         echo -e "${GRAY}   Use 'cp -a $backup_dir/* $HTML_DIR/' to restore${NC}"
+    #     else
+    #         echo -e "${YELLOW}⚠️  Could not create backup (continuing anyway)${NC}"
+    #     fi
+    # fi
     
     # Создаем директорию
     mkdir -p "$HTML_DIR"
@@ -2051,9 +2068,8 @@ EOF
     echo
 }
 
-main_menu() {
-    # Auto-check for updates on first run
-    check_for_updates_silent
+main_menu() {    # Auto-check for updates on first run
+    # check_for_updates_silent
     
     while true; do
         clear
