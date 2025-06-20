@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.2
+# VERSION=2.1.3
 
 set -e
-SCRIPT_VERSION="2.1.2"
+SCRIPT_VERSION="2.1.3"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -1207,7 +1207,8 @@ show_template_options() {
     echo -e "   ${WHITE}7)${NC} ${CYAN}🛠️ ModManager - Мод-менеджер для игр${NC}"
     echo -e "   ${WHITE}8)${NC} ${CYAN}🚀 SpeedTest - Спидтест${NC}"
     echo -e "   ${WHITE}9)${NC} ${CYAN}📺 YouTube - Видеохостинг с капчей${NC}"
-    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503${NC}"
+    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503 v1${NC}"
+    echo -e "   ${WHITE}11)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503 v2${NC}"
     echo
     echo -e "   ${WHITE}v)${NC} ${GRAY}📄 View Current Template${NC}"
     echo -e "   ${WHITE}k)${NC} ${GRAY}📝 Keep Current Template${NC}"
@@ -1247,7 +1248,7 @@ template_command() {
         clear
         show_template_options
         
-        read -p "Select template option [0-10, v, k]: " choice
+        read -p "Select template option [0-11, v, k]: " choice
         
         case "$choice" in
             1)
