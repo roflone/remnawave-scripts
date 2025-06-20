@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.0.5
+# VERSION=2.0.6
 
 set -e
-SCRIPT_VERSION="2.0.5"
+SCRIPT_VERSION="2.0.6"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -621,13 +621,14 @@ EOF
         return 1
     fi
 
-    if timeout 30 docker run --rm -v "$APP_DIR/Caddyfile:/etc/caddy/Caddyfile" caddy:$CADDY_VERSION caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+    if validate_caddyfile; then
         echo -e "${GREEN}✅ Caddyfile is valid${NC}"
     else
         echo -e "${RED}❌ Invalid Caddyfile configuration${NC}"
         echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
         return 1
     fi
+
     if docker compose up -d; then
         echo -e "${GREEN}✅ Caddy services started successfully${NC}"
     else
