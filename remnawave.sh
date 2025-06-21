@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.1
+# VERSION=3.2
 
 set -e
-SCRIPT_VERSION="3.1"
+SCRIPT_VERSION="3.2"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -271,6 +271,34 @@ ensure_backup_dirs() {
     mkdir -p "$APP_DIR/logs" 2>/dev/null || true
     mkdir -p "$APP_DIR/backups" 2>/dev/null || true
     mkdir -p "$APP_DIR/temp" 2>/dev/null || true
+    
+    # Создаем конфигурацию по умолчанию если не существует
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        echo -e "\033[38;5;244m   Creating default backup configuration...\033[0m"
+        cat > "$BACKUP_CONFIG_FILE" << 'EOF'
+{
+  "schedule": "0 2 * * *",
+  "compression": {
+    "enabled": true,
+    "level": 6
+  },
+  "retention": {
+    "days": 7,
+    "min_backups": 3
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": null,
+    "chat_id": null,
+    "thread_id": null,
+    "split_large_files": true,
+    "max_file_size": 49,
+    "api_server": "https://api.telegram.org",
+    "use_custom_api": false
+  }
+}
+EOF
+    fi
     
     return 0
 }
@@ -725,7 +753,7 @@ schedule_disable() {
 
 
 
-# Обновляем функцию schedule_create_backup_script для создания полных бэкапов:
+
 schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
@@ -735,11 +763,13 @@ schedule_create_backup_script() {
 
 # Читаем конфигурацию backup
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/../config/backup-config.json"
-LOG_FILE="$SCRIPT_DIR/../logs/backup.log"
+CONFIG_FILE="$SCRIPT_DIR/backup-config.json"  # Исправлено: убрал ../config/
+LOG_FILE="$SCRIPT_DIR/logs/backup.log"        # Исправлено: убрал ../
 
 # Функция логирования
 log_message() {
+    # Создаем директорию для логов если не существует
+    mkdir -p "$(dirname "$LOG_FILE")"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
@@ -2197,15 +2227,24 @@ schedule_test_backup() {
         return
     fi
     
+    if ! ensure_backup_dirs; then
+        return 1
+    fi
+    
     echo -e "\033[38;5;250mCreating test backup...\033[0m"
     
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
     fi
     
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        echo -e "\033[1;33m⚠️  No backup configuration found. Creating default...\033[0m"
+        schedule_reset_config 
+    fi
+    
     if bash "$BACKUP_SCRIPT_FILE"; then
         echo -e "\033[1;32m✅ Test backup completed successfully!\033[0m"
-        echo -e "\033[38;5;250mCheck $BACKUP_DIR for the backup file\033[0m"
+        echo -e "\033[38;5;250mCheck $APP_DIR/backups for the backup file\033[0m"
     else
         echo -e "\033[1;31m❌ Test backup failed!\033[0m"
         echo -e "\033[38;5;8m   Check logs: $BACKUP_LOG_FILE\033[0m"
