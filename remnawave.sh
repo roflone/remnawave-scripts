@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.2
+# VERSION=3.2.1
 
 set -e
-SCRIPT_VERSION="3.2"
+SCRIPT_VERSION="3.2.1"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -272,11 +272,11 @@ ensure_backup_dirs() {
     mkdir -p "$APP_DIR/backups" 2>/dev/null || true
     mkdir -p "$APP_DIR/temp" 2>/dev/null || true
     
-    # Создаем конфигурацию по умолчанию если не существует
     if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
         echo -e "\033[38;5;244m   Creating default backup configuration...\033[0m"
-        cat > "$BACKUP_CONFIG_FILE" << 'EOF'
+        cat > "$BACKUP_CONFIG_FILE" << EOF
 {
+  "app_name": "$APP_NAME",
   "schedule": "0 2 * * *",
   "compression": {
     "enabled": true,
@@ -763,8 +763,8 @@ schedule_create_backup_script() {
 
 # Читаем конфигурацию backup
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/backup-config.json"  # Исправлено: убрал ../config/
-LOG_FILE="$SCRIPT_DIR/logs/backup.log"        # Исправлено: убрал ../
+CONFIG_FILE="$SCRIPT_DIR/backup-config.json"  # ИСПРАВЛЕНО: убрал ../config/
+LOG_FILE="$SCRIPT_DIR/logs/backup.log"        # ИСПРАВЛЕНО: убрал ../
 
 # Функция логирования
 log_message() {
@@ -791,11 +791,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
-APP_DIR="/opt/$APP_NAME"
-BACKUP_DIR="$APP_DIR/backups"
-COMPRESS_ENABLED=$(jq -r '.compression.enabled // true' "$CONFIG_FILE")
-TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
+APP_NAME=\$(jq -r '.app_name // "$APP_NAME"' "\$CONFIG_FILE")
+APP_DIR="/opt/\$APP_NAME"
+BACKUP_DIR="\$APP_DIR/backups"
+COMPRESS_ENABLED=\$(jq -r '.compression.enabled // true' "\$CONFIG_FILE")
+TELEGRAM_ENABLED=\$(jq -r '.telegram.enabled // false' "\$CONFIG_FILE")
 
 # Создаем директорию бэкапов
 mkdir -p "$BACKUP_DIR"
