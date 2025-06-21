@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.2.2
+# VERSION=3.3.2
 
 set -e
-SCRIPT_VERSION="3.2.2"
+SCRIPT_VERSION="3.3.2"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -303,6 +303,41 @@ EOF
     return 0
 }
 
+ensure_rsync_installed() {
+    if command -v rsync >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    echo -e "\033[38;5;250m📦 Installing rsync for better backup performance...\033[0m"
+    
+    local install_success=false
+    
+    if command -v apt-get >/dev/null 2>&1; then
+        if apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq rsync >/dev/null 2>&1; then
+            install_success=true
+        fi
+    elif command -v yum >/dev/null 2>&1; then
+        if yum install -y -q rsync >/dev/null 2>&1; then
+            install_success=true
+        fi
+    elif command -v dnf >/dev/null 2>&1; then
+        if dnf install -y -q rsync >/dev/null 2>&1; then
+            install_success=true
+        fi
+    elif command -v pacman >/dev/null 2>&1; then
+        if pacman -S --noconfirm --quiet rsync >/dev/null 2>&1; then
+            install_success=true
+        fi
+    fi
+    
+    if [ "$install_success" = true ]; then
+        echo -e "\033[1;32m✅ rsync installed successfully\033[0m"
+        return 0
+    else
+        echo -e "\033[1;33m⚠️  Could not install rsync, will use alternative method\033[0m"
+        return 1
+    fi
+}
 
 schedule_command() {
     if [ "$#" -eq 0 ]; then
@@ -447,6 +482,11 @@ schedule_clear_logs() {
 
 
 schedule_setup_menu() {
+    # Убеждаемся что rsync установлен для лучшей производительности
+    if ! command -v rsync >/dev/null 2>&1; then
+        ensure_rsync_installed
+    fi
+
     while true; do
         clear
         echo -e "\033[1;37m🔧 Backup Configuration\033[0m"
@@ -729,6 +769,61 @@ schedule_update_config() {
     jq "$key = $value" "$BACKUP_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$BACKUP_CONFIG_FILE"
 }
 
+ensure_cron_installed() {
+    # Проверяем наличие crontab
+    if command -v crontab >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    echo -e "\033[38;5;250m📦 Installing cron service for backup scheduling...\033[0m"
+    
+    # Определяем пакетный менеджер и устанавливаем cron
+    local install_success=false
+    
+    if command -v apt-get >/dev/null 2>&1; then
+        if apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq cron >/dev/null 2>&1; then
+            # Запускаем и включаем cron service
+            systemctl start cron 2>/dev/null || service cron start 2>/dev/null || true
+            systemctl enable cron 2>/dev/null || true
+            install_success=true
+        fi
+    elif command -v yum >/dev/null 2>&1; then
+        if yum install -y -q cronie >/dev/null 2>&1; then
+            systemctl start crond 2>/dev/null || service crond start 2>/dev/null || true
+            systemctl enable crond 2>/dev/null || true
+            install_success=true
+        fi
+    elif command -v dnf >/dev/null 2>&1; then
+        if dnf install -y -q cronie >/dev/null 2>&1; then
+            systemctl start crond 2>/dev/null || service crond start 2>/dev/null || true
+            systemctl enable crond 2>/dev/null || true
+            install_success=true
+        fi
+    elif command -v pacman >/dev/null 2>&1; then
+        if pacman -S --noconfirm --quiet cronie >/dev/null 2>&1; then
+            systemctl start cronie 2>/dev/null || true
+            systemctl enable cronie 2>/dev/null || true
+            install_success=true
+        fi
+    fi
+    
+    if [ "$install_success" = true ]; then
+        echo -e "\033[1;32m✅ Cron service installed and started successfully\033[0m"
+        return 0
+    else
+        echo -e "\033[1;31m❌ Could not install cron service automatically\033[0m"
+        echo -e "\033[38;5;244m   Please install manually:\033[0m"
+        if command -v apt-get >/dev/null 2>&1; then
+            echo -e "\033[38;5;117m   sudo apt-get install cron\033[0m"
+        elif command -v yum >/dev/null 2>&1; then
+            echo -e "\033[38;5;117m   sudo yum install cronie\033[0m"
+        elif command -v dnf >/dev/null 2>&1; then
+            echo -e "\033[38;5;117m   sudo dnf install cronie\033[0m"
+        fi
+        return 1
+    fi
+}
+
 schedule_get_status() {
     if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT_FILE"; then
         echo "enabled"
@@ -748,6 +843,13 @@ schedule_toggle() {
 }
 
 schedule_enable() {
+    # Проверяем и устанавливаем cron если необходимо
+    if ! ensure_cron_installed; then
+        echo -e "\033[1;31m❌ Cannot enable scheduler without cron service!\033[0m"
+        sleep 3
+        return
+    fi
+    
     if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
         echo -e "\033[1;31m❌ No configuration found! Please configure backup settings first.\033[0m"
         sleep 2
@@ -766,16 +868,36 @@ schedule_enable() {
     local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
     
     # Удаляем старую запись если есть
-    (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE"; echo "$cron_entry") | crontab -
+    if (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE"; echo "$cron_entry") | crontab - 2>/dev/null; then
+        echo -e "\033[1;32m✅ Backup scheduler enabled!\033[0m"
+        echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
+    else
+        echo -e "\033[1;31m❌ Failed to enable scheduler! Check cron service status.\033[0m"
+        echo -e "\033[38;5;244m   Try: sudo systemctl status cron\033[0m"
+    fi
     
-    echo -e "\033[1;32m✅ Backup scheduler enabled!\033[0m"
-    echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
     sleep 2
 }
 
 schedule_disable() {
-    crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab -
-    echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
+    if ! command -v crontab >/dev/null 2>&1; then
+        echo -e "\033[1;33m⚠️  Crontab not available, but scheduler should be disabled\033[0m"
+        sleep 2
+        return
+    fi
+    
+    if crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab - 2>/dev/null; then
+        echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
+    else
+        # Попробуем создать пустой crontab если его не было
+        if crontab -l 2>/dev/null | wc -l | grep -q "^0$"; then
+            echo "" | crontab - 2>/dev/null
+            echo -e "\033[1;32m✅ Backup scheduler disabled (crontab was empty)!\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Could not modify crontab, but scheduler should be disabled\033[0m"
+        fi
+    fi
+    
     sleep 2
 }
 
@@ -823,16 +945,18 @@ fi
 APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
 APP_DIR="/opt/$APP_NAME"
 BACKUP_DIR="$APP_DIR/backups"
+TEMP_BACKUP_ROOT="/tmp/${APP_NAME}_backup"
 COMPRESS_ENABLED=$(jq -r '.compression.enabled // true' "$CONFIG_FILE")
 TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
 
-# Создаем директорию бэкапов
+# Создаем директории для бэкапов
 mkdir -p "$BACKUP_DIR"
+mkdir -p "$TEMP_BACKUP_ROOT"
 
 # Генерируем имя бэкапа
 timestamp=$(date +%Y%m%d_%H%M%S)
 backup_name="remnawave_scheduled_${timestamp}"
-temp_backup_dir="$BACKUP_DIR/temp_$timestamp"
+temp_backup_dir="$TEMP_BACKUP_ROOT/temp_$timestamp"
 
 log_message "Starting scheduled backup..."
 log_message "Creating full system backup: $backup_name"
@@ -872,8 +996,8 @@ mkdir -p "$app_backup_dir"
 # Копируем всю структуру кроме некоторых директорий
 log_message "Copying application directory structure..."
 
-# ИСПРАВЛЕНО: проверяем наличие rsync, если нет - используем cp
 if command -v rsync >/dev/null 2>&1; then
+    # rsync доступен, используем его с правильными исключениями
     rsync -av \
         --exclude='backups/' \
         --exclude='logs/' \
@@ -885,15 +1009,37 @@ if command -v rsync >/dev/null 2>&1; then
         "$app_backup_dir/" 2>/dev/null
     copy_result=$?
 else
-    # Альтернативный метод без rsync
-    cp -r "$APP_DIR"/* "$app_backup_dir/" 2>/dev/null
-    copy_result=$?
-    # Удаляем ненужные директории
-    rm -rf "$app_backup_dir/backups" "$app_backup_dir/logs" "$app_backup_dir/temp" 2>/dev/null
+    # Используем улучшенный cp метод без рекурсии
+    log_message "rsync not available, using selective copy method"
+    copy_result=0
+    
+    # Копируем файлы по одному, исключая проблемные директории
+    find "$APP_DIR" -maxdepth 1 -type f \( \
+        -name "*.json" -o \
+        -name "*.yml" -o \
+        -name "*.yaml" -o \
+        -name "*.env*" -o \
+        -name "*.conf" -o \
+        -name "*.ini" -o \
+        -name "*.sh" -o \
+        -name "docker-compose*" \
+    \) -exec cp {} "$app_backup_dir/" \; 2>/dev/null || true
+    
+    # Копируем важные директории если они существуют (исключая backups, logs, temp)
+    for dir in certs ssl certificates config configs custom scripts; do
+        if [ -d "$APP_DIR/$dir" ]; then
+            cp -r "$APP_DIR/$dir" "$app_backup_dir/" 2>/dev/null || true
+        fi
+    done
+    
+    # Проверяем что хотя бы docker-compose.yml скопирован
+    if [ ! -f "$app_backup_dir/docker-compose.yml" ]; then
+        copy_result=1
+        log_message "ERROR: Critical file docker-compose.yml not found or failed to copy"
+    fi
 fi
 
 if [ $copy_result -eq 0 ]; then
-    # ИСПРАВЛЕНО: убрал local
     app_files_count=$(find "$app_backup_dir" -type f | wc -l)
     log_message "Application files copied successfully ($app_files_count files)"
 else
@@ -902,9 +1048,11 @@ else
     exit 1
 fi
 
-if [ -f "$database_file" ]; then
+if [ -f "$database_file" ] && [ "$database_file" != "$app_backup_dir/database.sql" ]; then
     mv "$database_file" "$app_backup_dir/database.sql"
     log_message "Database file moved to backup root"
+elif [ -f "$app_backup_dir/database.sql" ]; then
+    log_message "Database file already in backup root"
 fi
 
 # Шаг 3: Добавляем скрипт управления
@@ -952,7 +1100,6 @@ if [ "$COMPRESS_ENABLED" = "true" ]; then
     
     cd "$temp_backup_dir"
     if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" "$backup_name" 2>/dev/null; then
-        # ИСПРАВЛЕНО: убрал local
         compressed_size=$(du -sh "$BACKUP_DIR/${backup_name}.tar.gz" | cut -f1)
         log_message "Backup compressed successfully ($compressed_size)"
         
@@ -971,40 +1118,51 @@ else
     rm -rf "$temp_backup_dir"
     
     final_backup_file="$BACKUP_DIR/$backup_name"
-    # ИСПРАВЛЕНО: убрал local
     backup_size=$(du -sh "$final_backup_file" | cut -f1)
     log_message "Backup created successfully: $backup_name ($backup_size)"
 fi
 
 # Шаг 6: Отправка в Telegram (если включено)
-if [ "$TELEGRAM_ENABLED" = "true" ]; then
-    log_message "Step 6: Sending backup to Telegram..."
+if [ "$TELEGRAM_ENABLED" = "true" ]; 
+    then    log_message "Step 6: Sending backup to Telegram..."
     
     telegram_bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE")
     telegram_chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE")
+    telegram_thread_id=$(jq -r '.telegram.thread_id' "$CONFIG_FILE")
     
     if [ "$telegram_bot_token" != "null" ] && [ "$telegram_chat_id" != "null" ]; then
         # Отправляем информацию о бэкапе
-        backup_info="🤖 *Scheduled Backup Created*\\n\\n"
-        backup_info+="📦 *Name:* \`$backup_name\`\\n"
-        backup_info+="📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')\\n"
-        backup_info+="🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)\\n"
-        backup_info+="🏷️ *Type:* Full System Backup\\n"
-        backup_info+="🖥️ *Server:* $(hostname)\\n"
-        backup_info+="✅ *Status:* Success"
-        
-        # Если файл меньше 50MB, отправляем его
+        backup_info="🤖 *Scheduled Backup Created*
+
+📦 *Name:* \`$backup_name\`
+📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')
+🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)
+🏷️ *Type:* Full System Backup
+🖥️ *Server:* $(hostname)
+✅ *Status:* Success"
+          # Если файл меньше 50MB, отправляем его
         file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
         max_size=$((50 * 1024 * 1024))  # 50MB в байтах
         
         if [ "$file_size_bytes" -lt "$max_size" ] && [[ "$final_backup_file" =~ \.tar\.gz$ ]]; then
             log_message "Sending file via Telegram API: $(basename "$final_backup_file")"
             
-            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
-                -F "chat_id=$telegram_chat_id" \
-                -F "document=@$final_backup_file" \
-                -F "caption=$backup_info" \
-                -F "parse_mode=Markdown" >/dev/null
+            # Отправляем с учетом thread_id
+            if [ -n "$telegram_thread_id" ] && [ "$telegram_thread_id" != "null" ]; then
+                log_message "Sending to thread: $telegram_thread_id"
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "document=@$final_backup_file" \
+                    -F "caption=$backup_info" \
+                    -F "parse_mode=Markdown" \
+                    -F "message_thread_id=$telegram_thread_id" >/dev/null
+            else
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "document=@$final_backup_file" \
+                    -F "caption=$backup_info" \
+                    -F "parse_mode=Markdown" >/dev/null
+            fi
             
             if [ $? -eq 0 ]; then
                 log_message "File sent successfully to Telegram"
@@ -1014,10 +1172,20 @@ if [ "$TELEGRAM_ENABLED" = "true" ]; then
         else
             log_message "Sending backup notification to Telegram (file too large for upload)"
             
-            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
-                -F "chat_id=$telegram_chat_id" \
-                -F "text=$backup_info" \
-                -F "parse_mode=Markdown" >/dev/null
+            # Отправляем текстовое сообщение с учетом thread_id
+            if [ -n "$telegram_thread_id" ] && [ "$telegram_thread_id" != "null" ]; then
+                log_message "Sending to thread: $telegram_thread_id"
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "text=$backup_info" \
+                    -F "parse_mode=Markdown" \
+                    -F "message_thread_id=$telegram_thread_id" >/dev/null
+            else
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "text=$backup_info" \
+                    -F "parse_mode=Markdown" >/dev/null
+            fi
             
             if [ $? -eq 0 ]; then
                 log_message "Backup notification sent successfully to Telegram"
@@ -1050,6 +1218,10 @@ fi
 
 log_message "Old backups cleaned up"
 log_message "Backup process completed successfully"
+
+# Очистка временной директории бэкапа
+log_message "Cleaning up temporary backup directory..."
+rm -rf "$TEMP_BACKUP_ROOT" 2>/dev/null || true
 
 BACKUP_SCRIPT_EOF
 
@@ -1607,6 +1779,7 @@ install_missing_dependencies() {
         return 1
     fi
 }
+
 
 install_with_apt() {
     local packages=("$@")
@@ -2351,9 +2524,26 @@ schedule_status() {
     echo -e "\033[1;37m📊 Backup Scheduler Status\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 35))\033[0m"
     echo
+      local status=$(schedule_get_status)
     
-    local status=$(schedule_get_status)
+    # Проверяем статус cron service
+    echo -e "\033[1;37m🔧 System Status:\033[0m"
+    if command -v crontab >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Cron service: Available\033[0m"
+        
+        # Проверяем запущен ли cron daemon
+        if systemctl is-active cron >/dev/null 2>&1 || systemctl is-active crond >/dev/null 2>&1 || pgrep -x "cron\|crond" >/dev/null 2>&1; then
+            echo -e "\033[1;32m✅ Cron daemon: Running\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Cron daemon: Not running\033[0m"
+        fi
+    else
+        echo -e "\033[1;31m❌ Cron service: Not installed\033[0m"
+        echo -e "\033[38;5;244m   Install with: sudo apt-get install cron\033[0m"
+    fi
+    echo
     
+    echo -e "\033[1;37m📋 Scheduler Status:\033[0m"
     if [ "$status" = "enabled" ]; then
         echo -e "\033[1;32m✅ Status: ENABLED\033[0m"
         
