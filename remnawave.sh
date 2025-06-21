@@ -782,29 +782,30 @@ schedule_disable() {
 
 
 
+# В функции schedule_create_backup_script (около строки 785), замените содержимое на:
 schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
     
-    cat > "$BACKUP_SCRIPT_FILE" <<BACKUP_SCRIPT_EOF
+    cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
 #!/bin/bash
 
 # Читаем конфигурацию backup
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="\$SCRIPT_DIR/backup-config.json"
-LOG_FILE="\$SCRIPT_DIR/logs/backup.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/backup-config.json"
+LOG_FILE="$SCRIPT_DIR/logs/backup.log"
 
 # Функция логирования
 log_message() {
     # Создаем директорию для логов если не существует
-    mkdir -p "\$(dirname "\$LOG_FILE")"
-    echo "[\$(date '+%Y-%m-%d %H:%M:%S')] \$1" | tee -a "\$LOG_FILE"
+    mkdir -p "$(dirname "$LOG_FILE")"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
 # Функция для проверки доступности команд
 check_command() {
-    if ! command -v "\$1" >/dev/null 2>&1; then
-        log_message "ERROR: Required command '\$1' not found"
+    if ! command -v "$1" >/dev/null 2>&1; then
+        log_message "ERROR: Required command '$1' not found"
         exit 1
     fi
 }
@@ -814,118 +815,131 @@ check_command docker
 check_command jq
 
 # Определяем переменные из конфигурации
-if [ ! -f "\$CONFIG_FILE" ]; then
-    log_message "ERROR: Backup configuration not found: \$CONFIG_FILE"
+if [ ! -f "$CONFIG_FILE" ]; then
+    log_message "ERROR: Backup configuration not found: $CONFIG_FILE"
     exit 1
 fi
 
-APP_NAME=\$(jq -r '.app_name // "$APP_NAME"' "\$CONFIG_FILE")
-APP_DIR="/opt/\$APP_NAME"
-BACKUP_DIR="\$APP_DIR/backups"
-COMPRESS_ENABLED=\$(jq -r '.compression.enabled // true' "\$CONFIG_FILE")
-TELEGRAM_ENABLED=\$(jq -r '.telegram.enabled // false' "\$CONFIG_FILE")
+APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
+APP_DIR="/opt/$APP_NAME"
+BACKUP_DIR="$APP_DIR/backups"
+COMPRESS_ENABLED=$(jq -r '.compression.enabled // true' "$CONFIG_FILE")
+TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
 
 # Создаем директорию бэкапов
-mkdir -p "\$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR"
 
 # Генерируем имя бэкапа
-timestamp=\$(date +%Y%m%d_%H%M%S)
-backup_name="remnawave_scheduled_\${timestamp}"
-temp_backup_dir="\$BACKUP_DIR/temp_\$timestamp"
+timestamp=$(date +%Y%m%d_%H%M%S)
+backup_name="remnawave_scheduled_${timestamp}"
+temp_backup_dir="$BACKUP_DIR/temp_$timestamp"
 
 log_message "Starting scheduled backup..."
-log_message "Creating full system backup: \$backup_name"
+log_message "Creating full system backup: $backup_name"
 
 # Создаем временную директорию для сборки бэкапа
-mkdir -p "\$temp_backup_dir/\$backup_name"
+mkdir -p "$temp_backup_dir/$backup_name"
 
 # Шаг 1: Экспорт базы данных
 log_message "Step 1: Exporting database..."
 
-db_container="\${APP_NAME}-db"
-if ! docker exec "\$db_container" pg_isready -U postgres >/dev/null 2>&1; then
+db_container="${APP_NAME}-db"
+if ! docker exec "$db_container" pg_isready -U postgres >/dev/null 2>&1; then
     log_message "ERROR: Database container is not ready"
-    rm -rf "\$temp_backup_dir"
+    rm -rf "$temp_backup_dir"
     exit 1
 fi
 
-database_file="\$temp_backup_dir/\$backup_name/database.sql"
-if docker exec -e PGPASSWORD=postgres "\$db_container" \\
-    pg_dump -U postgres -d postgres --clean --if-exists > "\$database_file" 2>/dev/null; then
+database_file="$temp_backup_dir/$backup_name/database.sql"
+if docker exec -e PGPASSWORD=postgres "$db_container" \
+    pg_dump -U postgres -d postgres --clean --if-exists > "$database_file" 2>/dev/null; then
     
-    local db_size=\$(du -sh "\$database_file" | cut -f1)
-    log_message "Database exported successfully (\$db_size)"
+    # ИСПРАВЛЕНО: убрал local
+    db_size=$(du -sh "$database_file" | cut -f1)
+    log_message "Database exported successfully ($db_size)"
 else
     log_message "ERROR: Database export failed"
-    rm -rf "\$temp_backup_dir"
+    rm -rf "$temp_backup_dir"
     exit 1
 fi
 
 # Шаг 2: Копирование полной структуры приложения
 log_message "Step 2: Creating complete application backup..."
 
-app_backup_dir="\$temp_backup_dir/\$backup_name"
-mkdir -p "\$app_backup_dir"
+app_backup_dir="$temp_backup_dir/$backup_name"
+mkdir -p "$app_backup_dir"
 
 # Копируем всю структуру кроме некоторых директорий
 log_message "Copying application directory structure..."
-rsync -av \\
-    --exclude='backups/' \\
-    --exclude='logs/' \\
-    --exclude='temp/' \\
-    --exclude='*.log' \\
-    --exclude='*.tmp' \\
-    --exclude='.git/' \\
-    "\$APP_DIR/" \\
-    "\$app_backup_dir/" 2>/dev/null
 
-if [ \$? -eq 0 ]; then
-    local app_files_count=\$(find "\$app_backup_dir" -type f | wc -l)
-    log_message "Application files copied successfully (\$app_files_count files)"
+# ИСПРАВЛЕНО: проверяем наличие rsync, если нет - используем cp
+if command -v rsync >/dev/null 2>&1; then
+    rsync -av \
+        --exclude='backups/' \
+        --exclude='logs/' \
+        --exclude='temp/' \
+        --exclude='*.log' \
+        --exclude='*.tmp' \
+        --exclude='.git/' \
+        "$APP_DIR/" \
+        "$app_backup_dir/" 2>/dev/null
+    copy_result=$?
+else
+    # Альтернативный метод без rsync
+    cp -r "$APP_DIR"/* "$app_backup_dir/" 2>/dev/null
+    copy_result=$?
+    # Удаляем ненужные директории
+    rm -rf "$app_backup_dir/backups" "$app_backup_dir/logs" "$app_backup_dir/temp" 2>/dev/null
+fi
+
+if [ $copy_result -eq 0 ]; then
+    # ИСПРАВЛЕНО: убрал local
+    app_files_count=$(find "$app_backup_dir" -type f | wc -l)
+    log_message "Application files copied successfully ($app_files_count files)"
 else
     log_message "ERROR: Failed to copy application files"
-    rm -rf "\$temp_backup_dir"
+    rm -rf "$temp_backup_dir"
     exit 1
 fi
 
-if [ -f "\$database_file" ]; then
-    mv "\$database_file" "\$app_backup_dir/database.sql"
+if [ -f "$database_file" ]; then
+    mv "$database_file" "$app_backup_dir/database.sql"
     log_message "Database file moved to backup root"
 fi
 
 # Шаг 3: Добавляем скрипт управления
 log_message "Step 3: Including management script..."
 
-script_source="/usr/local/bin/\$APP_NAME"
-if [ -f "\$script_source" ]; then
-    cp "\$script_source" "\$temp_backup_dir/\$backup_name/install-script.sh"
+script_source="/usr/local/bin/$APP_NAME"
+if [ -f "$script_source" ]; then
+    cp "$script_source" "$temp_backup_dir/$backup_name/install-script.sh"
     log_message "Management script included"
 else
-    log_message "WARNING: Management script not found at \$script_source"
+    log_message "WARNING: Management script not found at $script_source"
 fi
 
 # Шаг 4: Создаем метаданные
 log_message "Step 4: Creating backup metadata..."
 
-metadata_file="\$temp_backup_dir/\$backup_name/backup-metadata.json"
-cat > "\$metadata_file" <<METADATA_EOF
+metadata_file="$temp_backup_dir/$backup_name/backup-metadata.json"
+cat > "$metadata_file" <<METADATA_EOF
 {
     "backup_type": "full_system",
-    "app_name": "\$APP_NAME",
-    "timestamp": "\$timestamp",
-    "date_created": "\$(date -Iseconds)",
-    "script_version": "\$(grep '^SCRIPT_VERSION=' "\$script_source" | cut -d'=' -f2 | tr -d '"' || echo 'unknown')",
+    "app_name": "$APP_NAME",
+    "timestamp": "$timestamp",
+    "date_created": "$(date -Iseconds)",
+    "script_version": "$(grep '^SCRIPT_VERSION=' "$script_source" | cut -d'=' -f2 | tr -d '"' || echo 'unknown')",
     "database_included": true,
     "application_files_included": true,
-    "management_script_included": \$([ -f "\$temp_backup_dir/\$backup_name/install-script.sh" ] && echo "true" || echo "false"),
+    "management_script_included": $([ -f "$temp_backup_dir/$backup_name/install-script.sh" ] && echo "true" || echo "false"),
     "docker_images": {
-\$(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep -E "(remnawave|postgres|valkey)" | head -10 || echo '')
+$(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep -E "(remnawave|postgres|valkey)" | head -10 || echo '')
     },
     "system_info": {
-        "hostname": "\$(hostname)",
-        "os": "\$(lsb_release -d 2>/dev/null | cut -f2 || uname -s)",
-        "docker_version": "\$(docker --version | cut -d' ' -f3 | tr -d ',')",
-        "backup_size_uncompressed": "\$(du -sh "\$temp_backup_dir/\$backup_name" | cut -f1)"
+        "hostname": "$(hostname)",
+        "os": "$(lsb_release -d 2>/dev/null | cut -f2 || uname -s)",
+        "docker_version": "$(docker --version | cut -d' ' -f3 | tr -d ',')",
+        "backup_size_uncompressed": "$(du -sh "$temp_backup_dir/$backup_name" | cut -f1)"
     }
 }
 METADATA_EOF
@@ -933,64 +947,66 @@ METADATA_EOF
 log_message "Backup metadata created"
 
 # Шаг 5: Сжатие бэкапа (если включено)
-if [ "\$COMPRESS_ENABLED" = "true" ]; then
+if [ "$COMPRESS_ENABLED" = "true" ]; then
     log_message "Step 5: Compressing backup..."
     
-    cd "\$temp_backup_dir"
-    if tar -czf "\$BACKUP_DIR/\${backup_name}.tar.gz" "\$backup_name" 2>/dev/null; then
-        local compressed_size=\$(du -sh "\$BACKUP_DIR/\${backup_name}.tar.gz" | cut -f1)
-        log_message "Backup compressed successfully (\$compressed_size)"
+    cd "$temp_backup_dir"
+    if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" "$backup_name" 2>/dev/null; then
+        # ИСПРАВЛЕНО: убрал local
+        compressed_size=$(du -sh "$BACKUP_DIR/${backup_name}.tar.gz" | cut -f1)
+        log_message "Backup compressed successfully ($compressed_size)"
         
         # Удаляем временную директорию
-        rm -rf "\$temp_backup_dir"
+        rm -rf "$temp_backup_dir"
         
-        final_backup_file="\$BACKUP_DIR/\${backup_name}.tar.gz"
+        final_backup_file="$BACKUP_DIR/${backup_name}.tar.gz"
     else
         log_message "ERROR: Backup compression failed"
-        rm -rf "\$temp_backup_dir"
+        rm -rf "$temp_backup_dir"
         exit 1
     fi
 else
     # Перемещаем несжатую директорию в финальное местоположение
-    mv "\$temp_backup_dir/\$backup_name" "\$BACKUP_DIR/"
-    rm -rf "\$temp_backup_dir"
+    mv "$temp_backup_dir/$backup_name" "$BACKUP_DIR/"
+    rm -rf "$temp_backup_dir"
     
-    final_backup_file="\$BACKUP_DIR/\$backup_name"
-    local backup_size=\$(du -sh "\$final_backup_file" | cut -f1)
-    log_message "Backup created successfully: \$backup_name (\$backup_size)"
+    final_backup_file="$BACKUP_DIR/$backup_name"
+    # ИСПРАВЛЕНО: убрал local
+    backup_size=$(du -sh "$final_backup_file" | cut -f1)
+    log_message "Backup created successfully: $backup_name ($backup_size)"
 fi
 
 # Шаг 6: Отправка в Telegram (если включено)
-if [ "\$TELEGRAM_ENABLED" = "true" ]; then
+if [ "$TELEGRAM_ENABLED" = "true" ]; then
     log_message "Step 6: Sending backup to Telegram..."
     
-    telegram_bot_token=\$(jq -r '.telegram.bot_token' "\$CONFIG_FILE")
-    telegram_chat_id=\$(jq -r '.telegram.chat_id' "\$CONFIG_FILE")
+    telegram_bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE")
+    telegram_chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE")
     
-    if [ "\$telegram_bot_token" != "null" ] && [ "\$telegram_chat_id" != "null" ]; then
+    if [ "$telegram_bot_token" != "null" ] && [ "$telegram_chat_id" != "null" ]; then
         # Отправляем информацию о бэкапе
         backup_info="🤖 *Scheduled Backup Created*\\n\\n"
-        backup_info+="📦 *Name:* \\\`\$backup_name\\\`\\n"
-        backup_info+="📅 *Date:* \$(date '+%Y-%m-%d %H:%M:%S')\\n"
-        backup_info+="🔢 *Size:* \$(du -sh "\$final_backup_file" | cut -f1)\\n"
+        backup_info+="📦 *Name:* \`$backup_name\`\\n"
+        backup_info+="📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')\\n"
+        backup_info+="🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)\\n"
         backup_info+="🏷️ *Type:* Full System Backup\\n"
-        backup_info+="🖥️ *Server:* \$(hostname)\\n"
+        backup_info+="🖥️ *Server:* $(hostname)\\n"
         backup_info+="✅ *Status:* Success"
         
         # Если файл меньше 50MB, отправляем его
-        file_size_bytes=\$(stat -c%s "\$final_backup_file" 2>/dev/null || echo "0")
-        max_size=\$((50 * 1024 * 1024))  # 50MB в байтах
+        file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
+        max_size=$((50 * 1024 * 1024))  # 50MB в байтах
         
-        if [ "\$file_size_bytes" -lt "\$max_size" ] && [[ "\$final_backup_file" =~ \\.tar\\.gz\$ ]]; then
-            log_message "Sending file via Telegram API: \$(basename "\$final_backup_file")"
+        if [ "$file_size_bytes" -lt "$max_size" ] && [[ "$final_backup_file" =~ \.tar\.gz$ ]]; then
+            log_message "Sending file via Telegram API: $(basename "$final_backup_file")"
             
-            curl -s -X POST "https://api.telegram.org/bot\$telegram_bot_token/sendDocument" \\
-                -F "chat_id=\$telegram_chat_id" \\
-                -F "document=@\$final_backup_file" \\
-                -F "caption=\$backup_info" \\
+            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
+                -F "chat_id=$telegram_chat_id" \
+                -F "document=@$final_backup_file" \
+                -F "caption=$backup_info" \
                 -F "parse_mode=Markdown" >/dev/null
             
-            if [ \$? -eq 0 ]; then
+            if [ $? -eq 0 ]; then
                 log_message "File sent successfully to Telegram"
             else
                 log_message "ERROR: Failed to send file to Telegram"
@@ -998,12 +1014,12 @@ if [ "\$TELEGRAM_ENABLED" = "true" ]; then
         else
             log_message "Sending backup notification to Telegram (file too large for upload)"
             
-            curl -s -X POST "https://api.telegram.org/bot\$telegram_bot_token/sendMessage" \\
-                -F "chat_id=\$telegram_chat_id" \\
-                -F "text=\$backup_info" \\
+            curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                -F "chat_id=$telegram_chat_id" \
+                -F "text=$backup_info" \
                 -F "parse_mode=Markdown" >/dev/null
             
-            if [ \$? -eq 0 ]; then
+            if [ $? -eq 0 ]; then
                 log_message "Backup notification sent successfully to Telegram"
             else
                 log_message "ERROR: Failed to send notification to Telegram"
@@ -1017,19 +1033,19 @@ if [ "\$TELEGRAM_ENABLED" = "true" ]; then
 fi
 
 # Шаг 7: Очистка старых бэкапов
-retention_days=\$(jq -r '.retention.days // 7' "\$CONFIG_FILE")
-min_backups=\$(jq -r '.retention.min_backups // 3' "\$CONFIG_FILE")
+retention_days=$(jq -r '.retention.days // 7' "$CONFIG_FILE")
+min_backups=$(jq -r '.retention.min_backups // 3' "$CONFIG_FILE")
 
-log_message "Cleaning up backups older than \$retention_days days..."
+log_message "Cleaning up backups older than $retention_days days..."
 
 # Находим старые файлы
-find "\$BACKUP_DIR" -name "remnawave_scheduled_*" -type f -mtime +\$retention_days -delete 2>/dev/null
-find "\$BACKUP_DIR" -name "remnawave_scheduled_*" -type d -mtime +\$retention_days -exec rm -rf {} + 2>/dev/null
+find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type f -mtime +$retention_days -delete 2>/dev/null
+find "$BACKUP_DIR" -name "remnawave_scheduled_*" -type d -mtime +$retention_days -exec rm -rf {} + 2>/dev/null
 
 # Проверяем минимальное количество
-current_backups=\$(ls -1 "\$BACKUP_DIR"/remnawave_scheduled_* 2>/dev/null | wc -l)
-if [ "\$current_backups" -lt "\$min_backups" ]; then
-    log_message "WARNING: Only \$current_backups backups remain (minimum: \$min_backups)"
+current_backups=$(ls -1 "$BACKUP_DIR"/remnawave_scheduled_* 2>/dev/null | wc -l)
+if [ "$current_backups" -lt "$min_backups" ]; then
+    log_message "WARNING: Only $current_backups backups remain (minimum: $min_backups)"
 fi
 
 log_message "Old backups cleaned up"
