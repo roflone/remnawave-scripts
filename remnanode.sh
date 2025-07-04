@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.1
+# Version: 3.1.1
 set -e
-SCRIPT_VERSION="3.1"
+SCRIPT_VERSION="3.1.1"
 
 # Parse command line arguments
 COMMAND=""
@@ -650,6 +650,11 @@ is_remnanode_installed() {
 }
 
 is_remnanode_up() {
+    if ! is_remnanode_installed; then
+        return 1
+    fi
+    
+    detect_compose
     if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a)" ]; then
         return 1
     else
@@ -730,7 +735,6 @@ install_command() {
     echo -e "\033[38;5;8m💡 For all commands: \033[38;5;15msudo $APP_NAME\033[0m"
     echo -e "\033[38;5;8m📚 Project: \033[38;5;250mhttps://gig.ovh\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
-    echo
 }
 
 uninstall_command() {
@@ -761,6 +765,32 @@ uninstall_command() {
         uninstall_remnanode_data_files
         colorized_echo green "Remnanode uninstalled successfully"
     fi
+}
+
+install_script_command() {
+    check_running_as_root
+    colorized_echo blue "Installing RemnaNode script globally"
+    install_remnanode_script
+    colorized_echo green "✅ Script installed successfully!"
+    colorized_echo white "You can now run '$APP_NAME' from anywhere"
+}
+
+uninstall_script_command() {
+    check_running_as_root
+    if [ ! -f "/usr/local/bin/$APP_NAME" ]; then
+        colorized_echo red "❌ Script not found at /usr/local/bin/$APP_NAME"
+        exit 1
+    fi
+    
+    read -p "Are you sure you want to remove the script? (y/n): " -r
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Operation cancelled"
+        exit 0
+    fi
+    
+    colorized_echo blue "Removing RemnaNode script"
+    uninstall_remnanode_script
+    colorized_echo green "✅ Script removed successfully!"
 }
 
 up_command() {
@@ -1498,7 +1528,6 @@ get_xray_core() {
     echo
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     echo -e "\033[1;37m🎉 Installation Complete!\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
     
     # Информация об установке
     echo -e "\033[1;37m📋 Installation Details:\033[0m"
@@ -1863,7 +1892,7 @@ usage() {
     echo
 
     echo -e "\033[1;37m🚀 Core Commands:\033[0m"
-    printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install/reinstall RemnaNode"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install RemnaNode"
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "update" "⬆️  Update to latest version"
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove RemnaNode completely"
     echo
@@ -1873,276 +1902,6 @@ usage() {
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "down" "⏹️  Stop services"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "restart" "🔄 Restart services"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "status" "📊 Show service status"
-    echo
-
-    echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
-    printf "   \033[38;5;244m%-18s\033[0m %s\n" "logs" "📋 Show container logs"
-    printf "   \033[38;5;244m%-18s\033[0m %s\n" "setup-logs" "🔄 Configure Xray-log rotation"
-    printf "   \033[38;5;244m%-18s\033[0m %s\n" "xray_log_out" "📤 View Xray logs"
-    printf "   \033[38;5;244m%-18s\033[0m %s\n" "xray_log_err" "📥 View Xray error logs"
-    echo
-
-    echo -e "\033[1;37m🔧 Configuration:\033[0m"
-    printf "   \033[38;5;15m%-18s\033[0m %s\n" "core-update" "⚡ Update/change Xray core"
-    printf "   \033[38;5;15m%-18s\033[0m %s\n" "edit" "✏️  Edit docker-compose.yml"
-    echo
-
-    echo -e "\033[1;37m🛠️  Utilities:\033[0m"
-    printf "   \033[38;5;8m%-18s\033[0m %s\n" "install-script" "📥 Install script to system"
-    printf "   \033[38;5;8m%-18s\033[0m %s\n" "uninstall-script" "📤 Remove script from system"
-    echo
-
-    echo -e "\033[1;37m⚙️  Install Options:\033[0m"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "--dev" "🧪 Use development version"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "--name <name>" "🏷️  Set custom app name"
-    echo
-
-    echo -e "\033[1;37m🌐 System Information:\033[0m"
-    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Node IP:" "$NODE_IP"
-    
-    current_version=$(get_current_xray_core_version)
-    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Core:" "$current_version"
-    
-    DEFAULT_APP_PORT="3000"
-    if [ -f "$ENV_FILE" ]; then
-        APP_PORT=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-    fi
-    APP_PORT=${APP_PORT:-$DEFAULT_APP_PORT}
-    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "App Port:" "$APP_PORT"
-    echo
-
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
-    echo -e "\033[38;5;8m💡 For all commands: \033[38;5;15msudo $APP_NAME\033[0m"
-    echo -e "\033[38;5;8m📚 Project: \033[38;5;250mhttps://gig.ovh\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
-}
-
-main_menu() {
-    while true; do
-        clear
-        echo -e "\033[1;37m🚀 $APP_NAME Node Management\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
-        echo
-        
-        # Проверка статуса узла
-        local menu_status="Not installed"
-        local status_color="\033[38;5;244m"
-        local node_port=""
-        local xray_version=""
-        
-        if is_remnanode_installed; then
-            if [ -f "$ENV_FILE" ]; then
-                node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
-            fi
-            
-            if is_remnanode_up; then
-                menu_status="Running"
-                status_color="\033[1;32m"
-                echo -e "${status_color}✅ Node Status: RUNNING\033[0m"
-                
-                # Показываем информацию о подключении
-                if [ -n "$node_port" ]; then
-                    echo
-                    echo -e "\033[1;37m🌐 Connection Information:\033[0m"
-                    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;117m%s\033[0m\n" "IP Address:" "$NODE_IP"
-                    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;117m%s\033[0m\n" "Port:" "$node_port"
-                    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;117m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$node_port"
-                fi
-                
-                # Проверяем Xray-core
-                xray_version=$(get_current_xray_core_version 2>/dev/null || echo "Not installed")
-                echo
-                echo -e "\033[1;37m⚙️  Components Status:\033[0m"
-                printf "   \033[38;5;15m%-12s\033[0m " "Xray Core:"
-                if [ "$xray_version" != "Not installed" ]; then
-                    echo -e "\033[1;32m✅ $xray_version\033[0m"
-                else
-                    echo -e "\033[1;33m⚠️  Not installed\033[0m"
-                fi
-                
-                # Показываем использование ресурсов
-                echo
-                echo -e "\033[1;37m💾 Resource Usage:\033[0m"
-                
-                local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "N/A")
-                local mem_info=$(free -h | grep "Mem:" 2>/dev/null)
-                local mem_used=$(echo "$mem_info" | awk '{print $3}' 2>/dev/null || echo "N/A")
-                local mem_total=$(echo "$mem_info" | awk '{print $2}' 2>/dev/null || echo "N/A")
-                
-                printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s%%\033[0m\n" "CPU Usage:" "$cpu_usage"
-                printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s / %s\033[0m\n" "Memory:" "$mem_used" "$mem_total"
-                
-                local disk_usage=$(df -h "$APP_DIR" 2>/dev/null | tail -1 | awk '{print $5}' | sed 's/%//' 2>/dev/null || echo "N/A")
-                local disk_available=$(df -h "$APP_DIR" 2>/dev/null | tail -1 | awk '{print $4}' 2>/dev/null || echo "N/A")
-                
-                printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s%% used, %s available\033[0m\n" "Disk Usage:" "$disk_usage" "$disk_available"
-                
-                # Проверяем логи
-                if [ -d "$DATA_DIR" ]; then
-                    local log_files=$(find "$DATA_DIR" -name "*.log" 2>/dev/null | wc -l)
-                    if [ "$log_files" -gt 0 ]; then
-                        local total_log_size=$(du -sh "$DATA_DIR"/*.log 2>/dev/null | awk '{total+=$1} END {print total"K"}' | sed 's/KK/K/')
-                        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s files (%s)\033[0m\n" "Log Files:" "$log_files" "$total_log_size"
-                    fi
-                fi
-                
-            else
-                menu_status="Stopped"
-                status_color="\033[1;31m"
-                echo -e "${status_color}❌ Node Status: STOPPED\033[0m"
-                echo -e "\033[38;5;244m   Services are installed but not running\033[0m"
-                echo -e "\033[38;5;244m   Use option 2 to start the node\033[0m"
-            fi
-        else
-            echo -e "${status_color}📦 Node Status: NOT INSTALLED\033[0m"
-            echo -e "\033[38;5;244m   Use option 1 to install RemnaNode\033[0m"
-        fi
-        
-        echo
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
-        echo
-        echo -e "\033[1;37m🚀 Installation & Management:\033[0m"
-        echo -e "   \033[38;5;15m1)\033[0m 🛠️  Install RemnaNode"
-        echo -e "   \033[38;5;15m2)\033[0m ▶️  Start node services"
-        echo -e "   \033[38;5;15m3)\033[0m ⏹️  Stop node services"
-        echo -e "   \033[38;5;15m4)\033[0m 🔄 Restart node services"
-        echo -e "   \033[38;5;15m5)\033[0m 🗑️  Uninstall RemnaNode"
-        echo
-        echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
-        echo -e "   \033[38;5;15m6)\033[0m 📊 Show node status"
-        echo -e "   \033[38;5;15m7)\033[0m 📋 View container logs"
-        echo -e "   \033[38;5;15m8)\033[0m 📤 View Xray output logs"
-        echo -e "   \033[38;5;15m9)\033[0m 📥 View Xray error logs"
-        echo
-        echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
-        echo -e "   \033[38;5;15m10)\033[0m 🔄 Update RemnaNode"
-        echo -e "   \033[38;5;15m11)\033[0m ⬆️  Update Xray-core"
-        echo -e "   \033[38;5;15m12)\033[0m 📝 Edit configuration"
-        echo -e "   \033[38;5;15m13)\033[0m 🗂️  Setup log rotation"
-        echo
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
-        echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
-        echo
-        
-        # Показываем подсказки в зависимости от состояния
-        case "$menu_status" in
-            "Not installed")
-                echo -e "\033[1;34m💡 Tip: Start with option 1 to install RemnaNode\033[0m"
-                ;;
-            "Stopped")
-                echo -e "\033[1;34m💡 Tip: Use option 2 to start the node\033[0m"
-                ;;
-            "Running")
-                if [ "$xray_version" = "Not installed" ]; then
-                    echo -e "\033[1;34m💡 Tip: Install Xray-core with option 11 for better performance\033[0m"
-                else
-                    echo -e "\033[1;34m💡 Tip: Check logs (7-9) or configure log rotation (13)\033[0m"
-                fi
-                ;;
-        esac
-        
-        echo -e "\033[38;5;8mRemnaNode CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
-        echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-13]:\033[0m ")" choice
-
-        case "$choice" in
-            1) install_command; read -p "Press Enter to continue..." ;;
-            2) up_command; read -p "Press Enter to continue..." ;;
-            3) down_command; read -p "Press Enter to continue..." ;;
-            4) restart_command; read -p "Press Enter to continue..." ;;
-            5) uninstall_command; read -p "Press Enter to continue..." ;;
-            6) status_command; read -p "Press Enter to continue..." ;;
-            7) logs_command; read -p "Press Enter to continue..." ;;
-            8) xray_log_out; read -p "Press Enter to continue..." ;;
-            9) xray_log_err; read -p "Press Enter to continue..." ;;
-            10) update_command; read -p "Press Enter to continue..." ;;
-            11) update_core_command; read -p "Press Enter to continue..." ;;
-            12) edit_command; read -p "Press Enter to continue..." ;;
-            13) setup_log_rotation; read -p "Press Enter to continue..." ;;
-            0) clear; exit 0 ;;
-            *) 
-                echo -e "\033[1;31m❌ Invalid option!\033[0m"
-                sleep 1
-                ;;
-        esac
-    done
-}
-
-show_command_help() {
-    local cmd="$1"
-    
-    case "$cmd" in
-        install)
-            echo -e "\033[1;37m📖 Install Command Help\033[0m"
-            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
-            echo
-            echo -e "\033[1;37mUsage:\033[0m"
-            echo -e "   \033[38;5;15m$APP_NAME install [options]\033[0m"
-            echo
-            echo -e "\033[1;37mOptions:\033[0m"
-            echo -e "   \033[38;5;15m--dev\033[0m            Use development branch"
-            echo
-            echo -e "\033[1;37mExamples:\033[0m"
-            echo -e "   \033[38;5;244m$APP_NAME install\033[0m"
-            echo -e "   \033[38;5;244m$APP_NAME install --dev\033[0m"
-            ;;
-        update)
-            echo -e "\033[1;37m📖 Update Command Help\033[0m"
-            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
-            echo
-            echo -e "\033[1;37mDescription:\033[0m"
-            echo -e "   \033[38;5;250mUpdates both script and RemnaNode container\033[0m"
-            echo
-            echo -e "\033[1;37mSteps performed:\033[0m"
-            echo -e "   \033[38;5;250m1. Update management script\033[0m"
-            echo -e "   \033[38;5;250m2. Pull latest container image\033[0m"
-            echo -e "   \033[38;5;250m3. Restart services\033[0m"
-            ;;
-        xray-log-out|xray-log-err)
-            echo -e "\033[1;37m📖 Xray Logs Command Help\033[0m"
-            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
-            echo
-            echo -e "\033[1;37mDescription:\033[0m"
-            echo -e "   \033[38;5;250mView Xray-core logs in real-time\033[0m"
-            echo
-            echo -e "\033[1;37mCommands:\033[0m"
-            echo -e "   \033[38;5;15mxray-log-out\033[0m     View output logs"
-            echo -e "   \033[38;5;15mxray-log-err\033[0m     View error logs"
-            echo
-            echo -e "\033[1;37mNote:\033[0m"
-            echo -e "   \033[38;5;250mRequires Xray-core to be installed and configured\033[0m"
-            ;;
-        *)
-            echo -e "\033[1;37m📖 Command Help\033[0m"
-            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 20))\033[0m"
-            echo
-            echo -e "\033[1;31mUnknown command: $cmd\033[0m"
-            echo
-            echo -e "\033[1;37mAvailable commands:\033[0m"
-            echo -e "   \033[38;5;250minstall, uninstall, up, down, restart\033[0m"
-            echo -e "   \033[38;5;250mstatus, logs, update, core-update\033[0m"
-            echo -e "   \033[38;5;250mxray-log-out, xray-log-err, edit\033[0m"
-            echo
-            echo -e "\033[38;5;8mUse '\033[38;5;15m$APP_NAME help\033[38;5;8m' for full usage\033[0m"
-            ;;
-    esac
-}
-
-# Функция для показа справки
-usage() {
-    echo -e "\033[1;37m🚀 $APP_NAME\033[0m \033[38;5;8mNode Management CLI\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
-    echo
-    echo -e "\033[1;37m🚀 Installation & Management:\033[0m"
-    printf "   \033[38;5;15m%-18s\033[0m %s\n" "install" "🛠️  Install RemnaNode"
-    printf "   \033[38;5;15m%-18s\033[0m %s\n" "uninstall" "🗑️  Remove RemnaNode"
-    echo
-
-    echo -e "\033[1;37m⚙️  Service Management:\033[0m"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "up" "▶️  Start node services"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "down" "⏹️  Stop node services"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "restart" "🔄 Restart node services"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "status" "📊 Show node status"
     echo
 
     echo -e "\033[1;37m📊 Monitoring & Logs:\033[0m"
@@ -2205,7 +1964,9 @@ show_version() {
 # Главная обработка команд
 case "${COMMAND:-menu}" in
     install) install_command ;;
+    install-script) install_script_command ;;
     uninstall) uninstall_command ;;
+    uninstall-script) uninstall_script_command ;;
     up) up_command ;;
     down) down_command ;;
     restart) restart_command ;;
