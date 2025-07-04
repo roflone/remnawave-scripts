@@ -823,23 +823,6 @@ Become the standard toolset for Remnawave deployment and management, offering se
 
 ---
 
-## 🙏 Acknowledgments
-
-**Special Thanks:**
-* **Remnawave Team** - For the excellent proxy panel
-* **Xray Project** - For the powerful core engine
-* **Caddy Project** - For the reliable web server
-* **Community Contributors** - For feedback and improvements
-
-**Built With:**
-* [Bash](https://www.gnu.org/software/bash/) - Shell scripting
-* [Docker](https://www.docker.com/) - Containerization
-* [PostgreSQL](https://www.postgresql.org/) - Database
-* [Redis](https://redis.io/) - Caching
-* [Caddy](https://caddyserver.com/) - Web server
-
----
-
 <div align="center">
 
 **⭐ If you find this project helpful, please consider giving it a star!**
