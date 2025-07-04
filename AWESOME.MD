@@ -4,11 +4,13 @@ Comprehensive bash scripts for **Remnawave Panel**, **Remnawave Node**, and **Re
 
 📦 **Key Features:**
 - 🚀 **One-line installation** for Panel, Node, and Selfsteal configurations
+- 🎛️ **Interactive menus** with real-time status monitoring and guided operations
 - 💾 **Integrated backup system** with scheduled automation and Telegram delivery
 - 🔄 **Complete lifecycle management** - install, update, backup, restore, uninstall
 - 🛡️ **Production-ready** with health checks, logging, and error handling
 - 🎯 **Reality masking** with 11 AI-generated website templates
 - ⚙️ **Advanced configuration** with OAuth, SSL, and performance monitoring
+- 🔧 **Xray-core management** with automatic updates and log monitoring
 
 📦 Full info, updates, and examples: [**/remnawave-scripts**](https://github.com/DigneZzZ/remnawave-scripts)
 
@@ -24,7 +26,7 @@ Author: [DigneZzZ](https://github.com/DigneZzZ)
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install
 ```
 
-**Remnawave Node (v2.5+):**
+**Remnawave Node (v3.1.2+):**
 ```bash
 sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
 ```
@@ -56,8 +58,18 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 **Service Control:**
 - `up`, `down`, `restart`, `status`, `logs`
 
+**Node-specific Commands:**
+- `core-update` - Update Xray-core to latest version
+- `xray-log-out`, `xray-log-err` - View Xray logs
+- `setup-logs` - Configure log rotation
+
 **Configuration:**
 - `edit`, `edit-env`, `console` (Panel only)
+
+**Interactive Menus:**
+- Run `remnawave`, `remnanode`, or `selfsteal` without arguments for interactive menu
+- Real-time status monitoring and resource usage
+- Step-by-step guided operations
 
 **Backup & Restore (Panel):**
 - `backup` - Create manual backup
