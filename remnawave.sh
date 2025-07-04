@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.3.2
+# VERSION=3.4.0
 
 set -e
-SCRIPT_VERSION="3.3.2"
+SCRIPT_VERSION="3.4.0"
 
 if [ $# -gt 0 ]; then
     COMMAND="$1"
@@ -14,7 +14,6 @@ fi
 
 while [[ $# -gt 0 ]]; do  
     key="$1"  
-      
     case $key in  
         --name)  
             if [[ "$COMMAND" == "install" || "$COMMAND" == "install-script" ]]; then  
@@ -904,7 +903,579 @@ schedule_disable() {
 
 
 
-# В функции schedule_create_backup_script (около строки 785), замените содержимое на:
+# ===== RESTORE VALIDATION AND SAFETY FUNCTIONS =====
+
+# Функция детального логирования для операций восстановления
+log_restore_operation() {
+    local operation="$1"
+    local status="$2"
+    local details="$3"
+    local restore_log_file="$APP_DIR/logs/restore.log"
+    
+    # Создаем директорию для логов если не существует
+    mkdir -p "$(dirname "$restore_log_file")"
+    
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_entry="[$timestamp] RESTORE: $operation - $status"
+    
+    if [ -n "$details" ]; then
+        log_entry="$log_entry - $details"
+    fi
+    
+    echo "$log_entry" >> "$restore_log_file"
+    
+    # Дополнительно выводим в основной лог если функция доступна
+    if declare -f log_message >/dev/null 2>&1; then
+        log_message "RESTORE: $operation - $status"
+    fi
+}
+
+# Функция проверки совместимости версий
+check_version_compatibility() {
+    local backup_metadata="$1"
+    local current_script_version="$SCRIPT_VERSION"
+    
+    if [ ! -f "$backup_metadata" ]; then
+        log_restore_operation "Version Check" "WARNING" "No metadata file found, skipping version check"
+        return 0
+    fi
+    
+    if ! command -v jq >/dev/null 2>&1; then
+        log_restore_operation "Version Check" "WARNING" "jq not available, skipping version check"
+        return 0
+    fi
+    
+    local backup_script_version=$(jq -r '.script_version // "unknown"' "$backup_metadata" 2>/dev/null)
+    local backup_date=$(jq -r '.date_created // "unknown"' "$backup_metadata" 2>/dev/null)
+    
+    log_restore_operation "Version Check" "INFO" "Backup version: $backup_script_version, Current: $current_script_version, Date: $backup_date"
+    
+    # Простая проверка - предупреждаем если версии сильно отличаются
+    if [ "$backup_script_version" != "unknown" ] && [ "$backup_script_version" != "$current_script_version" ]; then
+        # Извлекаем основные номера версий для сравнения
+        local backup_major=$(echo "$backup_script_version" | cut -d'.' -f1)
+        local current_major=$(echo "$current_script_version" | cut -d'.' -f1)
+        
+        if [ "$backup_major" != "$current_major" ]; then
+            log_restore_operation "Version Check" "WARNING" "Major version mismatch - backup may be incompatible"
+            echo -e "\033[1;33m⚠️  Version compatibility warning:\033[0m"
+            echo -e "\033[38;5;244m   Backup version: $backup_script_version\033[0m"
+            echo -e "\033[38;5;244m   Current version: $current_script_version\033[0m"
+            echo -e "\033[38;5;244m   Backup may be incompatible with current script\033[0m"
+            return 1
+        else
+            log_restore_operation "Version Check" "INFO" "Minor version difference detected, should be compatible"
+        fi
+    fi
+    
+    return 0
+}
+
+# Функция проверки системных ресурсов
+check_system_resources() {
+    local backup_file="$1"
+    local target_dir="$2"
+    
+    echo -e "\033[38;5;250m📝 Checking system resources...\033[0m"
+    
+    # Размер бэкапа
+    local backup_size=0
+    if [ -f "$backup_file" ]; then
+        backup_size=$(stat -c%s "$backup_file" 2>/dev/null || echo "0")
+    fi
+    
+    # Доступное место на диске (в KB)
+    local available_space=$(df "$(dirname "$target_dir")" 2>/dev/null | tail -1 | awk '{print $4}' || echo "0")
+    local available_bytes=$((available_space * 1024))
+    
+    # Проверяем что места достаточно (с запасом 50% для extraction и временных файлов)
+    local required_space=$((backup_size * 15 / 10))
+    
+    if [ "$available_bytes" -lt "$required_space" ] && [ "$backup_size" -gt 0 ]; then
+        local backup_mb=$((backup_size / 1024 / 1024))
+        local available_mb=$((available_bytes / 1024 / 1024))
+        echo -e "\033[1;31m❌ Insufficient disk space!\033[0m"
+        echo -e "\033[38;5;244m   Required: ~${backup_mb}MB + 50% buffer, Available: ${available_mb}MB\033[0m"
+        return 1
+    fi
+    
+    # Проверка памяти (базовая)
+    local available_memory=$(free -m 2>/dev/null | awk 'NR==2{print $7}' || echo "1000")
+    if [ "$available_memory" -lt 500 ]; then
+        echo -e "\033[1;33m⚠️  Low available memory (${available_memory}MB), restore may be slow\033[0m"
+    fi
+    
+    echo -e "\033[1;32m✅ System resources check passed\033[0m"
+    return 0
+}
+
+# Функция валидации SQL содержимого
+validate_sql_integrity() {
+    local sql_file="$1"
+    
+    if [ ! -f "$sql_file" ]; then
+        return 1
+    fi
+    
+    echo -e "\033[38;5;250m📝 Validating SQL file integrity...\033[0m"
+    
+    # Проверка размера файла
+    local file_size=$(wc -c < "$sql_file" 2>/dev/null || echo "0")
+    if [ "$file_size" -lt 100 ]; then
+        echo -e "\033[1;31m❌ SQL file too small (${file_size} bytes)\033[0m"
+        return 1
+    fi
+    
+    # Проверка заголовков PostgreSQL (более мягкая проверка)
+    local pg_header_found=false
+    if head -20 "$sql_file" | grep -qi "PostgreSQL\|postgres\|pg_dump"; then
+        pg_header_found=true
+    fi
+    
+    # Проверка на наличие критических команд
+    local has_structure=false
+    local has_data=false
+    local command_count=0
+    
+    # Более детальная проверка команд
+    if grep -qE "CREATE\s+(TABLE|DATABASE|SCHEMA|INDEX)" "$sql_file" 2>/dev/null; then
+        has_structure=true
+        command_count=$((command_count + 1))
+    fi
+    
+    if grep -qE "ALTER\s+(TABLE|DATABASE)" "$sql_file" 2>/dev/null; then
+        has_structure=true
+        command_count=$((command_count + 1))
+    fi
+    
+    if grep -qE "INSERT\s+INTO|COPY\s+.*FROM\s+stdin" "$sql_file" 2>/dev/null; then
+        has_data=true
+        command_count=$((command_count + 1))
+    fi
+    
+    # Проверяем специфичные для RemnaWave таблицы (если есть)
+    local remnawave_tables=false
+    if grep -qiE "(users|nodes|traffic|settings)" "$sql_file" 2>/dev/null; then
+        remnawave_tables=true
+    fi
+    
+    # Результаты проверки
+    if [ "$has_structure" = false ] && [ "$has_data" = false ]; then
+        echo -e "\033[1;31m❌ SQL file appears to contain no valid database commands\033[0m"
+        return 1
+    fi
+    
+    if [ "$pg_header_found" = false ] && [ "$command_count" -lt 3 ]; then
+        echo -e "\033[1;33m⚠️  Warning: SQL file may not be a standard PostgreSQL dump\033[0m"
+    fi
+    
+    if [ "$remnawave_tables" = true ]; then
+        echo -e "\033[1;32m✅ RemnaWave database tables detected\033[0m"
+    fi
+    
+    # Проверка на SQL инъекции и подозрительные команды
+    if grep -qi "drop database\|rm -rf\|system\|exec\|eval" "$sql_file" 2>/dev/null; then
+        echo -e "\033[1;33m⚠️  Warning: SQL file contains potentially dangerous commands\033[0m"
+    fi
+    
+    echo -e "\033[1;32m✅ SQL file validation passed\033[0m"
+    return 0
+}
+
+# Функция валидации извлеченного бэкапа
+validate_extracted_backup() {
+    local target_dir="$1"
+    local backup_type="${2:-full}"
+    local app_name="$3"
+    
+    echo -e "\033[38;5;250m📝 Validating extracted backup...\033[0m"
+    
+    local validation_errors=0
+    
+    # Проверка структуры файлов для full backup
+    if [ "$backup_type" = "full" ]; then
+        # Обязательные файлы: docker-compose.yml и .env
+        if [ ! -f "$target_dir/docker-compose.yml" ]; then
+            echo -e "\033[1;31m❌ Critical file missing: docker-compose.yml\033[0m"
+            validation_errors=$((validation_errors + 1))
+        else
+            # Проверка синтаксиса docker-compose.yml
+            if ! docker compose -f "$target_dir/docker-compose.yml" config >/dev/null 2>&1; then
+                echo -e "\033[1;31m❌ Invalid docker-compose.yml syntax\033[0m"
+                validation_errors=$((validation_errors + 1))
+            fi
+        fi
+        
+        # .env является обязательным для RemnaWave (содержит настройки БД)
+        if [ ! -f "$target_dir/.env" ]; then
+            echo -e "\033[1;31m❌ Critical file missing: .env\033[0m"
+            echo -e "\033[38;5;244m   .env file is required for database configuration\033[0m"
+            validation_errors=$((validation_errors + 1))
+        else
+            # Проверяем что .env содержит необходимые переменные для PostgreSQL
+            local required_vars=("POSTGRES_USER" "POSTGRES_PASSWORD" "POSTGRES_DB")
+            for var in "${required_vars[@]}"; do
+                if ! grep -q "^${var}=" "$target_dir/.env" 2>/dev/null; then
+                    echo -e "\033[1;33m⚠️  Warning: .env missing variable: $var\033[0m"
+                fi
+            done
+        fi
+    fi
+    
+    # Проверка файлов базы данных (может быть в разных форматах и с разными именами)
+    local database_files_found=()
+    
+    # Поиск файлов базы данных более надежным способом
+    # Ищем все SQL файлы и их сжатые версии
+    mapfile -t database_files_found < <(
+        find "$target_dir" -maxdepth 1 -type f \( \
+            -name "*.sql" -o \
+            -name "*.sql.gz" -o \
+            -name "*.sql.bz2" -o \
+            -name "*.sql.xz" \
+        \) -printf '%f\n' 2>/dev/null | sort
+    )
+    
+    # Если find не поддерживает -printf (например, на macOS), используем альтернативный метод
+    if [ ${#database_files_found[@]} -eq 0 ]; then
+        while IFS= read -r -d '' file; do
+            database_files_found+=("$(basename "$file")")
+        done < <(find "$target_dir" -maxdepth 1 -type f \( \
+            -name "*.sql" -o \
+            -name "*.sql.gz" -o \
+            -name "*.sql.bz2" -o \
+            -name "*.sql.xz" \
+        \) -print0 2>/dev/null | sort -z)
+    fi
+    
+    if [ ${#database_files_found[@]} -gt 0 ]; then
+        echo -e "\033[1;32m✅ Database files found: ${database_files_found[*]}\033[0m"
+        
+        # Валидируем найденные файлы БД
+        for db_file in "${database_files_found[@]}"; do
+            local full_db_path="$target_dir/$db_file"
+            
+            # Если файл сжат (.gz), временно разархивируем для проверки
+            if [[ "$db_file" == *.gz ]]; then
+                local temp_sql="/tmp/validate_db_$$.sql"
+                if gunzip -c "$full_db_path" > "$temp_sql" 2>/dev/null; then
+                    if ! validate_sql_integrity "$temp_sql"; then
+                        echo -e "\033[1;31m❌ Compressed database file validation failed: $db_file\033[0m"
+                        validation_errors=$((validation_errors + 1))
+                    fi
+                    rm -f "$temp_sql"
+                else
+                    echo -e "\033[1;31m❌ Failed to decompress database file: $db_file\033[0m"
+                    validation_errors=$((validation_errors + 1))
+                fi
+            else
+                # Обычный SQL файл
+                if ! validate_sql_integrity "$full_db_path"; then
+                    echo -e "\033[1;31m❌ Database file validation failed: $db_file\033[0m"
+                    validation_errors=$((validation_errors + 1))
+                fi
+            fi
+        done
+    elif [ "$backup_type" = "full" ]; then
+        echo -e "\033[1;33m⚠️  Warning: No database files found in backup\033[0m"
+        echo -e "\033[38;5;244m   Expected files: database.sql, db_backup.sql, or compressed variants\033[0m"
+    fi
+    
+    # Проверка прав доступа
+    if [ ! -r "$target_dir" ] || [ ! -w "$target_dir" ]; then
+        echo -e "\033[1;31m❌ Insufficient permissions for target directory\033[0m"
+        validation_errors=$((validation_errors + 1))
+    fi
+    
+    if [ $validation_errors -eq 0 ]; then
+        echo -e "\033[1;32m✅ Backup validation passed\033[0m"
+        log_restore_operation "Backup Validation" "SUCCESS" "All validation checks passed"
+        return 0
+    else
+        echo -e "\033[1;31m❌ Backup validation failed ($validation_errors errors)\033[0m"
+        log_restore_operation "Backup Validation" "ERROR" "$validation_errors validation errors found"
+        return 1
+    fi
+}
+
+# Функция создания safety backup перед восстановлением
+create_safety_backup() {
+    local target_dir="$1"
+    local app_name="$2"
+    local backup_dir="$3"
+    
+    if [ ! -d "$target_dir" ]; then
+        echo -e "\033[38;5;244m   No existing installation found, skipping safety backup\033[0m"
+        log_restore_operation "Safety Backup" "INFO" "No existing installation found"
+        return 0
+    fi
+    
+    echo -e "\033[38;5;250m📝 Creating safety backup before restore...\033[0m"
+    
+    local safety_backup_dir="$backup_dir/safety_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$safety_backup_dir"
+    
+    # Создаем дамп базы данных если она работает
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        cd "$target_dir"
+        local db_container="${app_name}-db"
+        
+        if docker compose ps -q "$db_container" 2>/dev/null | grep -q .; then
+            echo -e "\033[38;5;244m   Creating database dump...\033[0m"
+            
+            local postgres_user="postgres"
+            local postgres_password="postgres"
+            local postgres_db="postgres"
+            
+            # Читаем настройки из .env если доступны
+            if [ -f "$target_dir/.env" ]; then
+                postgres_user=$(grep "^POSTGRES_USER=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+                postgres_password=$(grep "^POSTGRES_PASSWORD=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+                postgres_db=$(grep "^POSTGRES_DB=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+            fi
+            
+            if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+                pg_dump -U "$postgres_user" -d "$postgres_db" --clean --create > "$safety_backup_dir/database_safety.sql" 2>/dev/null; then
+                echo -e "\033[1;32m✅ Database safety backup created\033[0m"
+                log_restore_operation "Database Safety Backup" "SUCCESS" "Database dump created"
+            else
+                echo -e "\033[1;33m⚠️  Failed to create database safety backup\033[0m"
+                log_restore_operation "Database Safety Backup" "WARNING" "Failed to create database dump"
+            fi
+        fi
+    fi
+    
+    # Копируем важные файлы конфигурации
+    echo -e "\033[38;5;244m   Backing up configuration files...\033[0m"
+    
+    local files_copied=0
+    for file in docker-compose.yml .env config.json settings.yml remnawave.conf; do
+        if [ -f "$target_dir/$file" ]; then
+            cp "$target_dir/$file" "$safety_backup_dir/" 2>/dev/null && files_copied=$((files_copied + 1))
+        fi
+    done
+    
+    # Копируем важные директории если они небольшие
+    for dir in certs ssl certificates config configs custom scripts; do
+        if [ -d "$target_dir/$dir" ]; then
+            local dir_size=$(du -s "$target_dir/$dir" 2>/dev/null | cut -f1 || echo "999999")
+            if [ "$dir_size" -lt 10240 ]; then  # меньше 10MB
+                cp -r "$target_dir/$dir" "$safety_backup_dir/" 2>/dev/null && files_copied=$((files_copied + 1))
+            fi
+        fi
+    done
+    
+    # Сохраняем информацию о safety backup
+    echo "$safety_backup_dir" > "/tmp/safety_backup_location_$$"
+    
+    echo -e "\033[1;32m✅ Safety backup created ($files_copied items) at: $safety_backup_dir\033[0m"
+    log_restore_operation "Safety Backup" "SUCCESS" "$files_copied items backed up to $safety_backup_dir"
+    return 0
+}
+
+# Функция отката в случае неудачного восстановления
+rollback_from_safety_backup() {
+    local target_dir="$1"
+    local app_name="$2"
+    
+    if [ ! -f "/tmp/safety_backup_location_$$" ]; then
+        echo -e "\033[1;31m❌ No safety backup location found for rollback\033[0m"
+        log_restore_operation "Rollback" "ERROR" "No safety backup location found"
+        return 1
+    fi
+    
+    local safety_backup_dir=$(cat "/tmp/safety_backup_location_$$")
+    
+    if [ ! -d "$safety_backup_dir" ]; then
+        echo -e "\033[1;31m❌ Safety backup directory not found: $safety_backup_dir\033[0m"
+        log_restore_operation "Rollback" "ERROR" "Safety backup directory not found"
+        return 1
+    fi
+    
+    echo -e "\033[38;5;250m📝 Rolling back from safety backup...\033[0m"
+    log_restore_operation "Rollback" "STARTED" "Rolling back from $safety_backup_dir"
+    
+    # Останавливаем сервисы
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        cd "$target_dir"
+        docker compose down 2>/dev/null
+    fi
+    
+    # Восстанавливаем файлы из safety backup
+    local files_restored=0
+    for file in docker-compose.yml .env config.json settings.yml remnawave.conf; do
+        if [ -f "$safety_backup_dir/$file" ]; then
+            cp "$safety_backup_dir/$file" "$target_dir/" 2>/dev/null && files_restored=$((files_restored + 1))
+        fi
+    done
+    
+    # Восстанавливаем директории
+    for dir in certs ssl certificates config configs custom scripts; do
+        if [ -d "$safety_backup_dir/$dir" ]; then
+            rm -rf "$target_dir/$dir" 2>/dev/null
+            cp -r "$safety_backup_dir/$dir" "$target_dir/" 2>/dev/null && files_restored=$((files_restored + 1))
+        fi
+    done
+    
+    # Восстанавливаем базу данных если есть
+    if [ -f "$safety_backup_dir/database_safety.sql" ] && [ -f "$target_dir/docker-compose.yml" ]; then
+        echo -e "\033[38;5;244m   Restoring database from safety backup...\033[0m"
+        
+        cd "$target_dir"
+        docker compose up -d "${app_name}-db" 2>/dev/null
+        
+        # Ждем готовности БД
+        local attempts=0
+        while [ $attempts -lt 15 ]; do
+            if docker exec "${app_name}-db" pg_isready -U postgres >/dev/null 2>&1; then
+                break
+            fi
+            sleep 2
+            attempts=$((attempts + 1))
+        done
+        
+        if [ $attempts -lt 15 ]; then
+            if docker exec -i "${app_name}-db" psql -U postgres < "$safety_backup_dir/database_safety.sql" >/dev/null 2>&1; then
+                echo -e "\033[1;32m✅ Database rolled back successfully\033[0m"
+                log_restore_operation "Database Rollback" "SUCCESS" "Database restored from safety backup"
+            else
+                echo -e "\033[1;33m⚠️  Database rollback had issues\033[0m"
+                log_restore_operation "Database Rollback" "WARNING" "Database rollback had issues"
+            fi
+        fi
+        
+        docker compose down 2>/dev/null
+    fi
+    
+    echo -e "\033[1;32m✅ Rollback completed ($files_restored items restored)\033[0m"
+    log_restore_operation "Rollback" "SUCCESS" "$files_restored items restored"
+    
+    # Очищаем временные файлы
+    rm -f "/tmp/safety_backup_location_$$"
+    
+    return 0
+}
+
+# Функция проверки целостности после восстановления
+verify_restore_integrity() {
+    local target_dir="$1"
+    local app_name="$2"
+    local backup_type="${3:-full}"
+    
+    echo -e "\033[38;5;250m📝 Verifying restore integrity...\033[0m"
+    
+    local integrity_score=0
+    local max_score=10
+    local issues=()
+    
+    # Проверка файлов (2 балла)
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        integrity_score=$((integrity_score + 1))
+        if docker compose -f "$target_dir/docker-compose.yml" config >/dev/null 2>&1; then
+            integrity_score=$((integrity_score + 1))
+        else
+            issues+=("docker-compose.yml syntax error")
+        fi
+    else
+        issues+=("docker-compose.yml missing")
+    fi
+    
+    # Проверка запуска сервисов (4 балла)
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        cd "$target_dir"
+        if docker compose up -d >/dev/null 2>&1; then
+            integrity_score=$((integrity_score + 2))
+            
+            # Ждем немного и проверяем статус
+            sleep 8
+            local running_services=$(docker compose ps -q 2>/dev/null | wc -l)
+            local healthy_services=0
+            
+            for container_id in $(docker compose ps -q 2>/dev/null); do
+                local status=$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+                if [ "$status" = "running" ]; then
+                    healthy_services=$((healthy_services + 1))
+                fi
+            done
+            
+            if [ "$running_services" -gt 0 ] && [ "$healthy_services" -gt 0 ]; then
+                if [ "$healthy_services" -eq "$running_services" ]; then
+                    integrity_score=$((integrity_score + 2))
+                else
+                    integrity_score=$((integrity_score + 1))
+                    issues+=("some services not running ($healthy_services/$running_services)")
+                fi
+            else
+                issues+=("no services running")
+            fi
+        else
+            issues+=("failed to start services")
+        fi
+    fi
+    
+    # Проверка базы данных (2 балла)
+    if [ "$backup_type" = "full" ] || [ "$backup_type" = "database" ]; then
+        local db_container="${app_name}-db"
+        if docker exec "$db_container" pg_isready -U postgres >/dev/null 2>&1; then
+            integrity_score=$((integrity_score + 1))
+            
+            # Проверяем что в БД есть данные
+            local table_count=$(docker exec -e PGPASSWORD="postgres" "$db_container" \
+                psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ' || echo "0")
+            
+            if [ "$table_count" -gt 0 ]; then
+                integrity_score=$((integrity_score + 1))
+            else
+                issues+=("database appears empty")
+            fi
+        else
+            issues+=("database not responding")
+        fi
+    fi
+    
+    # Проверка сети и доступности (2 балла)
+    local main_container="${app_name}-app"
+    if docker exec "$main_container" echo "test" >/dev/null 2>&1; then
+        integrity_score=$((integrity_score + 1))
+        
+        # Проверяем внутреннюю связность
+        if docker exec "$main_container" nc -z "${app_name}-db" 5432 >/dev/null 2>&1; then
+            integrity_score=$((integrity_score + 1))
+        else
+            issues+=("network connectivity issues")
+        fi
+    else
+        issues+=("main application container not responding")
+    fi
+    
+    # Выводим результат
+    local percentage=$((integrity_score * 100 / max_score))
+    
+    # Детальный отчет об обнаруженных проблемах
+    if [ ${#issues[@]} -gt 0 ]; then
+        echo -e "\033[38;5;244m   Issues detected:\033[0m"
+        for issue in "${issues[@]}"; do
+            echo -e "\033[38;5;244m   - $issue\033[0m"
+        done
+    fi
+    
+    if [ $percentage -ge 80 ]; then
+        echo -e "\033[1;32m✅ Restore integrity check passed: $integrity_score/$max_score ($percentage%)\033[0m"
+        log_restore_operation "Integrity Check" "SUCCESS" "$integrity_score/$max_score ($percentage%)"
+        return 0
+    elif [ $percentage -ge 60 ]; then
+        echo -e "\033[1;33m⚠️  Restore integrity check warning: $integrity_score/$max_score ($percentage%)\033[0m"
+        log_restore_operation "Integrity Check" "WARNING" "$integrity_score/$max_score ($percentage%) - ${#issues[@]} issues"
+        return 1
+    else
+        echo -e "\033[1;31m❌ Restore integrity check failed: $integrity_score/$max_score ($percentage%)\033[0m"
+        log_restore_operation "Integrity Check" "ERROR" "$integrity_score/$max_score ($percentage%) - ${#issues[@]} issues"
+        return 2
+    fi
+}
+
+# ===== END RESTORE VALIDATION AND SAFETY FUNCTIONS =====
+
 schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
@@ -1291,11 +1862,13 @@ restore_command() {
                 echo
                 exit 0
                 ;;
-            *) 
+            --) shift; break ;;  # Конец опций
+            -*) 
                 echo "Unknown option: $1" >&2
                 echo "Use '$APP_NAME restore --help' for usage information."
                 exit 1
                 ;;
+            *) break ;;  # Позиционные аргументы
         esac
     done
     
@@ -1344,9 +1917,16 @@ restore_interactive_menu() {
         
         # Ищем в стандартной директории текущего приложения
         if [ -d "$APP_DIR/backups" ]; then
+            # Используем find для более надежного поиска всех типов backup файлов
             while IFS= read -r -d '' backup; do
                 backup_files+=("$backup")
-            done < <(find "$APP_DIR/backups" -maxdepth 1 \( -name "remnawave_*.tar.gz" -o -name "remnawave_*.sql" -o -name "remnawave_*.sql.gz" \) -type f -print0 2>/dev/null | sort -zr)
+            done < <(find "$APP_DIR/backups" -maxdepth 1 -type f \( \
+                -name "remnawave_*.tar.gz" -o \
+                -name "remnawave_*.sql" -o \
+                -name "remnawave_*.sql.gz" -o \
+                -name "remnawave_*.sql.bz2" -o \
+                -name "remnawave_*.sql.xz" \
+            \) -print0 2>/dev/null | sort -zr)
         fi
         
         # Ищем в стандартных директориях других установок
@@ -1354,7 +1934,13 @@ restore_interactive_menu() {
             if [ -d "$possible_dir" ] && [ "$possible_dir" != "$APP_DIR/backups" ]; then
                 while IFS= read -r -d '' backup; do
                     backup_files+=("$backup")
-                done < <(find "$possible_dir" -maxdepth 1 \( -name "remnawave_*.tar.gz" -o -name "remnawave_*.sql" -o -name "remnawave_*.sql.gz" \) -type f -print0 2>/dev/null | sort -zr)
+                done < <(find "$possible_dir" -maxdepth 1 -type f \( \
+                    -name "remnawave_*.tar.gz" -o \
+                    -name "remnawave_*.sql" -o \
+                    -name "remnawave_*.sql.gz" -o \
+                    -name "remnawave_*.sql.bz2" -o \
+                    -name "remnawave_*.sql.xz" \
+                \) -print0 2>/dev/null | sort -zr)
             fi
         done
         
@@ -2144,7 +2730,29 @@ restore_full_from_archive() {
     local original_app_name="$4"
     local skip_install="$5"
     
-    # Остановка существующих сервисов
+    log_restore_operation "Full Restore" "STARTED" "File: $backup_file, Target: $target_dir, App: $target_app_name"
+    
+    # Step 0: Проверка системных ресурсов
+    echo -e "\033[38;5;250m📝 Step 0:\033[0m Checking system resources..."
+    if ! check_system_resources "$backup_file" "$target_dir"; then
+        log_restore_operation "Resource Check" "ERROR" "Insufficient system resources"
+        return 1
+    fi
+    log_restore_operation "Resource Check" "SUCCESS" "System resources verified"
+    
+    # Step 1: Создание safety backup
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Creating safety backup..."
+    local backup_parent_dir="$(dirname "$target_dir")/backups"
+    mkdir -p "$backup_parent_dir"
+    
+    if ! create_safety_backup "$target_dir" "$target_app_name" "$backup_parent_dir"; then
+        echo -e "\033[1;33m⚠️  Failed to create safety backup, continuing with caution...\033[0m"
+        log_restore_operation "Safety Backup" "WARNING" "Failed to create safety backup"
+    else
+        log_restore_operation "Safety Backup" "SUCCESS" "Safety backup created"
+    fi
+    
+    # Step 2: Остановка существующих сервисов
     local services_were_running=false
     if [ -f "$target_dir/docker-compose.yml" ]; then
         echo -e "\033[38;5;250m📝 Step 2:\033[0m Stopping existing services..."
@@ -2154,15 +2762,18 @@ restore_full_from_archive() {
             services_were_running=true
             if docker compose down 2>/dev/null; then
                 echo -e "\033[1;32m✅ Services stopped\033[0m"
+                log_restore_operation "Service Shutdown" "SUCCESS" "All services stopped"
             else
                 echo -e "\033[1;33m⚠️  Failed to stop services, continuing...\033[0m"
+                log_restore_operation "Service Shutdown" "WARNING" "Failed to stop some services"
             fi
         else
             echo -e "\033[38;5;244m   No running services found\033[0m"
+            log_restore_operation "Service Shutdown" "INFO" "No running services found"
         fi
     fi
     
-    # Извлечение архива
+    # Step 3: Извлечение архива
     echo -e "\033[38;5;250m📝 Step 3:\033[0m Extracting backup to target directory..."
     
     # Удаляем старую директорию если нужно
@@ -2182,47 +2793,69 @@ restore_full_from_archive() {
         local backup_content=$(ls "$temp_extract_dir")
         local backup_dir_name=$(echo "$backup_content" | head -1)
         
-        if [ -d "$temp_extract_dir/$backup_dir_name" ]; then
-            # Проверяем структуру - новый unified формат или старый с app/
-            if [ -f "$temp_extract_dir/$backup_dir_name/docker-compose.yml" ]; then
-                # НОВЫЙ ФОРМАТ: файлы приложения в корне бэкапа
-                mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
-                echo -e "\033[1;32m✅ Backup extracted successfully (unified format)\033[0m"
-            elif [ -d "$temp_extract_dir/$backup_dir_name/app" ]; then
-                # СТАРЫЙ ФОРМАТ: приложение в поддиректории app
-                mv "$temp_extract_dir/$backup_dir_name/app" "$target_dir"
-                
-                # Копируем database.sql в target_dir для последующего использования
-                if [ -f "$temp_extract_dir/$backup_dir_name/database.sql" ]; then
-                    cp "$temp_extract_dir/$backup_dir_name/database.sql" "$target_dir/"
-                fi
+            if [ -d "$temp_extract_dir/$backup_dir_name" ]; then
+                # Проверяем структуру - новый unified формат или старый с app/
+                if [ -f "$temp_extract_dir/$backup_dir_name/docker-compose.yml" ]; then
+                    # НОВЫЙ ФОРМАТ: файлы приложения в корне бэкапа
+                    mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
+                    echo -e "\033[1;32m✅ Backup extracted successfully (unified format)\033[0m"
+                    log_restore_operation "Archive Extraction" "SUCCESS" "Unified format backup extracted"
+                elif [ -d "$temp_extract_dir/$backup_dir_name/app" ]; then
+                    # СТАРЫЙ ФОРМАТ: приложение в поддиректории app
+                    mv "$temp_extract_dir/$backup_dir_name/app" "$target_dir"
+                    
+                    # Копируем database.sql в target_dir для последующего использования
+                    if [ -f "$temp_extract_dir/$backup_dir_name/database.sql" ]; then
+                        cp "$temp_extract_dir/$backup_dir_name/database.sql" "$target_dir/"
+                    fi
                 
                 # Сохраняем скрипт установки
                 if [ -f "$temp_extract_dir/$backup_dir_name/install-script.sh" ]; then
                     cp "$temp_extract_dir/$backup_dir_name/install-script.sh" "/tmp/restore_script_$$"
                 fi
                 echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
+                log_restore_operation "Archive Extraction" "SUCCESS" "Legacy format backup extracted"
             else
                 # Очень старый формат - вся директория является приложением
                 mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
                 echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
+                log_restore_operation "Archive Extraction" "SUCCESS" "Very old format backup extracted"
             fi
         else
             echo -e "\033[1;31m❌ Unexpected backup structure!\033[0m"
+            log_restore_operation "Archive Extraction" "ERROR" "Unexpected backup structure"
             rm -rf "$temp_extract_dir"
             return 1
         fi
     else
         echo -e "\033[1;31m❌ Failed to extract backup!\033[0m"
+        log_restore_operation "Archive Extraction" "ERROR" "Failed to extract tar archive"
         rm -rf "$temp_extract_dir"
         return 1
     fi
     
     rm -rf "$temp_extract_dir"
     
-    # Установка управляющего скрипта
+    # Step 4: Проверка совместимости версий (если есть метаданные)
+    if [ -f "$target_dir/backup-metadata.json" ]; then
+        echo -e "\033[38;5;250m📝 Step 4a:\033[0m Checking version compatibility..."
+        check_version_compatibility "$target_dir/backup-metadata.json"
+    fi
+    
+    # Step 4: Валидация извлеченного бэкапа
+    echo -e "\033[38;5;250m📝 Step 4:\033[0m Validating extracted backup..."
+    if ! validate_extracted_backup "$target_dir" "full" "$target_app_name"; then
+        echo -e "\033[1;31m❌ Backup validation failed! Rolling back...\033[0m"
+        log_restore_operation "Backup Validation" "ERROR" "Validation failed, initiating rollback"
+        rollback_from_safety_backup "$target_dir" "$target_app_name"
+        return 1
+    else
+        log_restore_operation "Backup Validation" "SUCCESS" "Extracted backup validated"
+    fi
+    
+    # Step 5: Установка управляющего скрипта
     if [ "$skip_install" = false ]; then
-        echo -e "\033[38;5;250m📝 Step 4:\033[0m Installing management script..."
+        echo -e "\033[38;5;250m📝 Step 5:\033[0m Installing management script..."
         
         local script_source=""
         
@@ -2249,16 +2882,55 @@ restore_full_from_archive() {
             
             chmod +x "/usr/local/bin/$target_app_name"
             echo -e "\033[1;32m✅ Management script installed: /usr/local/bin/$target_app_name\033[0m"
+            log_restore_operation "Script Installation" "SUCCESS" "Management script installed: /usr/local/bin/$target_app_name"
         else
             echo -e "\033[1;33m⚠️  No management script found in backup, skipping installation\033[0m"
+            log_restore_operation "Script Installation" "WARNING" "No management script found in backup"
         fi
         
         # Очищаем временный файл
         rm -f "/tmp/restore_script_$$"
     fi
     
-    # Запуск и восстановление БД
-    restore_database_in_existing_installation "$target_dir" "$target_app_name"
+    # Step 6: Запуск и восстановление БД (с расширенной обработкой ошибок)
+    echo -e "\033[38;5;250m📝 Step 6:\033[0m Starting database restore..."
+    if ! restore_database_in_existing_installation "$target_dir" "$target_app_name"; then
+        echo -e "\033[1;31m❌ Database restore failed! Rolling back...\033[0m"
+        log_restore_operation "Database Restore" "ERROR" "Database restore failed, initiating rollback"
+        rollback_from_safety_backup "$target_dir" "$target_app_name"
+        return 1
+    else
+        log_restore_operation "Database Restore" "SUCCESS" "Database successfully restored"
+    fi
+    
+    # Step 7: Проверка целостности восстановления
+    echo -e "\033[38;5;250m📝 Step 7:\033[0m Performing final integrity check..."
+    local integrity_result=0
+    verify_restore_integrity "$target_dir" "$target_app_name" "full"
+    integrity_result=$?
+    
+    if [ $integrity_result -eq 0 ]; then
+        echo -e "\033[1;32m🎉 Full restore completed successfully!\033[0m"
+        log_restore_operation "Full Restore" "SUCCESS" "Restore completed successfully with full integrity"
+        # Очищаем safety backup при успешном восстановлении
+        if [ -f "/tmp/safety_backup_location_$$" ]; then
+            local safety_backup_dir=$(cat "/tmp/safety_backup_location_$$")
+            echo -e "\033[38;5;244m   Cleaning up safety backup: $safety_backup_dir\033[0m"
+            rm -rf "$safety_backup_dir" 2>/dev/null
+            rm -f "/tmp/safety_backup_location_$$"
+            log_restore_operation "Cleanup" "SUCCESS" "Safety backup cleaned up"
+        fi
+        return 0
+    elif [ $integrity_result -eq 1 ]; then
+        echo -e "\033[1;33m⚠️  Restore completed with warnings - please check the application\033[0m"
+        log_restore_operation "Full Restore" "WARNING" "Restore completed with integrity warnings"
+        return 0
+    else
+        echo -e "\033[1;31m❌ Restore failed integrity check! Rolling back...\033[0m"
+        log_restore_operation "Full Restore" "ERROR" "Restore failed integrity check, rolling back"
+        rollback_from_safety_backup "$target_dir" "$target_app_name"
+        return 1
+    fi
 }
 
 restore_database_only() {
@@ -2266,6 +2938,20 @@ restore_database_only() {
     local backup_type="$2"
     local target_dir="$3"
     local target_app_name="$4"
+    
+    log_restore_operation "Database Only Restore" "STARTED" "File: $backup_file, Type: $backup_type, Target: $target_dir"
+    
+    # Step 1: Создание safety backup базы данных
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Creating database safety backup..."
+    local backup_parent_dir="$(dirname "$target_dir")/backups"
+    mkdir -p "$backup_parent_dir"
+    
+    if ! create_safety_backup "$target_dir" "$target_app_name" "$backup_parent_dir"; then
+        echo -e "\033[1;33m⚠️  Failed to create safety backup, continuing with caution...\033[0m"
+        log_restore_operation "Safety Backup" "WARNING" "Failed to create safety backup"
+    else
+        log_restore_operation "Safety Backup" "SUCCESS" "Safety backup created"
+    fi
     
     echo -e "\033[38;5;250m📝 Step 2:\033[0m Preparing database file..."
     
@@ -2284,27 +2970,112 @@ restore_database_only() {
             return 1
         fi
     elif [ "$backup_type" = "archive" ]; then
-        # Извлекаем database.sql из архива
+        # Извлекаем файл базы данных из архива (поддержка разных имен)
         local temp_db_dir="/tmp/restore_db_$$"
         mkdir -p "$temp_db_dir"
         
-        if tar -xzf "$backup_file" -C "$temp_db_dir" "*/database.sql" 2>/dev/null; then
-            database_file=$(find "$temp_db_dir" -name "database.sql" | head -1)
-            if [ -z "$database_file" ]; then
-                echo -e "\033[1;31m❌ No database.sql found in archive!\033[0m"
+        # Сначала получаем список всех файлов в архиве
+        local archive_contents
+        mapfile -t archive_contents < <(tar -tzf "$backup_file" 2>/dev/null | grep -E '\.(sql|sql\.gz|sql\.bz2|sql\.xz)$' | head -20)
+        
+        if [ ${#archive_contents[@]} -eq 0 ]; then
+            echo -e "\033[1;31m❌ No database files found in archive!\033[0m"
+            rm -rf "$temp_db_dir"
+            return 1
+        fi
+        
+        # Приоритетный список для выбора лучшего файла БД
+        local priority_patterns=("database.sql" "db_backup.sql" "backup.sql" "dump.sql" "*.sql")
+        local found_db_file=""
+        local selected_file=""
+        
+        # Ищем файл по приоритету
+        for pattern in "${priority_patterns[@]}"; do
+            for archive_file in "${archive_contents[@]}"; do
+                local basename_file=$(basename "$archive_file")
+                if [[ "$basename_file" == $pattern ]]; then
+                    selected_file="$archive_file"
+                    break 2
+                fi
+            done
+        done
+        
+        # Если не нашли по приоритету, берем первый SQL файл
+        if [ -z "$selected_file" ] && [ ${#archive_contents[@]} -gt 0 ]; then
+            selected_file="${archive_contents[0]}"
+        fi
+        
+        if [ -n "$selected_file" ]; then
+            echo -e "\033[38;5;250m📝 Extracting database file: $selected_file\033[0m"
+            if tar -xzf "$backup_file" -C "$temp_db_dir" "$selected_file" 2>/dev/null; then
+                found_db_file="$temp_db_dir/$selected_file"
+                if [ -f "$found_db_file" ]; then
+                    echo -e "\033[1;32m✅ Database file extracted from archive: $(basename "$found_db_file")\033[0m"
+                    database_file="$found_db_file"
+                else
+                    echo -e "\033[1;31m❌ Extracted file not found: $found_db_file\033[0m"
+                    rm -rf "$temp_db_dir"
+                    return 1
+                fi
+            else
+                echo -e "\033[1;31m❌ Failed to extract $selected_file from archive!\033[0m"
                 rm -rf "$temp_db_dir"
                 return 1
             fi
-            echo -e "\033[1;32m✅ Database file extracted from archive\033[0m"
         else
-            echo -e "\033[1;31m❌ Failed to extract database from archive!\033[0m"
+            echo -e "\033[1;31m❌ No suitable database files found in archive!\033[0m"
             rm -rf "$temp_db_dir"
             return 1
         fi
     fi
     
-    # Восстанавливаем БД в существующей установке
-    restore_database_in_existing_installation "$target_dir" "$target_app_name" "$database_file"
+    # Step 3: Валидация файла базы данных
+    if [ -n "$database_file" ] && [ -f "$database_file" ]; then
+        echo -e "\033[38;5;250m📝 Step 3:\033[0m Validating database file..."
+        
+        # Используем улучшенную валидацию SQL
+        if ! validate_sql_integrity "$database_file"; then
+            echo -e "\033[1;31m❌ Database file validation failed! Rolling back...\033[0m"
+            log_restore_operation "SQL Validation" "ERROR" "Database file failed validation"
+            rollback_from_safety_backup "$target_dir" "$target_app_name"
+            return 1
+        fi
+        
+        log_restore_operation "SQL Validation" "SUCCESS" "Database file validation passed"
+        echo -e "\033[1;32m✅ Database file validation passed\033[0m"
+    else
+        echo -e "\033[1;31m❌ Database file not found or inaccessible!\033[0m"
+        log_restore_operation "File Check" "ERROR" "Database file not found or inaccessible"
+        return 1
+    fi
+    
+    # Step 4: Восстанавливаем БД в существующей установке (с обработкой ошибок)
+    if ! restore_database_in_existing_installation "$target_dir" "$target_app_name" "$database_file"; then
+        echo -e "\033[1;31m❌ Database restore failed! Rolling back...\033[0m"
+        log_restore_operation "Database Restore" "ERROR" "Database restore failed, initiating rollback"
+        rollback_from_safety_backup "$target_dir" "$target_app_name"
+        return 1
+    fi
+    
+    # Step 5: Проверка целостности БД
+    echo -e "\033[38;5;250m📝 Step 5:\033[0m Verifying database integrity..."
+    local integrity_result=0
+    verify_restore_integrity "$target_dir" "$target_app_name" "database"
+    integrity_result=$?
+    
+    if [ $integrity_result -le 1 ]; then
+        echo -e "\033[1;32m🎉 Database restore completed successfully!\033[0m"
+        log_restore_operation "Database Only Restore" "SUCCESS" "Database restore completed with integrity check"
+        # Очищаем safety backup при успешном восстановлении
+        if [ -f "/tmp/safety_backup_location_$$" ]; then
+            local safety_backup_dir=$(cat "/tmp/safety_backup_location_$$")
+            echo -e "\033[38;5;244m   Cleaning up safety backup: $safety_backup_dir\033[0m"
+            rm -rf "$safety_backup_dir" 2>/dev/null
+            rm -f "/tmp/safety_backup_location_$$"
+        fi
+    else
+        echo -e "\033[1;33m⚠️  Database restore completed but integrity check has warnings\033[0m"
+    fi
     
     # Очищаем временные файлы
     if [ "$backup_type" = "compressed_sql" ]; then
@@ -2319,12 +3090,96 @@ restore_database_in_existing_installation() {
     local target_app_name="$2"
     local database_file="$3"
     
+    log_restore_operation "Database Installation" "STARTED" "Target: $target_dir, App: $target_app_name"
 
     if [ -z "$database_file" ]; then
-        if [ -f "$target_dir/database.sql" ]; then
-            database_file="$target_dir/database.sql"
-        elif [ -f "$target_dir/db_backup.sql" ]; then  
-            database_file="$target_dir/db_backup.sql"
+        # Ищем файл БД в target_dir более надежным способом
+        local found_db_files=()
+        
+        # Используем find для поиска всех файлов БД
+        mapfile -t found_db_files < <(
+            find "$target_dir" -maxdepth 1 -type f \( \
+                -name "*.sql" -o \
+                -name "*.sql.gz" -o \
+                -name "*.sql.bz2" -o \
+                -name "*.sql.xz" \
+            \) -printf '%f\n' 2>/dev/null | sort
+        )
+        
+        # Если find не поддерживает -printf, используем альтернативный метод
+        if [ ${#found_db_files[@]} -eq 0 ]; then
+            while IFS= read -r -d '' file; do
+                found_db_files+=("$(basename "$file")")
+            done < <(find "$target_dir" -maxdepth 1 -type f \( \
+                -name "*.sql" -o \
+                -name "*.sql.gz" -o \
+                -name "*.sql.bz2" -o \
+                -name "*.sql.xz" \
+            \) -print0 2>/dev/null | sort -z)
+        fi
+        
+        if [ ${#found_db_files[@]} -eq 0 ]; then
+            echo -e "\033[1;31m❌ No database files found in $target_dir!\033[0m"
+            return 1
+        fi
+        
+        # Приоритетный выбор файла БД
+        local priority_patterns=("database.sql" "db_backup.sql" "backup.sql" "dump.sql")
+        local selected_db_file=""
+        
+        # Сначала ищем по приоритету среди несжатых файлов
+        for pattern in "${priority_patterns[@]}"; do
+            for db_file in "${found_db_files[@]}"; do
+                if [[ "$db_file" == "$pattern" ]]; then
+                    selected_db_file="$db_file"
+                    break 2
+                fi
+            done
+        done
+        
+        # Если не нашли несжатый, ищем сжатый по приоритету
+        if [ -z "$selected_db_file" ]; then
+            for pattern in "${priority_patterns[@]}"; do
+                for db_file in "${found_db_files[@]}"; do
+                    if [[ "$db_file" == "${pattern}.gz" ]] || [[ "$db_file" == "${pattern}.bz2" ]] || [[ "$db_file" == "${pattern}.xz" ]]; then
+                        selected_db_file="$db_file"
+                        break 2
+                    fi
+                done
+            done
+        fi
+        
+        # Если все еще не нашли, берем первый доступный файл
+        if [ -z "$selected_db_file" ] && [ ${#found_db_files[@]} -gt 0 ]; then
+            selected_db_file="${found_db_files[0]}"
+        fi
+        
+        if [ -n "$selected_db_file" ]; then
+            local full_db_path="$target_dir/$selected_db_file"
+            
+            # Проверяем, сжат ли файл
+            if [[ "$selected_db_file" =~ \.(gz|bz2|xz)$ ]]; then
+                local temp_sql="/tmp/restore_expanded_$$.sql"
+                local decompress_cmd=""
+                
+                case "$selected_db_file" in
+                    *.gz) decompress_cmd="gunzip -c" ;;
+                    *.bz2) decompress_cmd="bunzip2 -c" ;;
+                    *.xz) decompress_cmd="xz -dc" ;;
+                esac
+                
+                if $decompress_cmd "$full_db_path" > "$temp_sql" 2>/dev/null; then
+                    database_file="$temp_sql"
+                    log_restore_operation "Database File" "INFO" "Using compressed $selected_db_file from target directory (decompressed)"
+                    echo -e "\033[38;5;244m   Found compressed database file: $selected_db_file (decompressed)\033[0m"
+                else
+                    echo -e "\033[1;33m⚠️  Failed to decompress $selected_db_file\033[0m"
+                fi
+            else
+                database_file="$full_db_path"
+                log_restore_operation "Database File" "INFO" "Using $selected_db_file from target directory"
+                echo -e "\033[38;5;244m   Found database file: $selected_db_file\033[0m"
+            fi
         fi
     fi
     
@@ -2334,26 +3189,34 @@ restore_database_in_existing_installation() {
         return 1
     fi
     
+    # Дополнительная валидация файла БД
+    local db_size=$(wc -c < "$database_file" 2>/dev/null || echo "0")
+    if [ "$db_size" -lt 100 ]; then
+        echo -e "\033[1;31m❌ Database file appears to be empty or corrupted (size: $db_size bytes)!\033[0m"
+        return 1
+    fi
+    
     if [ ! -f "$target_dir/docker-compose.yml" ]; then
         echo -e "\033[1;31m❌ No docker-compose.yml found! Cannot restore database.\033[0m"
         return 1
     fi
     cd "$target_dir"
     
-    echo -e "\033[38;5;250m📝 Step 5:\033[0m Starting database service..."
+    echo -e "\033[38;5;250m📝 Starting database service...\033[0m"
     
     # Запускаем ТОЛЬКО базу данных для восстановления
-    if docker compose up -d "${target_app_name}-db" 2>/dev/null; then
+    local db_startup_log="/tmp/db_startup_$$.log"
+    if docker compose up -d "${target_app_name}-db" 2>"$db_startup_log"; then
         echo -e "\033[1;32m✅ Database service started\033[0m"
         
-        # Ждем готовности базы данных
+        # Ждем готовности базы данных с улучшенным логированием
         echo -e "\033[38;5;244m   Waiting for database to be ready...\033[0m"
         local attempts=0
         local max_attempts=30
         
         while [ $attempts -lt $max_attempts ]; do
             if docker exec "${target_app_name}-db" pg_isready -U postgres >/dev/null 2>&1; then
-                echo -e "\033[1;32m✅ Database is ready\033[0m"
+                echo -e "\033[1;32m✅ Database is ready (attempt $((attempts + 1)))\033[0m"
                 break
             fi
             
@@ -2361,16 +3224,29 @@ restore_database_in_existing_installation() {
             attempts=$((attempts + 1))
             
             if [ $attempts -eq $max_attempts ]; then
-                echo -e "\033[1;31m❌ Database failed to start!\033[0m"
+                echo -e "\033[1;31m❌ Database failed to start after $max_attempts attempts!\033[0m"
+                echo -e "\033[38;5;244m   Check logs: docker compose logs ${target_app_name}-db\033[0m"
+                if [ -f "$db_startup_log" ]; then
+                    echo -e "\033[38;5;244m   Startup errors:\033[0m"
+                    head -10 "$db_startup_log" | sed 's/^/     /'
+                fi
+                rm -f "$db_startup_log"
                 return 1
             fi
         done
     else
         echo -e "\033[1;31m❌ Failed to start database service!\033[0m"
+        if [ -f "$db_startup_log" ]; then
+            echo -e "\033[38;5;244m   Startup errors:\033[0m"
+            head -10 "$db_startup_log" | sed 's/^/     /'
+        fi
+        rm -f "$db_startup_log"
         return 1
     fi
     
-    echo -e "\033[38;5;250m📝 Step 6:\033[0m Restoring database..."
+    rm -f "$db_startup_log"
+    
+    echo -e "\033[38;5;250m📝 Restoring database...\033[0m"
     
     local db_container="${target_app_name}-db"
     local postgres_user="postgres"
@@ -2382,53 +3258,154 @@ restore_database_in_existing_installation() {
         postgres_user=$(grep "^POSTGRES_USER=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
         postgres_password=$(grep "^POSTGRES_PASSWORD=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
         postgres_db=$(grep "^POSTGRES_DB=" "$target_dir/.env" | cut -d'=' -f2 2>/dev/null || echo "postgres")
+        echo -e "\033[38;5;244m   Using database credentials from .env file\033[0m"
     fi
     
-    # Очищаем текущую базу данных
-    echo -e "\033[38;5;244m   Clearing current database...\033[0m"
-    if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
-        psql -U "$postgres_user" -d "$postgres_db" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" >/dev/null 2>&1; then
-        echo -e "\033[1;32m✅ Database cleared\033[0m"
-    else
-        echo -e "\033[1;31m❌ Failed to clear database!\033[0m"
+    # Проверяем подключение к БД
+    if ! docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+        psql -U "$postgres_user" -d "$postgres_db" -c "SELECT 1;" >/dev/null 2>&1; then
+        echo -e "\033[1;31m❌ Cannot connect to database with provided credentials!\033[0m"
         return 1
     fi
     
-    # Восстанавливаем данные с улучшенной безопасностью (заимствуя лучшие практики)
-    echo -e "\033[38;5;244m   Importing backup data...\033[0m"
+    # Создаем резервную копию текущей схемы (если есть данные)
+    echo -e "\033[38;5;244m   Creating current schema backup...\033[0m"
+    local current_schema_backup="/tmp/current_schema_backup_$$.sql"
+    docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+        pg_dump -U "$postgres_user" -d "$postgres_db" --schema-only > "$current_schema_backup" 2>/dev/null || true
+    
+    # Очищаем текущую базу данных
+    echo -e "\033[38;5;244m   Clearing current database...\033[0m"
+    local clear_db_log="/tmp/clear_db_$$.log"
+    if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+        psql -U "$postgres_user" -d "$postgres_db" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" >"$clear_db_log" 2>&1; then
+        echo -e "\033[1;32m✅ Database cleared\033[0m"
+    else
+        echo -e "\033[1;31m❌ Failed to clear database!\033[0m"
+        echo -e "\033[38;5;244m   Clear operation errors:\033[0m"
+        head -5 "$clear_db_log" | sed 's/^/     /'
+        rm -f "$clear_db_log" "$current_schema_backup"
+        return 1
+    fi
+    rm -f "$clear_db_log"
+    
+    # Восстанавливаем данные с улучшенной безопасностью и логированием
+    echo -e "\033[38;5;244m   Importing backup data ($(du -sh "$database_file" | cut -f1))...\033[0m"
+    local restore_log="/tmp/restore_db_$$.log"
+    local restore_errors="/tmp/restore_errors_$$.log"
+    
+    # Создаем временный файл с улучшенными настройками восстановления
+    local enhanced_sql="/tmp/enhanced_restore_$$.sql"
+    cat > "$enhanced_sql" <<EOF
+-- Отключаем уведомления для ускорения
+SET client_min_messages = WARNING;
+-- Улучшаем производительность
+SET synchronous_commit = off;
+SET wal_buffers = '16MB';
+SET checkpoint_completion_target = 0.9;
+
+-- Включаем содержимое оригинального файла
+\\i $database_file
+
+-- Обновляем статистику
+ANALYZE;
+EOF
+    
+    log_restore_operation "Database Import" "STARTED" "Importing $(du -sh "$database_file" | cut -f1) of data"
+    
     if docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
-        psql -U "$postgres_user" -d "$postgres_db" --set ON_ERROR_STOP=on < "$database_file" >/dev/null 2>&1; then
-        echo -e "\033[1;32m✅ Database restored successfully\033[0m"
+        psql -U "$postgres_user" -d "$postgres_db" --set ON_ERROR_STOP=on \
+        -f "/tmp/enhanced_restore_$$.sql" >"$restore_log" 2>"$restore_errors"; then
+        
+        # Проверяем что данные действительно восстановились
+        local table_count=$(docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+            psql -U "$postgres_user" -d "$postgres_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [ "$table_count" -gt 0 ]; then
+            echo -e "\033[1;32m✅ Database restored successfully ($table_count tables)\033[0m"
+            log_restore_operation "Database Import" "SUCCESS" "$table_count tables restored"
+        else
+            echo -e "\033[1;33m⚠️  Database restore completed but no tables found\033[0m"
+            log_restore_operation "Database Import" "WARNING" "Restore completed but no tables found"
+        fi
     else
         echo -e "\033[1;31m❌ Database restore failed!\033[0m"
+        log_restore_operation "Database Import" "ERROR" "Database restore failed"
+        
+        # Показываем детали ошибки если доступны
+        if [ -f "$restore_errors" ] && [ -s "$restore_errors" ]; then
+            echo -e "\033[38;5;244m   Error details:\033[0m"
+            head -5 "$restore_errors" | sed 's/^/     /'
+        fi
+        if [ -f "$restore_errors" ] && [ -s "$restore_errors" ]; then
+            echo -e "\033[38;5;244m   Restore errors:\033[0m"
+            head -10 "$restore_errors" | sed 's/^/     /'
+        fi
         echo -e "\033[38;5;244m   Check database logs: docker compose logs ${target_app_name}-db\033[0m"
+        
+        # Пытаемся восстановить старую схему при неудаче
+        if [ -f "$current_schema_backup" ] && [ -s "$current_schema_backup" ]; then
+            echo -e "\033[38;5;244m   Attempting to restore previous schema...\033[0m"
+            docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
+                psql -U "$postgres_user" -d "$postgres_db" < "$current_schema_backup" >/dev/null 2>&1 || true
+        fi
+        
+        rm -f "$restore_log" "$restore_errors" "$enhanced_sql" "$current_schema_backup"
         return 1
     fi
     
     # Очищаем временные файлы
-    rm -f "$target_dir/database.sql"
+    rm -f "$restore_log" "$restore_errors" "$enhanced_sql" "$current_schema_backup"
+    
+    # Очищаем временные файлы базы данных
+    rm -f "$target_dir/database.sql" "$target_dir/db_backup.sql"
     
     # Останавливаем БД перед запуском всех сервисов
-    echo -e "\033[38;5;250m📝 Step 7:\033[0m Stopping database service..."
+    echo -e "\033[38;5;250m📝 Stopping database service...\033[0m"
     docker compose down 2>/dev/null
     
-    # Запускаем ВСЕ сервисы
-    echo -e "\033[38;5;250m📝 Step 8:\033[0m Starting all services..."
+    # Запускаем ВСЕ сервисы с улучшенной обработкой
+    echo -e "\033[38;5;250m📝 Starting all services...\033[0m"
     
-    if docker compose up -d 2>/dev/null; then
-        echo -e "\033[1;32m✅ All services started successfully\033[0m"
+    local startup_log="/tmp/startup_$$.log"
+    if docker compose up -d 2>"$startup_log"; then
+        echo -e "\033[1;32m✅ All services started\033[0m"
     else
         echo -e "\033[1;33m⚠️  Service startup had issues\033[0m"
+        if [ -f "$startup_log" ]; then
+            echo -e "\033[38;5;244m   Startup warnings:\033[0m"
+            head -5 "$startup_log" | sed 's/^/     /'
+        fi
     fi
+    rm -f "$startup_log"
     
-    # Проверяем финальный статус
-    sleep 5
-    local healthy_services=$(docker compose ps --format json 2>/dev/null | jq -r 'select(.Health == "healthy" or .State == "running") | .Service' 2>/dev/null | wc -l)
-    local total_services=$(docker compose ps --format json 2>/dev/null | jq -r '.Service' 2>/dev/null | wc -l)
+    # Проверяем финальный статус с расширенной диагностикой
+    echo -e "\033[38;5;244m   Performing health check...\033[0m"
+    sleep 8
+    
+    local services_status=""
+    if command -v jq >/dev/null 2>&1; then
+        services_status=$(docker compose ps --format json 2>/dev/null | jq -r 'select(.Health == "healthy" or .State == "running") | .Service' 2>/dev/null)
+        local healthy_services=$(echo "$services_status" | wc -l)
+        local total_services=$(docker compose ps --format json 2>/dev/null | jq -r '.Service' 2>/dev/null | wc -l)
+    else
+        # Резервный метод без jq
+        local healthy_services=$(docker compose ps | grep -c "Up\|healthy" || echo "0")
+        local total_services=$(docker compose ps | tail -n +2 | wc -l)
+    fi
     
     if [ "$healthy_services" -gt 0 ] && [ "$total_services" -gt 0 ]; then
-        echo -e "\033[1;32m✅ Services health check: $healthy_services/$total_services healthy\033[0m"
+        if [ "$healthy_services" -eq "$total_services" ]; then
+            echo -e "\033[1;32m✅ All services healthy: $healthy_services/$total_services\033[0m"
+        else
+            echo -e "\033[1;33m⚠️  Partial health: $healthy_services/$total_services services healthy\033[0m"
+            echo -e "\033[38;5;244m   Check individual service status: docker compose ps\033[0m"
+        fi
+    else
+        echo -e "\033[1;33m⚠️  Service health check inconclusive\033[0m"
     fi
+    
+    return 0
 }
 
 schedule_test_backup() {
@@ -2625,9 +3602,31 @@ schedule_status() {
     
     if [ -d "$backup_directory" ]; then
 
-        local total_backups=$(ls -1 "$backup_directory"/remnawave_*.tar.gz "$backup_directory"/remnawave_*.sql.gz "$backup_directory"/remnawave_*.sql 2>/dev/null | wc -l)
-        local scheduled_backups=$(ls -1 "$backup_directory"/remnawave_scheduled_*.tar.gz "$backup_directory"/remnawave_scheduled_*.sql.gz "$backup_directory"/remnawave_scheduled_*.sql 2>/dev/null | wc -l)
-        local manual_backups=$(ls -1 "$backup_directory"/remnawave_full_*.tar.gz "$backup_directory"/remnawave_full_*.sql.gz "$backup_directory"/remnawave_full_*.sql "$backup_directory"/remnawave_db_*.sql.gz "$backup_directory"/remnawave_db_*.sql 2>/dev/null | wc -l)
+        local total_backups=$(find "$backup_directory" -maxdepth 1 -type f \( \
+            -name "remnawave_*.tar.gz" -o \
+            -name "remnawave_*.sql" -o \
+            -name "remnawave_*.sql.gz" -o \
+            -name "remnawave_*.sql.bz2" -o \
+            -name "remnawave_*.sql.xz" \
+        \) 2>/dev/null | wc -l)
+        local scheduled_backups=$(find "$backup_directory" -maxdepth 1 -type f \( \
+            -name "remnawave_scheduled_*.tar.gz" -o \
+            -name "remnawave_scheduled_*.sql" -o \
+            -name "remnawave_scheduled_*.sql.gz" -o \
+            -name "remnawave_scheduled_*.sql.bz2" -o \
+            -name "remnawave_scheduled_*.sql.xz" \
+        \) 2>/dev/null | wc -l)
+        local manual_backups=$(find "$backup_directory" -maxdepth 1 -type f \( \
+            -name "remnawave_full_*.tar.gz" -o \
+            -name "remnawave_full_*.sql" -o \
+            -name "remnawave_full_*.sql.gz" -o \
+            -name "remnawave_full_*.sql.bz2" -o \
+            -name "remnawave_full_*.sql.xz" -o \
+            -name "remnawave_db_*.sql" -o \
+            -name "remnawave_db_*.sql.gz" -o \
+            -name "remnawave_db_*.sql.bz2" -o \
+            -name "remnawave_db_*.sql.xz" \
+        \) 2>/dev/null | wc -l)
         
         printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Total backups:" "$total_backups"
         printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Scheduled backups:" "$scheduled_backups"
