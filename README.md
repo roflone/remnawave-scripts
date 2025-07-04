@@ -10,7 +10,7 @@
 [![Auto Updates](https://img.shields.io/badge/Feature-Auto%20Updates-green.svg)](#)
 [![Telegram Integration](https://img.shields.io/badge/Feature-Telegram-blue.svg)](#)
 
-![remnawave-script](https://github.com/user-attachments/assets/remnawave-script.webp)
+![remnawave-script](remnawave-script.webp)
 
 A comprehensive collection of enterprise-grade Bash scripts for **Remnawave Panel**, **RemnaNode**, and **Reality traffic masking** management. Featuring advanced backup/restore capabilities, automated scheduling, Telegram integration, and production-ready deployment tools.
 
