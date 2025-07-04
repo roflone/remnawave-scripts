@@ -3302,7 +3302,7 @@ REDIS_PORT=6379
 ### API ###
 # Possible values: max (start instances on all cores), number (start instances on number of cores), -1 (start instances on all cores - 1)
 # !!! Do not set this value more that physical cores count in your machine !!!
-API_INSTANCES=max
+API_INSTANCES=1
 
 ### DATABASE ###
 # FORMAT: postgresql://{user}:{password}@{host}:{port}/{database}
