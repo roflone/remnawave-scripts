@@ -787,6 +787,10 @@ This project is licensed under the **MIT License** - see the [LICENSE](./LICENSE
 
 ### 🌐 Join Our Communities
 
+**🔗 GIG.ovh**  
+* **Website**: [https://gig.ovh](https://gig.ovh)
+* **FOCUS**: Next-Gen forum comminity with AI ChatBot, VIP Groups and other..
+
 **🔗 OpeNode.XYZ**
 * **Website**: [https://openode.xyz](https://openode.xyz)
 * **Focus**: Open-source networking solutions
@@ -795,31 +799,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](./LICENSE
 
 **🔗 NeoNode.cc**  
 * **Website**: [https://neonode.cc](https://neonode.cc)
-* **Focus**: Next-generation node management
-* **Community**: Advanced users and contributors
-* **Topics**: Performance optimization, scaling, automation
 
-### 💬 Support Channels
-
-**📱 Telegram Communities:**
-* General discussions
-* Technical support
-* Feature announcements
-* Community contributions
-
-**🐙 GitHub:**
-* Issue tracking
-* Feature requests
-* Code contributions
-* Documentation improvements
-
-### 🎯 Project Goals
-
-**🚀 Mission:**
-Provide enterprise-grade, production-ready scripts for proxy panel management with advanced automation, security, and monitoring capabilities.
-
-**🎨 Vision:**
-Become the standard toolset for Remnawave deployment and management, offering seamless installation, robust backup/restore, and comprehensive monitoring solutions.
 
 ---
 
