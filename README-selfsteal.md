@@ -37,7 +37,7 @@ Caddy for Reality Selfsteal — это скрипт для автоматиче�
 Выполните следующую команду для скачивания и установки Caddy:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
 ```
 
 ### Ручная установка

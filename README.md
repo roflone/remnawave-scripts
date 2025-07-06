@@ -89,10 +89,10 @@ A comprehensive enterprise-grade Bash script to install and manage the [Remnawav
 
 ```bash
 # Install Remnawave Panel
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
 
 # Install only the management script
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh)" @ install-script --name remnawave
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install-script --name remnawave
 ```
 
 ---
@@ -103,15 +103,14 @@ sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/
 |------|-------------|---------|
 | `--name` | Custom installation directory name | `--name panel-prod` |
 | `--dev` | Install development version | `--dev` |
-| `--path` | Custom installation base path | `--path /home/user` |
 
 **Examples:**
 ```bash
 # Development installation with custom name
-sudo remnawave.sh install --name remnawave-dev --dev
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install --name remnawave-dev --dev
 
-# Production installation in custom path
-sudo remnawave.sh install --name panel-prod --path /home/user
+# Production installation with custom name  
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install --name panel-prod
 ```
 
 ---
@@ -306,13 +305,13 @@ A production-ready Bash script to install and manage **RemnaNode** - high-perfor
 
 ```bash
 # Install RemnaNode
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
 
 # Install with custom name
-sudo remnanode.sh install --name node-prod
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install --name node-prod
 
 # Install development version
-sudo remnanode.sh install --dev --name node-dev
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install --dev --name node-dev
 ```
 
 ---
@@ -452,7 +451,7 @@ A specialized Bash script for deploying **Caddy as a Reality traffic masking sol
 
 ```bash
 # Install Caddy Selfsteal
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
 ```
 
 ---

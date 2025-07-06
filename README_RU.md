@@ -1,6 +1,12 @@
 # Remnawave Скрипты
 
-[![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
+[![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow```bash
+# Установка Remnawave Panel
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
+
+# Установка только скрипта управления  
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install-script --name remnawave
+```./LICENSE)
 [![Shell](https://img.shields.io/badge/Язык-Bash-blue.svg)](#)
 [![Версия](https://img.shields.io/badge/версия-3.4.0-blue.svg)](#)
 [![Remnawave Panel](https://img.shields.io/badge/Инсталлятор-Remnawave-brightgreen)](#-установщик-remnawave-panel)
@@ -305,7 +311,7 @@ Production-готовый Bash-скрипт для установки и упр�
 
 ```bash
 # Установка RemnaNode
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
 
 # Установка с пользовательским именем
 sudo remnanode.sh install --name node-prod
@@ -451,7 +457,7 @@ sudo ufw enable
 
 ```bash
 # Установка Caddy Selfsteal
-sudo bash -c "$(curl -sL https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh)" @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
 ```
 
 ---
