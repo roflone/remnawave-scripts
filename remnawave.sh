@@ -5349,15 +5349,31 @@ EOF
 
         # Создаем бэкап
         if [ "$compress" = true ]; then
-            if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
-                pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
-                gzip > "$backup_path"; then
-                local backup_size=$(du -sh "$backup_path" | cut -f1)
-                echo -e "\033[1;32m✅ Compressed database backup created successfully ($backup_size)!\033[0m"
+            # Проверяем наличие gzip
+            if ! command -v gzip >/dev/null 2>&1; then
+                colorized_echo yellow "Warning: gzip not found, creating uncompressed backup instead"
+                backup_name="remnawave_db_${timestamp}.sql"
+                backup_path="$BACKUP_DIR/$backup_name"
+                if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+                    pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null; then
+                    local backup_size=$(du -sh "$backup_path" | cut -f1)
+                    echo -e "\033[1;32m✅ Database backup created successfully ($backup_size)!\033[0m"
+                else
+                    echo -e "\033[1;31m❌ Database backup failed!\033[0m"
+                    rm -f "$backup_path"
+                    exit 1
+                fi
             else
-                echo -e "\033[1;31m❌ Database backup failed!\033[0m"
-                rm -f "$backup_path"
-                exit 1
+                if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+                    pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
+                    gzip > "$backup_path"; then
+                    local backup_size=$(du -sh "$backup_path" | cut -f1)
+                    echo -e "\033[1;32m✅ Compressed database backup created successfully ($backup_size)!\033[0m"
+                else
+                    echo -e "\033[1;31m❌ Database backup failed!\033[0m"
+                    rm -f "$backup_path"
+                    exit 1
+                fi
             fi
         else
             if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
@@ -5386,9 +5402,17 @@ EOF
     fi
     
     if [ "$include_configs" = true ]; then
-        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (database + configs)"
+        if [ "$compress" = true ]; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (database + configs, compressed)"
+        else
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (database + configs)"
+        fi
     else
-        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Database only"
+        if [ "$compress" = true ]; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Database only (compressed)"
+        else
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Database only"
+        fi
     fi
     
     if [ "$compress" = true ]; then
