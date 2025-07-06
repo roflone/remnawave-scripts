@@ -4,6 +4,8 @@
 
 ### Релиз от проектов [GIG.ovh](https://gig.ovh) и [OpeNode.xyz](https://openode.xyz)
 
+![изображение](https://github.com/user-attachments/assets/907d9304-cd7d-4897-8e24-ea8086924a0a)
+
 ## 📋 Возможности
 
 ### 🚀 Основные функции
