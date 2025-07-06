@@ -1,16 +1,14 @@
-### Remnawave Management Scripts by DigneZzZ
+### Remnawave Management Scripts v3.5.5 by DigneZzZ
 
-Comprehensive bash scripts for **Remnawave Panel**, **Remnawave Node**, and **Reality Selfsteal** with full automation support. Features Docker integration, automated backups with Telegram notifications, system monitoring, and complete lifecycle management.
+Comprehensive bash scripts for **Remnawave Panel**, **Remnawave Node**, and **Reality Selfsteal** with full automation support. Features Docker integration, intelligent backup/restore system with version checking, advanced monitoring, and complete lifecycle management.
 
 📦 **Key Features:**
 - 🚀 **One-line installation** for Panel, Node, and Selfsteal configurations
 - 🎛️ **Interactive menus** with real-time status monitoring and guided operations
-- 💾 **Integrated backup system** with scheduled automation and Telegram delivery
+- 💾 **Smart backup system** with version compatibility checking and safety rollbacks
 - 🔄 **Complete lifecycle management** - install, update, backup, restore, uninstall
-- 🛡️ **Production-ready** with health checks, logging, and error handling
 - 🎯 **Reality masking** with 11 AI-generated website templates
-- ⚙️ **Advanced configuration** with OAuth, SSL, and performance monitoring
-- 🔧 **Xray-core management** with automatic updates and log monitoring
+
 
 📦 Full info, updates, and examples: [**/remnawave-scripts**](https://github.com/DigneZzZ/remnawave-scripts)
 
@@ -21,7 +19,7 @@ Author: [DigneZzZ](https://github.com/DigneZzZ)
 <details>
 <summary>🚀 Quick Install Commands</summary>
 
-**Remnawave Panel (v3.3.2+):**
+**Remnawave Panel (v3.5.5+):**
 ```bash
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
 ```
@@ -86,32 +84,49 @@ Run `remnawave help`, `remnanode help`, or `selfsteal help` for detailed usage.
 </details>
 
 <details>
-<summary>💾 Integrated Backup System</summary>
+<summary>💾 Intelligent Backup & Restore System</summary>
 
-**Automated Features:**
-- **Scheduled backups** with cron integration
-- **Telegram notifications** with file delivery
-- **Compression and retention** management
-- **Health monitoring** and failure alerts
-- **Database + files** complete backup
+**🔄 Smart Backup Features:**
 
-**What's backed up:**
+- **Version-aware backups** with compatibility checking
+- **Safety restore** with automatic rollback protection  
+- **Scheduled automation** with cron integration
+- **Telegram notifications** with file delivery and alerts
+- **Cross-server migration** support
+- **Compressed archives** with unified structure
+
+**📦 What's Backed Up:**
+
 - PostgreSQL database as `db_backup.sql`
 - Configuration files: `docker-compose.yml`, `.env`, `app-config.json`
-- Optional: full directory backup
+- Optional: full directory backup with selective restore
 
-**Backup Types:**
-- **Manual backup:** `remnawave backup`
-- **Scheduled backup:** Configure via `remnawave schedule`
-- **Full restore:** Automatic or selective restoration from `.tar.gz` archives
+**🎯 Quick Commands:**
 
-**Restore Options:**
+```bash
+remnawave backup          # Create instant backup
+remnawave schedule        # Setup automated backups  
+remnawave restore         # Intelligent restore with version checks
+```
+
+**🛡️ Safety Features:**
+
+- Automatic version compatibility verification
+- Safety backup before restore operations
+- Rollback capability if restore fails
+- Real-time status monitoring during operations
+
+**📋 Restore Options:**
+
 - Full restore (replace all files and database)
 - Database-only restore (keep existing files)
 - Custom directory restoration
+- Manual restore commands included in each backup archive
 
 **Legacy Standalone Scripts:**
+
 Still available for users who prefer separate backup/restore tools:
+
 - [remnawave-backup.sh](https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave-backup.sh) - Standalone backup script
 - [restore.sh](https://github.com/DigneZzZ/remnawave-scripts/raw/main/restore.sh) - Standalone restore script
 
