@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.4.1
+# VERSION=3.4.2
 
 set -e
-SCRIPT_VERSION="3.4.1"
+SCRIPT_VERSION="3.4.2"
 
-# Правильная обработка аргументов
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
-    shift  # Пропускаем символ @
+    shift  
 fi
 
-# Получаем команду
 if [ $# -gt 0 ]; then
     COMMAND="$1"
     shift
