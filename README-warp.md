@@ -2,6 +2,8 @@
 
 Автоматический установщик и менеджер для Cloudflare WARP (через WireGuard) и Tor прокси-сервера. Обеспечивает быструю настройку и управление прокси-соединениями на Linux серверах через удобную команду `wtm`.
 
+### Релиз от проектов [GIG.ovh](https://gig.ovh) и [OpeNode.xyz](https://openode.xyz)
+
 ## 📋 Возможности
 
 ### 🚀 Основные функции
@@ -150,14 +152,14 @@ sudo wtm xray-examples
 ### Минимальные требования:
 - **ОС**: Ubuntu 18.04+, Debian 10+, CentOS 7+, RHEL 7+
 - **Права**: root доступ (sudo)
-- **RAM**: 512MB свободной памяти
-- **Диск**: 1GB свободного места
+- **RAM**: 1GB свободной памяти
+- **Диск**: 5GB свободного места
 - **Сеть**: доступ в интернет
 
 ### Поддерживаемые дистрибутивы:
-- Ubuntu (18.04, 20.04, 22.04, 24.04)
-- Debian (10, 11, 12)
-- CentOS (7, 8, 9)
+- Ubuntu (20.04, 22.04, 24.04)
+- Debian (11, 12)
+- CentOS ( 8, 9)
 - RHEL (7, 8, 9)
 - Rocky Linux (8, 9)
 - AlmaLinux (8, 9)
@@ -196,25 +198,6 @@ curl --interface warp ifconfig.me
 
 # Через Tor
 curl --socks5 127.0.0.1:9050 ifconfig.me
-```
-
-### SSH через Tor:
-```bash
-# Используя ProxyCommand
-ssh -o ProxyCommand='nc -X 5 -x 127.0.0.1:9050 %h %p' user@server
-
-# Через ProxyJump (если настроен локальный прокси)
-ssh -J proxy-host user@target-server
-```
-
-### Git через прокси:
-```bash
-# WARP (через интерфейс)
-git config --global http.proxy ""
-GIT_CURL_VERBOSE=1 git clone https://github.com/user/repo.git
-
-# Tor SOCKS5
-git config --global http.proxy socks5://127.0.0.1:9050
 ```
 
 ### ProxyChains конфигурация:
@@ -361,7 +344,7 @@ sudo wtm system-info
 - [XRay Core](https://xtls.github.io/config/)
 
 ### Полезные ссылки:
-- [RemnaWave Scripts Repository](https://github.com/remnawave/remnawave-scripts)
+- [RemnaWave Scripts Repository](https://github.com/dignezzz/remnawave-scripts)
 - [WGCF Tool](https://github.com/ViRb3/wgcf)
 - [Tor Configuration Guide](https://community.torproject.org/relay/setup/)
 
@@ -392,10 +375,11 @@ sudo wtm system-info
 
 1. Проверьте раздел "Устранение неполадок" выше
 2. Запустите диагностику: `sudo wtm test`
-3. Создайте issue в [GitHub репозитории](https://github.com/remnawave/remnawave-scripts)
+3. Создайте issue в [GitHub репозитории](https://github.com/dignezzz/remnawave-scripts)
 
 ---
 
 **Версия**: 1.1.4  
 **Последнее обновление**: 7 января 2025  
-**Автор**: RemnaWave Team
+**Автор**: DigneZzZ
+**Проект**: https://gig.ovh
