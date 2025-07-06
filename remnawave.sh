@@ -6,10 +6,17 @@
 set -e
 SCRIPT_VERSION="3.4.0"
 
+# Правильная обработка аргументов
+if [ $# -gt 0 ] && [ "$1" = "@" ]; then
+    shift  # Пропускаем символ @
+fi
+
+# Получаем команду
 if [ $# -gt 0 ]; then
     COMMAND="$1"
     shift
 fi
+
 
 
 while [[ $# -gt 0 ]]; do  
