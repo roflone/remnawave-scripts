@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.5.5
+# VERSION=3.5.6
 
 set -e
-SCRIPT_VERSION="3.5.5"
+SCRIPT_VERSION="3.5.6"
 BACKUP_SCRIPT_VERSION="1.0.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -569,8 +569,8 @@ schedule_menu() {
         echo -e "   \033[38;5;15m6)\033[0m 📋 View backup logs"
         echo -e "   \033[38;5;15m7)\033[0m 🧹 Cleanup old backups"
         echo -e "   \033[38;5;15m8)\033[0m ▶️  Run full backup now"
-        echo -e "   \033[38;5;15m9)\033[0m � Update backup script"
-        echo -e "   \033[38;5;15ma)\033[0m ���️  Clear logs"
+        echo -e "   \033[38;5;15m9)\033[0m 🔄 Update backup script"
+        echo -e "   \033[38;5;15ma)\033[0m 🧹  Clear logs"
         echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
         echo
         echo -e "\033[38;5;8m💡 All scheduled backups include database + configurations\033[0m"
@@ -7167,7 +7167,7 @@ usage() {
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit" "📝 Edit docker-compose.yml"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit-env" "⚙️  Edit environment variables"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "edit-env-sub" "⚙️  Edit subscription environment variables"
-    printf "   \033[38;5;117m%-18s\033[0m %s\n" "console" "�️  Access container shell"
+    printf "   \033[38;5;117m%-18s\033[0m %s\n" "console" "📥  Access container shell"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "pm2-monitor" "📊 PM2 process monitor"
     echo
 
