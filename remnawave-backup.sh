@@ -59,7 +59,10 @@ read_env_var() {
     local var_name="$1"
     local file="$2"
     local value
-    value=$(grep "^$var_name=" "$file" | cut -d '=' -f 2-)
+    # Читаем значение и обрабатываем случаи с пробелами и кавычками
+    value=$(grep "^$var_name=" "$file" | cut -d '=' -f 2- | head -n 1)
+    # Убираем возможные комментарии в конце строки
+    value=$(echo "$value" | sed 's/[[:space:]]*#.*$//')
     echo "$value"
 }
 
@@ -69,12 +72,25 @@ if [ -f "$COMPOSE_PATH/.env" ]; then
     POSTGRES_USER=$(read_env_var "POSTGRES_USER" "$COMPOSE_PATH/.env")
     POSTGRES_PASSWORD=$(read_env_var "POSTGRES_PASSWORD" "$COMPOSE_PATH/.env")
     POSTGRES_DB=$(read_env_var "POSTGRES_DB" "$COMPOSE_PATH/.env")
-    POSTGRES_USER=${POSTGRES_USER:-postgres}
-    POSTGRES_DB=${POSTGRES_DB:-postgres}
-    if [ -z "$POSTGRES_PASSWORD" ]; then
-        echo -e "${RED}✖ Error: POSTGRES_PASSWORD not found in .env file!${NC}"
+    POSTGRES_USER=$(echo "$POSTGRES_USER" | sed 's/^"//;s/"$//')
+    POSTGRES_PASSWORD=$(echo "$POSTGRES_PASSWORD" | sed 's/^"//;s/"$//')
+    POSTGRES_DB=$(echo "$POSTGRES_DB" | sed 's/^"//;s/"$//')
+    
+    # Проверяем что все необходимые переменные заданы
+    if [ -z "$POSTGRES_USER" ]; then
+        echo -e "${RED}✖ Error: POSTGRES_USER not found or empty in .env file!${NC}"
         exit 1
     fi
+    if [ -z "$POSTGRES_DB" ]; then
+        echo -e "${RED}✖ Error: POSTGRES_DB not found or empty in .env file!${NC}"
+        exit 1
+    fi
+    if [ -z "$POSTGRES_PASSWORD" ]; then
+        echo -e "${RED}✖ Error: POSTGRES_PASSWORD not found or empty in .env file!${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Using database config: User=$POSTGRES_USER, DB=$POSTGRES_DB${NC}"
 else
     echo -e "${YELLOW}⚠ .env file not found at $COMPOSE_PATH.${NC}"
     echo -e "${BLUE}You’ll need to enter DB connection details manually.${NC}"
