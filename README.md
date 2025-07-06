@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/language-Bash-blue.svg)](#)
-[![Version](https://img.shields.io/badge/version-3.4.0-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-3.5.5-blue.svg)](#)
 [![Remnawave Panel](https://img.shields.io/badge/Installer-Remnawave-brightgreen)](#-remnawave-panel-installer)
 [![RemnaNode](https://img.shields.io/badge/Installer-RemnaNode-lightgrey)](#-remnanode-installer)
 [![Backup & Restore](https://img.shields.io/badge/Tool-Backup%20%26%20Restore-orange)](#-backup--restore-system)
@@ -182,9 +182,39 @@ remnawave restore --database-only --file database.sql.gz
 
 # Restore with safety backup
 remnawave restore --file backup.tar.gz  # Automatic safety backup created
-
-# Note: Automatic panel version compatibility checking during restore
 ```
+
+**🔍 Version Compatibility:**
+- Panel version included in all backup metadata and notifications
+- Strict version checking: Major/minor versions must match for restore
+- Patch version differences show warnings but allow restore
+- Script version managed separately from panel version
+
+**� Recommended Restore Method:**
+```bash
+# Transfer backup file to target server, then:
+sudo remnawave restore --file backup.tar.gz
+
+# For database-only backups:
+sudo remnawave restore --database-only --file database.sql.gz
+```
+
+**🛠 Manual Restore (if automatic fails):**
+```bash
+# Option A: New installation (recommended)
+curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh
+sudo bash remnawave.sh @ install --name remnawave
+sudo remnawave down
+tar -xzf backup.tar.gz
+cat backup_folder/database.sql | docker exec -i -e PGPASSWORD="actual_password" remnawave-db psql -U postgres -d postgres
+
+# Option B: Existing installation  
+sudo remnawave down
+cat database.sql | docker exec -i -e PGPASSWORD="actual_password" remnawave-db psql -U postgres -d postgres
+sudo remnawave up
+```
+
+⚠️ **Note:** Built-in `restore` function includes automatic version checking, safety backups, and error handling.
 
 ---
 

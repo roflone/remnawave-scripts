@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.5.1
+# VERSION=3.5.5
 
 set -e
-SCRIPT_VERSION="3.5.1"
-BACKUP_SCRIPT_VERSION="1.0.0"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.5.5"
+BACKUP_SCRIPT_VERSION="1.0.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -5619,12 +5619,49 @@ Included Components:
 ✓ SSL Certificates (if present)
 
 Restoration:
-1. Install Remnawave Panel v$panel_version on target system
-2. Stop services: sudo $APP_NAME down
-3. Extract this backup
-4. Restore database: cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres
-5. Copy configs to appropriate locations
-6. Start services: sudo $APP_NAME up
+=============
+
+🚀 RECOMMENDED METHOD (Automatic):
+----------------------------------
+1. Transfer backup file to target server
+2. Install management script (if not installed):
+   • curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh -o remnawave.sh
+   • sudo bash remnawave.sh @ install-script --name $APP_NAME
+3. Use built-in restore function:
+   • sudo $APP_NAME restore --file $(basename "$backup_path")
+
+✅ This method includes:
+   • Automatic panel installation (if needed)
+   • Version compatibility checking
+   • Safety backup creation
+   • Database restoration with error handling
+   • Configuration file copying
+   • Service management
+
+🛠️ MANUAL METHOD (Advanced users only):
+---------------------------------------
+Only use if automatic restore fails or for custom scenarios.
+
+New Installation:
+1. Download: curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh
+2. Install script: sudo bash remnawave.sh @ install-script --name $APP_NAME
+3. Create directory: sudo mkdir -p $APP_DIR
+4. Extract: tar -xzf $(basename "$backup_path")
+5. Copy all configs: sudo cp -r $(basename "$backup_path" .tar.gz)/* $APP_DIR/
+6. Set permissions: sudo chown -R root:root $APP_DIR
+7. Start services: sudo $APP_NAME up -d
+8. Wait for DB: sleep 15
+9. Clear DB: docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+10. Restore DB: cat $(basename "$backup_path" .tar.gz)/database.sql | docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB
+11. Restart: sudo $APP_NAME restart
+
+Existing Installation:
+1. Stop: sudo $APP_NAME down
+2. Safety backup: sudo $APP_NAME backup --data-only
+3. Extract: tar -xzf $(basename "$backup_path")
+4. Clear DB: docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+5. Restore DB: cat $(basename "$backup_path" .tar.gz)/database.sql | docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB
+6. Start: sudo $APP_NAME up
 
 ⚠️  IMPORTANT: Target system must have compatible Remnawave Panel version ($panel_version)
 
@@ -5749,19 +5786,58 @@ EOF
     # Показываем как восстановить
     echo -e "\033[1;37m🔄 To restore this backup:\033[0m"
     if [ "$include_configs" = true ]; then
+        echo -e "\033[1;32m✓ Full system backup - includes database and all configuration files\033[0m"
+        echo
+        echo -e "\033[1;37m🚀 RECOMMENDED: Use built-in restore function\033[0m"
+        echo -e "\033[38;5;244m1. Transfer backup to target server\033[0m"
+        echo -e "\033[38;5;244m2. Install script: curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh -o remnawave.sh\033[0m"
+        echo -e "\033[38;5;244m3. Install manager: sudo bash remnawave.sh @ install-script --name $APP_NAME\033[0m"
+        echo -e "\033[38;5;244m4. Restore: sudo $APP_NAME restore --file \"$(basename "$backup_path")\"\033[0m"
+        echo
+        echo -e "\033[38;5;8m   ✅ Includes automatic version checking, safety backups, and error handling\033[0m"
+        echo
+        echo -e "\033[1;37m🛠️  MANUAL METHOD (if automatic fails):\033[0m"
+        echo -e "\033[38;5;244mNew installation:\033[0m"
+        echo -e "\033[38;5;244m1. Download: curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh\033[0m"
+        echo -e "\033[38;5;244m2. Install script: sudo bash remnawave.sh @ install-script --name $APP_NAME\033[0m"
+        echo -e "\033[38;5;244m3. Create directory: sudo mkdir -p $APP_DIR\033[0m"
         if [ "$compress" = true ]; then
-            echo -e "\033[38;5;244m1. tar -xzf \"$backup_path\"\033[0m"
-            echo -e "\033[38;5;244m2. Copy .env, docker-compose.yml and other configs to app directory\033[0m"
-            echo -e "\033[38;5;244m3. cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
+            echo -e "\033[38;5;244m4. Extract: tar -xzf \"$(basename "$backup_path")\"\033[0m"
+            echo -e "\033[38;5;244m5. Copy all configs: sudo cp -r $(basename "$backup_path" .tar.gz)/* $APP_DIR/\033[0m"
+            echo -e "\033[38;5;244m6. Set permissions: sudo chown -R root:root $APP_DIR\033[0m"
+            echo -e "\033[38;5;244m7. Start services: sudo $APP_NAME up -d\033[0m"
+            echo -e "\033[38;5;244m8. Wait for DB: sleep 15\033[0m"
+            echo -e "\033[38;5;244m9. Clear DB: docker exec -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"\033[0m"
+            echo -e "\033[38;5;244m10. Restore DB: cat $(basename "$backup_path" .tar.gz)/database.sql | docker exec -i -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB\033[0m"
+            echo -e "\033[38;5;244m11. Restart: sudo $APP_NAME restart\033[0m"
         else
-            echo -e "\033[38;5;244m1. Copy .env, docker-compose.yml and other configs from backup directory\033[0m"
-            echo -e "\033[38;5;244m2. cat \"$backup_path/database.sql\" | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
+            echo -e "\033[38;5;244m4. Copy all configs: sudo cp -r $(basename "$backup_path")/* $APP_DIR/\033[0m"
+            echo -e "\033[38;5;244m5. Set permissions: sudo chown -R root:root $APP_DIR\033[0m"
+            echo -e "\033[38;5;244m6. Start services: sudo $APP_NAME up -d\033[0m"
+            echo -e "\033[38;5;244m7. Wait for DB: sleep 15\033[0m"
+            echo -e "\033[38;5;244m8. Clear DB: docker exec -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"\033[0m"
+            echo -e "\033[38;5;244m9. Restore DB: cat $(basename "$backup_path")/database.sql | docker exec -i -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB\033[0m"
+            echo -e "\033[38;5;244m10. Restart: sudo $APP_NAME restart\033[0m"
         fi
     else
+        echo -e "\033[1;33m⚠️  Database-only backup - configuration files not included\033[0m"
+        echo -e "\033[38;5;244mRequires existing Remnawave installation with same version ($panel_version)\033[0m"
+        echo
+        echo -e "\033[1;37m🚀 RECOMMENDED: Use built-in restore function\033[0m"
+        echo -e "\033[38;5;244m1. Transfer backup to target server\033[0m"
+        echo -e "\033[38;5;244m2. Restore: sudo $APP_NAME restore --database-only --file \"$(basename "$backup_path")\"\033[0m"
+        echo
+        echo -e "\033[1;37m🛠️  MANUAL METHOD:\033[0m"
         if [ "$compress" = true ]; then
-            echo -e "\033[38;5;244mzcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
+            echo -e "\033[38;5;244m1. Stop: sudo $APP_NAME down\033[0m"
+            echo -e "\033[38;5;244m2. Clear DB: docker exec -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"\033[0m"
+            echo -e "\033[38;5;244m3. Restore: zcat \"$(basename "$backup_path")\" | docker exec -i -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB\033[0m"
+            echo -e "\033[38;5;244m4. Start: sudo $APP_NAME up\033[0m"
         else
-            echo -e "\033[38;5;244mcat \"$backup_path\" | docker exec -i -e PGPASSWORD=\"\$POSTGRES_PASSWORD\" \"$db_container\" psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"\033[0m"
+            echo -e "\033[38;5;244m1. Stop: sudo $APP_NAME down\033[0m"
+            echo -e "\033[38;5;244m2. Clear DB: docker exec -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"\033[0m"
+            echo -e "\033[38;5;244m3. Restore: cat \"$(basename "$backup_path")\" | docker exec -i -e PGPASSWORD=\"$POSTGRES_PASSWORD\" ${APP_NAME}-db psql -U $POSTGRES_USER -d $POSTGRES_DB\033[0m"
+            echo -e "\033[38;5;244m4. Start: sudo $APP_NAME up\033[0m"
         fi
     fi
     echo

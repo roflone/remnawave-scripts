@@ -1,14 +1,8 @@
 # Remnawave Скрипты
 
-[![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow```bash
-# Установка Remnawave Panel
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
-
-# Установка только скрипта управления  
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install-script --name remnawave
-```./LICENSE)
+[![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/Язык-Bash-blue.svg)](#)
-[![Версия](https://img.shields.io/badge/версия-3.4.0-blue.svg)](#)
+[![Версия](https://img.shields.io/badge/версия-3.5.5-blue.svg)](#)
 [![Remnawave Panel](https://img.shields.io/badge/Инсталлятор-Remnawave-brightgreen)](#-установщик-remnawave-panel)
 [![RemnaNode](https://img.shields.io/badge/Инсталлятор-RemnaNode-lightgrey)](#-установщик-remnanode)
 [![Backup & Restore](https://img.shields.io/badge/Инструмент-Бэкап%20и%20Восстановление-orange)](#-система-резервного-копирования-и-восстановления)
@@ -175,6 +169,7 @@ remnawave schedule
 # - Настройки сжатия
 # - Политики хранения (дни, минимальные бэкапы)
 # - Конфигурация доставки через Telegram
+# - Автоматическая проверка версии backup скрипта
 ```
 
 #### Миграция и восстановление
@@ -188,6 +183,38 @@ remnawave restore --database-only --file database.sql.gz
 # Восстановление с безопасным бэкапом
 remnawave restore --file backup.tar.gz  # Автоматически создается безопасный бэкап
 ```
+
+**🔍 Совместимость версий:**
+* Версия панели включена во все метаданные бэкапов и уведомления
+* Строгая проверка версий: Major/minor версии должны совпадать для восстановления
+* Различия в patch версиях показывают предупреждения, но разрешают восстановление
+* Версия скрипта управляется отдельно от версии панели
+
+**� Рекомендуемый способ восстановления:**
+```bash
+# Перенесите файл бэкапа на целевой сервер, затем:
+sudo remnawave restore --file backup.tar.gz
+
+# Для бэкапов только базы данных:
+sudo remnawave restore --database-only --file database.sql.gz
+```
+
+**�🛠 Ручное восстановление (если автоматическое не работает):**
+```bash
+# Вариант A: Новая установка (рекомендуется)
+curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh
+sudo bash remnawave.sh @ install --name remnawave
+sudo remnawave down
+tar -xzf backup.tar.gz
+cat backup_folder/database.sql | docker exec -i -e PGPASSWORD="реальный_пароль" remnawave-db psql -U postgres -d postgres
+
+# Вариант B: Существующая установка
+sudo remnawave down
+cat database.sql | docker exec -i -e PGPASSWORD="реальный_пароль" remnawave-db psql -U postgres -d postgres
+sudo remnawave up
+```
+
+⚠️ **Примечание:** Встроенная функция `restore` включает автоматическую проверку версий, создание безопасных бэкапов и обработку ошибок.
 
 ---
 
