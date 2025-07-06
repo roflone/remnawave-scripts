@@ -145,7 +145,7 @@ sudo remnawave.sh install --name panel-prod --path /home/user
 #### Система резервного копирования
 | Команда | Описание | Использование |
 |---------|----------|---------------|
-| `backup` | Создать ручной бэкап | `remnawave backup [--compress] [--data-only]` |
+| `backup` | Создать ручной бэкап | `remnawave backup [--no-compress] [--data-only]` |
 | `restore` | Восстановить из бэкапа | `remnawave restore [--file FILE] [--database-only]` |
 | `schedule` | Управлять запланированными бэкапами | `remnawave schedule` |
 
@@ -155,14 +155,14 @@ sudo remnawave.sh install --name panel-prod --path /home/user
 
 #### Ручные бэкапы
 ```bash
-# Полный системный бэкап со сжатием
-remnawave backup --compress
+# Полный системный бэкап (сжатый по умолчанию)
+remnawave backup
 
 # Бэкап только базы данных
 remnawave backup --data-only
 
-# Быстрый бэкап базы данных
-remnawave backup --data-only --compress
+# Несжатый бэкап (не рекомендуется)
+remnawave backup --no-compress
 ```
 
 #### Запланированные бэкапы

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.4.2
+# VERSION=3.5.1
 
 set -e
-SCRIPT_VERSION="3.4.2"
+SCRIPT_VERSION="3.5.1"
+BACKUP_SCRIPT_VERSION="1.0.0"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             fi  
             shift # past argument  
         ;;  
+        --compress|-c|--data-only|--include-configs|-h|--help)
+            # Аргументы команды backup - не обрабатываем здесь, пропускаем
+            break
+        ;;
         *)  
             break
         ;;  
@@ -75,9 +80,138 @@ BACKUP_CONFIG_FILE="$APP_DIR/backup-config.json"
 BACKUP_SCRIPT_FILE="$APP_DIR/backup-scheduler.sh"
 BACKUP_LOG_FILE="$APP_DIR/logs/backup.log"
 
+# ===== BACKUP SCRIPT VERSION CHECK FUNCTIONS =====
 
+# ===== PANEL VERSION FUNCTIONS =====
 
+get_panel_version() {
+    local container_name="${APP_NAME}"
+    
+    # Проверяем что контейнер запущен
+    if ! docker exec "$container_name" echo "test" >/dev/null 2>&1; then
+        echo "unknown"
+        return 1
+    fi
+    
+    # Пробуем получить версию из package.json
+    local version=$(docker exec "$container_name" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null)
+    
+    if [ -z "$version" ]; then
+        # Альтернативный способ
+        version=$(docker exec "$container_name" sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json 2>/dev/null | head -1)
+    fi
+    
+    if [ -z "$version" ]; then
+        echo "unknown"
+        return 1
+    fi
+    
+    echo "$version"
+    return 0
+}
 
+validate_panel_version_compatibility() {
+    local backup_version="$1"
+    local current_version="$2"
+    
+    # Если одна из версий неизвестна - предупреждение
+    if [ "$backup_version" = "unknown" ] || [ "$current_version" = "unknown" ]; then
+        return 2  # Warning - unknown version
+    fi
+    
+    # Если версии совпадают - OK
+    if [ "$backup_version" = "$current_version" ]; then
+        return 0  # Compatible
+    fi
+    
+    # Проверяем major.minor версии (игнорируем patch)
+    local backup_major_minor=$(echo "$backup_version" | cut -d'.' -f1,2)
+    local current_major_minor=$(echo "$current_version" | cut -d'.' -f1,2)
+    
+    if [ "$backup_major_minor" = "$current_major_minor" ]; then
+        return 1  # Minor incompatibility (different patch versions)
+    fi
+    
+    return 3  # Major incompatibility
+}
+
+# ===== END PANEL VERSION FUNCTIONS =====
+
+check_backup_script_version() {
+    local current_version="$BACKUP_SCRIPT_VERSION"
+    
+    if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
+        return 1  # Script doesn't exist
+    fi
+    
+    # Извлекаем версию из существующего скрипта
+    local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+    
+    if [ -z "$script_version" ]; then
+        return 2  # Old script without version
+    fi
+    
+    if [ "$script_version" != "$current_version" ]; then
+        return 3  # Version mismatch
+    fi
+    
+    return 0  # Version is current
+}
+
+prompt_backup_script_update() {
+    local status=$1
+    
+    echo -e "\033[1;33m⚠️  Backup Script Update Required\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo
+    
+    case $status in
+        1)
+            echo -e "\033[38;5;250m📄 Backup script not found\033[0m"
+            echo -e "\033[38;5;244m   A new backup script will be created\033[0m"
+            ;;
+        2) 
+            echo -e "\033[38;5;250m📜 Old backup script detected (no version info)\033[0m"
+            echo -e "\033[38;5;244m   Script needs to be updated for compatibility\033[0m"
+            ;;
+        3)
+            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+            echo -e "\033[38;5;250m🔄 Version mismatch detected\033[0m"
+            echo -e "\033[38;5;244m   Current: ${script_version:-'unknown'} → Latest: $BACKUP_SCRIPT_VERSION\033[0m"
+            ;;
+    esac
+    
+    echo
+    echo -e "\033[1;37m🔧 Improvements in latest version:\033[0m"
+    echo -e "\033[38;5;250m   ✓ Unified backup structure (manual + scheduled)\033[0m"
+    echo -e "\033[38;5;250m   ✓ Improved file compression and handling\033[0m"
+    echo -e "\033[38;5;250m   ✓ Better error handling and logging\033[0m"
+    echo -e "\033[38;5;250m   ✓ Enhanced restore compatibility\033[0m"
+    echo
+    
+    if [ "$status" -eq 1 ]; then
+        echo -e "\033[1;32m✅ Creating backup script automatically...\033[0m"
+        return 0
+    fi
+    
+    echo -e "\033[1;37mUpdate backup script now?\033[0m"
+    echo -e "\033[38;5;244m(Recommended - old backups will continue to work)\033[0m"
+    echo
+    read -p "Update backup script? [Y/n]: " -r update_choice
+    
+    case "$update_choice" in
+        [nN]|[nN][oO])
+            echo -e "\033[1;33m⚠️  Using old backup script (may cause compatibility issues)\033[0m"
+            return 1
+            ;;
+        *)
+            echo -e "\033[1;32m✅ Updating backup script...\033[0m"
+            return 0
+            ;;
+    esac
+}
+
+# ===== END BACKUP SCRIPT VERSION CHECK FUNCTIONS =====
 
 
 colorized_echo() {
@@ -435,13 +569,14 @@ schedule_menu() {
         echo -e "   \033[38;5;15m6)\033[0m 📋 View backup logs"
         echo -e "   \033[38;5;15m7)\033[0m 🧹 Cleanup old backups"
         echo -e "   \033[38;5;15m8)\033[0m ▶️  Run full backup now"
-        echo -e "   \033[38;5;15m9)\033[0m 🗑️  Clear logs"
+        echo -e "   \033[38;5;15m9)\033[0m � Update backup script"
+        echo -e "   \033[38;5;15ma)\033[0m ���️  Clear logs"
         echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back to main menu"
         echo
         echo -e "\033[38;5;8m💡 All scheduled backups include database + configurations\033[0m"
         echo
         
-        read -p "Select option [0-9]: " choice
+        read -p "Select option [0-9,a]: " choice
         
         case "$choice" in
             1) schedule_setup_menu ;;
@@ -452,7 +587,8 @@ schedule_menu() {
             6) schedule_show_logs ;;
             7) schedule_cleanup ;;
             8) schedule_run_backup ;;
-            9) schedule_clear_logs ;;
+            9) schedule_update_script ;;
+            a|A) schedule_clear_logs ;;
             0) 
                 clear
                 return 0  
@@ -482,6 +618,67 @@ schedule_clear_logs() {
     fi
     
     sleep 2
+}
+
+schedule_update_script() {
+    clear
+    echo -e "\033[1;37m🔄 Update Backup Script\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
+    echo
+    
+    # Проверяем текущую версию
+    check_backup_script_version
+    local version_status=$?
+    
+    case $version_status in
+        0)
+            echo -e "\033[1;32m✅ Current backup script is already up-to-date (v$BACKUP_SCRIPT_VERSION)\033[0m"
+            echo -e "\033[38;5;244m   No update required\033[0m"
+            ;;
+        1)
+            echo -e "\033[1;33m⚠️  Backup script not found\033[0m"
+            echo -e "\033[38;5;244m   Creating new backup script...\033[0m"
+            schedule_create_backup_script
+            echo -e "\033[1;32m✅ Backup script created successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
+            ;;
+        2)
+            echo -e "\033[1;33m📜 Legacy backup script detected (no version info)\033[0m"
+            echo -e "\033[38;5;244m   Updating to latest version with improvements...\033[0m"
+            echo
+            schedule_create_backup_script
+            echo -e "\033[1;32m✅ Backup script updated successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
+            ;;
+        3)
+            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+            echo -e "\033[1;33m🔄 Outdated backup script detected\033[0m"
+            echo -e "\033[38;5;244m   Current: ${script_version:-'unknown'} → Latest: $BACKUP_SCRIPT_VERSION\033[0m"
+            echo
+            schedule_create_backup_script
+            echo -e "\033[1;32m✅ Backup script updated successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
+            ;;
+    esac
+    
+    if [ $version_status -ne 0 ]; then
+        echo
+        echo -e "\033[1;37m🚀 New features in v$BACKUP_SCRIPT_VERSION:\033[0m"
+        echo -e "\033[38;5;250m   ✓ Unified backup structure (compatible with manual backups)\033[0m"
+        echo -e "\033[38;5;250m   ✓ Improved compression and file handling\033[0m"
+        echo -e "\033[38;5;250m   ✓ Better error handling and logging\033[0m"
+        echo -e "\033[38;5;250m   ✓ Enhanced restore compatibility\033[0m"
+        echo -e "\033[38;5;250m   ✓ Automatic version checking\033[0m"
+        
+        # Если scheduler включен, предлагаем перезапустить
+        local status=$(schedule_get_status)
+        if [ "$status" = "enabled" ]; then
+            echo
+            echo -e "\033[1;37m📋 Scheduler Status: ENABLED\033[0m"
+            echo -e "\033[38;5;250m   Updated script will be used for next scheduled backup\033[0m"
+            echo -e "\033[38;5;244m   No restart required - changes take effect immediately\033[0m"
+        fi
+    fi
+    
+    echo
+    read -p "Press Enter to continue..."
 }
 
 
@@ -867,7 +1064,19 @@ schedule_enable() {
         return
     fi
 
-    schedule_create_backup_script
+    # Проверяем версию backup скрипта перед включением
+    check_backup_script_version
+    local version_status=$?
+    
+    if [ $version_status -ne 0 ]; then
+        echo
+        echo -e "\033[1;33m⚠️  Updating backup script before enabling scheduler...\033[0m"
+        schedule_create_backup_script
+        echo -e "\033[1;32m✅ Backup script updated\033[0m"
+        echo
+    else
+        schedule_create_backup_script
+    fi
 
     local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
     
@@ -951,25 +1160,71 @@ check_version_compatibility() {
     fi
     
     local backup_script_version=$(jq -r '.script_version // "unknown"' "$backup_metadata" 2>/dev/null)
+    local backup_panel_version=$(jq -r '.panel_version // "unknown"' "$backup_metadata" 2>/dev/null)
     local backup_date=$(jq -r '.date_created // "unknown"' "$backup_metadata" 2>/dev/null)
     
-    log_restore_operation "Version Check" "INFO" "Backup version: $backup_script_version, Current: $current_script_version, Date: $backup_date"
+    # Получаем текущую версию панели
+    local current_panel_version=$(get_panel_version)
     
-    # Простая проверка - предупреждаем если версии сильно отличаются
+    log_restore_operation "Version Check" "INFO" "Backup script: $backup_script_version, Current: $current_script_version, Backup panel: $backup_panel_version, Current panel: $current_panel_version, Date: $backup_date"
+    
+    # Проверка совместимости версии панели (критически важно!)
+    if [ "$backup_panel_version" != "unknown" ] && [ "$current_panel_version" != "unknown" ]; then
+        validate_panel_version_compatibility "$backup_panel_version" "$current_panel_version"
+        local panel_compat_result=$?
+        
+        case $panel_compat_result in
+            0)
+                echo -e "\033[1;32m✅ Panel version compatibility: Perfect match ($current_panel_version)\033[0m"
+                log_restore_operation "Panel Version Check" "SUCCESS" "Versions match: $current_panel_version"
+                ;;
+            1)
+                echo -e "\033[1;33m⚠️  Panel version compatibility: Minor difference\033[0m"
+                echo -e "\033[38;5;244m   Backup panel: $backup_panel_version\033[0m"
+                echo -e "\033[38;5;244m   Current panel: $current_panel_version\033[0m"
+                echo -e "\033[38;5;244m   Restore should work but verify functionality after\033[0m"
+                log_restore_operation "Panel Version Check" "WARNING" "Minor version difference: $backup_panel_version -> $current_panel_version"
+                ;;
+            3)
+                echo -e "\033[1;31m❌ CRITICAL: Panel version incompatibility detected!\033[0m"
+                echo -e "\033[38;5;244m   Backup panel version: $backup_panel_version\033[0m"
+                echo -e "\033[38;5;244m   Current panel version: $current_panel_version\033[0m"
+                echo -e "\033[1;31m   ⚠️  Restoring this backup may break your panel!\033[0m"
+                echo
+                echo -e "\033[1;37m🔧 Recommended actions:\033[0m"
+                echo -e "\033[38;5;250m   1. Install Remnawave panel v$backup_panel_version first\033[0m"
+                echo -e "\033[38;5;250m   2. Or create new backup from current v$current_panel_version panel\033[0m"
+                echo
+                read -p "Continue anyway? This is DANGEROUS! [y/N]: " -r force_continue
+                if [[ ! $force_continue =~ ^[Yy]$ ]]; then
+                    log_restore_operation "Panel Version Check" "ERROR" "User aborted due to version incompatibility"
+                    echo -e "\033[1;33m⚠️  Restore aborted for safety\033[0m"
+                    return 2
+                fi
+                log_restore_operation "Panel Version Check" "WARNING" "User forced continue despite incompatibility"
+                ;;
+        esac
+    elif [ "$backup_panel_version" = "unknown" ]; then
+        echo -e "\033[1;33m⚠️  Panel version unknown in backup - cannot verify compatibility\033[0m"
+        log_restore_operation "Panel Version Check" "WARNING" "Unknown backup panel version"
+    elif [ "$current_panel_version" = "unknown" ]; then
+        echo -e "\033[1;33m⚠️  Current panel version unknown - cannot verify compatibility\033[0m"
+        log_restore_operation "Panel Version Check" "WARNING" "Unknown current panel version"
+    fi
+    
+    # Проверка версии скрипта (менее критично)
     if [ "$backup_script_version" != "unknown" ] && [ "$backup_script_version" != "$current_script_version" ]; then
-        # Извлекаем основные номера версий для сравнения
         local backup_major=$(echo "$backup_script_version" | cut -d'.' -f1)
         local current_major=$(echo "$current_script_version" | cut -d'.' -f1)
         
         if [ "$backup_major" != "$current_major" ]; then
-            log_restore_operation "Version Check" "WARNING" "Major version mismatch - backup may be incompatible"
-            echo -e "\033[1;33m⚠️  Version compatibility warning:\033[0m"
-            echo -e "\033[38;5;244m   Backup version: $backup_script_version\033[0m"
-            echo -e "\033[38;5;244m   Current version: $current_script_version\033[0m"
-            echo -e "\033[38;5;244m   Backup may be incompatible with current script\033[0m"
+            log_restore_operation "Script Version Check" "WARNING" "Major version mismatch - backup may be incompatible"
+            echo -e "\033[1;33m⚠️  Script version compatibility warning:\033[0m"
+            echo -e "\033[38;5;244m   Backup script: $backup_script_version\033[0m"
+            echo -e "\033[38;5;244m   Current script: $current_script_version\033[0m"
             return 1
         else
-            log_restore_operation "Version Check" "INFO" "Minor version difference detected, should be compatible"
+            log_restore_operation "Script Version Check" "INFO" "Minor script version difference, should be compatible"
         fi
     fi
     
@@ -1488,6 +1743,10 @@ schedule_create_backup_script() {
     cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
 #!/bin/bash
 
+# Backup Script Version - used for compatibility checking
+BACKUP_SCRIPT_VERSION="$BACKUP_SCRIPT_VERSION"
+BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
+
 # Читаем конфигурацию backup
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/backup-config.json"
@@ -1538,7 +1797,7 @@ log_message "Starting scheduled backup..."
 log_message "Creating full system backup: $backup_name"
 
 # Создаем временную директорию для сборки бэкапа
-mkdir -p "$temp_backup_dir/$backup_name"
+mkdir -p "$temp_backup_dir"
 
 # Шаг 1: Экспорт базы данных
 log_message "Step 1: Exporting database..."
@@ -1550,7 +1809,7 @@ if ! docker exec "$db_container" pg_isready -U postgres >/dev/null 2>&1; then
     exit 1
 fi
 
-database_file="$temp_backup_dir/$backup_name/database.sql"
+database_file="$temp_backup_dir/database.sql"
 if docker exec -e PGPASSWORD=postgres "$db_container" \
     pg_dump -U postgres -d postgres --clean --if-exists > "$database_file" 2>/dev/null; then
     
@@ -1563,14 +1822,11 @@ else
     exit 1
 fi
 
-# Шаг 2: Копирование полной структуры приложения
-log_message "Step 2: Creating complete application backup..."
-
-app_backup_dir="$temp_backup_dir/$backup_name"
-mkdir -p "$app_backup_dir"
+# Шаг 2: Копирование конфигурационных файлов прямо в корень
+log_message "Step 2: Creating application configuration backup..."
 
 # Копируем всю структуру кроме некоторых директорий
-log_message "Copying application directory structure..."
+log_message "Copying application configuration files..."
 
 if command -v rsync >/dev/null 2>&1; then
     # rsync доступен, используем его с правильными исключениями
@@ -1582,7 +1838,7 @@ if command -v rsync >/dev/null 2>&1; then
         --exclude='*.tmp' \
         --exclude='.git/' \
         "$APP_DIR/" \
-        "$app_backup_dir/" 2>/dev/null
+        "$temp_backup_dir/" 2>/dev/null
     copy_result=$?
 else
     # Используем улучшенный cp метод без рекурсии
@@ -1599,24 +1855,24 @@ else
         -name "*.ini" -o \
         -name "*.sh" -o \
         -name "docker-compose*" \
-    \) -exec cp {} "$app_backup_dir/" \; 2>/dev/null || true
+    \) -exec cp {} "$temp_backup_dir/" \; 2>/dev/null || true
     
     # Копируем важные директории если они существуют (исключая backups, logs, temp)
     for dir in certs ssl certificates config configs custom scripts; do
         if [ -d "$APP_DIR/$dir" ]; then
-            cp -r "$APP_DIR/$dir" "$app_backup_dir/" 2>/dev/null || true
+            cp -r "$APP_DIR/$dir" "$temp_backup_dir/" 2>/dev/null || true
         fi
     done
     
     # Проверяем что хотя бы docker-compose.yml скопирован
-    if [ ! -f "$app_backup_dir/docker-compose.yml" ]; then
+    if [ ! -f "$temp_backup_dir/docker-compose.yml" ]; then
         copy_result=1
         log_message "ERROR: Critical file docker-compose.yml not found or failed to copy"
     fi
 fi
 
 if [ $copy_result -eq 0 ]; then
-    app_files_count=$(find "$app_backup_dir" -type f | wc -l)
+    app_files_count=$(find "$temp_backup_dir" -type f | wc -l)
     log_message "Application files copied successfully ($app_files_count files)"
 else
     log_message "ERROR: Failed to copy application files"
@@ -1624,19 +1880,12 @@ else
     exit 1
 fi
 
-if [ -f "$database_file" ] && [ "$database_file" != "$app_backup_dir/database.sql" ]; then
-    mv "$database_file" "$app_backup_dir/database.sql"
-    log_message "Database file moved to backup root"
-elif [ -f "$app_backup_dir/database.sql" ]; then
-    log_message "Database file already in backup root"
-fi
-
 # Шаг 3: Добавляем скрипт управления
 log_message "Step 3: Including management script..."
 
 script_source="/usr/local/bin/$APP_NAME"
 if [ -f "$script_source" ]; then
-    cp "$script_source" "$temp_backup_dir/$backup_name/install-script.sh"
+    cp "$script_source" "$temp_backup_dir/install-script.sh"
     log_message "Management script included"
 else
     log_message "WARNING: Management script not found at $script_source"
@@ -1645,7 +1894,11 @@ fi
 # Шаг 4: Создаем метаданные
 log_message "Step 4: Creating backup metadata..."
 
-metadata_file="$temp_backup_dir/$backup_name/backup-metadata.json"
+metadata_file="$temp_backup_dir/backup-metadata.json"
+
+# Получаем версию панели
+panel_version=$(docker exec "${APP_NAME}" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null || echo "unknown")
+
 cat > "$metadata_file" <<METADATA_EOF
 {
     "backup_type": "full_system",
@@ -1653,9 +1906,10 @@ cat > "$metadata_file" <<METADATA_EOF
     "timestamp": "$timestamp",
     "date_created": "$(date -Iseconds)",
     "script_version": "$(grep '^SCRIPT_VERSION=' "$script_source" | cut -d'=' -f2 | tr -d '"' || echo 'unknown')",
+    "panel_version": "$panel_version",
     "database_included": true,
     "application_files_included": true,
-    "management_script_included": $([ -f "$temp_backup_dir/$backup_name/install-script.sh" ] && echo "true" || echo "false"),
+    "management_script_included": $([ -f "$temp_backup_dir/install-script.sh" ] && echo "true" || echo "false"),
     "docker_images": {
 $(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep -E "(remnawave|postgres|valkey)" | head -10 || echo '')
     },
@@ -1663,7 +1917,7 @@ $(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep 
         "hostname": "$(hostname)",
         "os": "$(lsb_release -d 2>/dev/null | cut -f2 || uname -s)",
         "docker_version": "$(docker --version | cut -d' ' -f3 | tr -d ',')",
-        "backup_size_uncompressed": "$(du -sh "$temp_backup_dir/$backup_name" | cut -f1)"
+        "backup_size_uncompressed": "$(du -sh "$temp_backup_dir" | cut -f1)"
     }
 }
 METADATA_EOF
@@ -1674,8 +1928,8 @@ log_message "Backup metadata created"
 if [ "$COMPRESS_ENABLED" = "true" ]; then
     log_message "Step 5: Compressing backup..."
     
-    cd "$temp_backup_dir"
-    if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" "$backup_name" 2>/dev/null; then
+    cd "$(dirname "$temp_backup_dir")"
+    if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" -C "$TEMP_BACKUP_ROOT" "temp_$timestamp" 2>/dev/null; then
         compressed_size=$(du -sh "$BACKUP_DIR/${backup_name}.tar.gz" | cut -f1)
         log_message "Backup compressed successfully ($compressed_size)"
         
@@ -1689,9 +1943,8 @@ if [ "$COMPRESS_ENABLED" = "true" ]; then
         exit 1
     fi
 else
-    # Перемещаем несжатую директорию в финальное местоположение
-    mv "$temp_backup_dir/$backup_name" "$BACKUP_DIR/"
-    rm -rf "$temp_backup_dir"
+    # Перемещаем несжатую директорию в финальное местоположение  
+    mv "$temp_backup_dir" "$BACKUP_DIR/$backup_name"
     
     final_backup_file="$BACKUP_DIR/$backup_name"
     backup_size=$(du -sh "$final_backup_file" | cut -f1)
@@ -1714,7 +1967,8 @@ if [ "$TELEGRAM_ENABLED" = "true" ];
 📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')
 🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)
 🏷️ *Type:* Full System Backup
-🖥️ *Server:* $(hostname)
+� *Panel:* v$panel_version
+�🖥️ *Server:* $(hostname)
 ✅ *Status:* Success"
           # Если файл меньше 50MB, отправляем его
         file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
@@ -3432,6 +3686,19 @@ schedule_test_backup() {
     
     echo -e "\033[38;5;250mCreating test backup...\033[0m"
     
+    # Проверяем версию backup скрипта
+    check_backup_script_version
+    local version_status=$?
+    
+    if [ $version_status -ne 0 ]; then
+        echo
+        if prompt_backup_script_update $version_status; then
+            schedule_create_backup_script
+            echo -e "\033[1;32m✅ Backup script updated successfully\033[0m"
+            echo
+        fi
+    fi
+    
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
     fi
@@ -3552,6 +3819,31 @@ schedule_status() {
         echo -e "\033[1;31m❌ Status: DISABLED\033[0m"
     fi
     
+    # Проверяем версию backup скрипта
+    echo
+    echo -e "\033[1;37m🔧 Backup Script Status:\033[0m"
+    
+    check_backup_script_version
+    local version_status=$?
+    
+    case $version_status in
+        0)
+            echo -e "\033[1;32m✅ Script version: Current ($BACKUP_SCRIPT_VERSION)\033[0m"
+            ;;
+        1)
+            echo -e "\033[1;33m⚠️  Script status: Not found\033[0m"
+            echo -e "\033[38;5;244m   Will be created automatically when needed\033[0m"
+            ;;
+        2)
+            echo -e "\033[1;31m❌ Script version: Legacy (no version info)\033[0m"
+            echo -e "\033[38;5;244m   Update recommended for latest features\033[0m"
+            ;;
+        3)
+            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+            echo -e "\033[1;33m⚠️  Script version: Outdated (${script_version:-'unknown'})\033[0m"
+            echo -e "\033[38;5;244m   Current version: $BACKUP_SCRIPT_VERSION - update recommended\033[0m"
+            ;;
+    esac
 
     echo
     echo -e "\033[1;37m📦 Recent Backups:\033[0m"
@@ -3717,8 +4009,20 @@ schedule_run_backup() {
     echo
     echo -e "\033[38;5;250m🏃‍♂️ Running backup now...\033[0m"
     echo
-    
 
+    # Проверяем версию backup скрипта
+    check_backup_script_version
+    local version_status=$?
+    
+    if [ $version_status -ne 0 ]; then
+        echo
+        if prompt_backup_script_update $version_status; then
+            schedule_create_backup_script
+            echo -e "\033[1;32m✅ Backup script updated successfully\033[0m"
+            echo
+        fi
+    fi
+    
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         schedule_create_backup_script
     fi
@@ -5115,30 +5419,43 @@ backup_command() {
         exit 1
     fi
 
-    local compress=false
-    local include_configs=false
+    local compress=true         # По умолчанию сжимаем бэкап
+    local include_configs=true  # По умолчанию полный бэкап
+    local data_only=false       # Новый флаг для только БД
     
     # Парсинг аргументов
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
-            --compress|-c) compress=true ;;
-            --include-configs) include_configs=true ;;
+            --no-compress) 
+                compress=false 
+                ;;
+            --data-only) 
+                include_configs=false 
+                data_only=true 
+                ;;
+            --include-configs) 
+                include_configs=true 
+                data_only=false
+                ;;
             -h|--help) 
-                echo -e "\033[1;37m💾 Remnawave Database Backup\033[0m"
+                echo -e "\033[1;37m💾 Remnawave Backup System\033[0m"
                 echo
                 echo -e "\033[1;37mUsage:\033[0m"
                 echo -e "  \033[38;5;15m$APP_NAME backup\033[0m [\033[38;5;244moptions\033[0m]"
                 echo
                 echo -e "\033[1;37mOptions:\033[0m"
-                echo -e "  \033[38;5;244m--compress, -c\033[0m      Compress backup file with gzip"
-                echo -e "  \033[38;5;244m--include-configs\033[0m   Include configuration files"
+                echo -e "  \033[38;5;244m--no-compress\033[0m       Create uncompressed backup (default: compressed)"
+                echo -e "  \033[38;5;244m--data-only\033[0m         Backup database only (no configs)"
+                echo -e "  \033[38;5;244m--include-configs\033[0m   Force include configuration files (default)"
                 echo -e "  \033[38;5;244m--help, -h\033[0m          Show this help"
                 echo
-                echo -e "\033[1;37mExample:\033[0m"
-                echo -e "  \033[38;5;15m$APP_NAME backup --compress --include-configs\033[0m"
+                echo -e "\033[1;37mExamples:\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup\033[0m                           \033[38;5;8m# Full backup (default)\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup --compress\033[0m                \033[38;5;8m# Compressed full backup\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup --data-only\033[0m               \033[38;5;8m# Database only\033[0m"
+                echo -e "  \033[38;5;15m$APP_NAME backup --data-only --compress\033[0m    \033[38;5;8m# Compressed database only\033[0m"
                 echo
-                echo -e "\033[38;5;8mBackup includes full database (schema + data)\033[0m"
-                echo -e "\033[38;5;8mWith --include-configs: also includes all config files\033[0m"
+                echo -e "\033[38;5;8mDefault: Full backup includes database + configuration files\033[0m"
                 exit 0
                 ;;
             *) 
@@ -5215,16 +5532,15 @@ backup_command() {
         
         # Универсальное копирование конфигурационных файлов
         echo -e "\033[38;5;250m📝 Step 2:\033[0m Including configuration files..."
-        mkdir -p "$backup_dir/configs"
         
         local config_count=0
         
-        # Копируем основные конфигурационные файлы
+        # Копируем основные конфигурационные файлы прямо в корень бэкапа
         echo -e "\033[38;5;244m   Copying main configuration files...\033[0m"
         for config_file in "$ENV_FILE" "$SUB_ENV_FILE" "$COMPOSE_FILE"; do
             if [ -f "$config_file" ]; then
                 local filename=$(basename "$config_file")
-                cp "$config_file" "$backup_dir/configs/"
+                cp "$config_file" "$backup_dir/"
                 config_count=$((config_count + 1))
                 echo -e "\033[38;5;244m   ✓ $filename\033[0m"
             fi
@@ -5240,7 +5556,7 @@ backup_command() {
                     local filename=$(basename "$config_file")
                     # Исключаем файлы, которые могут быть временными или логами
                     if [[ ! "$filename" =~ ^(temp|tmp|cache|log|debug) ]]; then
-                        cp "$config_file" "$backup_dir/configs/"
+                        cp "$config_file" "$backup_dir/"
                         config_count=$((config_count + 1))
                         echo -e "\033[38;5;244m   ✓ $filename\033[0m"
                     fi
@@ -5255,7 +5571,7 @@ backup_command() {
         for dir_name in "${config_dirs[@]}"; do
             local config_dir="$APP_DIR/$dir_name"
             if [ -d "$config_dir" ] && [ "$(ls -A "$config_dir" 2>/dev/null)" ]; then
-                cp -r "$config_dir" "$backup_dir/configs/"
+                cp -r "$config_dir" "$backup_dir/"
                 local dir_files=$(find "$config_dir" -type f | wc -l)
                 config_count=$((config_count + dir_files))
                 echo -e "\033[38;5;244m   ✓ $dir_name/ ($dir_files files)\033[0m"
@@ -5264,12 +5580,17 @@ backup_command() {
         
         # Создаем метаданные
         echo -e "\033[38;5;250m📝 Step 3:\033[0m Creating backup metadata..."
+        
+        # Получаем версию панели
+        local panel_version=$(get_panel_version)
+        
         cat > "$backup_dir/metadata.json" << EOF
 {
     "backup_type": "full",
     "timestamp": "$timestamp",
     "app_name": "$APP_NAME",
     "script_version": "$SCRIPT_VERSION",
+    "panel_version": "$panel_version",
     "database_included": true,
     "configs_included": true,
     "config_files_count": $config_count,
@@ -5286,6 +5607,7 @@ Remnawave Panel Backup Information
 Backup Date: $(date)
 Backup Type: Full System Backup
 Script Version: $SCRIPT_VERSION
+Panel Version: $panel_version
 Hostname: $(hostname)
 
 Included Components:
@@ -5297,12 +5619,14 @@ Included Components:
 ✓ SSL Certificates (if present)
 
 Restoration:
-1. Install Remnawave Panel on target system
+1. Install Remnawave Panel v$panel_version on target system
 2. Stop services: sudo $APP_NAME down
 3. Extract this backup
 4. Restore database: cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres
 5. Copy configs to appropriate locations
 6. Start services: sudo $APP_NAME up
+
+⚠️  IMPORTANT: Target system must have compatible Remnawave Panel version ($panel_version)
 
 Generated by Remnawave Management CLI v$SCRIPT_VERSION
 EOF
@@ -5312,8 +5636,8 @@ EOF
         # Компрессия если требуется
         if [ "$compress" = true ]; then
             echo -e "\033[38;5;250m📝 Step 4:\033[0m Compressing backup..."
-            cd "$BACKUP_DIR"
-            if tar -czf "${backup_name}.tar.gz" -C . "$(basename "$backup_dir")" 2>/dev/null; then
+            cd "$BACKUP_DIR" || exit 1
+            if tar -czf "${backup_name}.tar.gz" "$backup_name" 2>/dev/null; then
                 local compressed_size=$(du -sh "${backup_name}.tar.gz" | cut -f1)
                 echo -e "\033[1;32m✅ Backup compressed successfully ($compressed_size)\033[0m"
                 backup_path="$BACKUP_DIR/${backup_name}.tar.gz"
@@ -5329,22 +5653,12 @@ EOF
         fi
         
     else
-        # Простой бэкап только базы данных
-        if [ "$compress" = true ]; then
-            backup_name="remnawave_db_${timestamp}.sql.gz"
-            backup_path="$BACKUP_DIR/$backup_name"
-        else
-            backup_name="remnawave_db_${timestamp}.sql"
-            backup_path="$BACKUP_DIR/$backup_name"
-        fi
-        
+        # Простой бэкап только базы данных  
         echo -e "\033[1;37m💾 Creating database backup...\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
         echo -e "\033[38;5;250mDatabase: $POSTGRES_DB\033[0m"
         echo -e "\033[38;5;250mContainer: $db_container\033[0m"
-        echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
-        echo
-
+        
         # Создаем бэкап
         if [ "$compress" = true ]; then
             # Проверяем наличие gzip
@@ -5352,6 +5666,8 @@ EOF
                 colorized_echo yellow "Warning: gzip not found, creating uncompressed backup instead"
                 backup_name="remnawave_db_${timestamp}.sql"
                 backup_path="$BACKUP_DIR/$backup_name"
+                echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
+                echo
                 if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
                     pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null; then
                     local backup_size=$(du -sh "$backup_path" | cut -f1)
@@ -5362,6 +5678,10 @@ EOF
                     exit 1
                 fi
             else
+                backup_name="remnawave_db_${timestamp}.sql.gz"
+                backup_path="$BACKUP_DIR/$backup_name"
+                echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
+                echo
                 if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
                     pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose 2>/dev/null | \
                     gzip > "$backup_path"; then
@@ -5374,7 +5694,11 @@ EOF
                 fi
             fi
         else
-            if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \
+            backup_name="remnawave_db_${timestamp}.sql"
+            backup_path="$BACKUP_DIR/$backup_name"
+            echo -e "\033[38;5;250mBackup file: $backup_name\033[0m"
+            echo
+            if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$db_container" \ 
                 pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F p --verbose > "$backup_path" 2>/dev/null; then
                 local backup_size=$(du -sh "$backup_path" | cut -f1)
                 echo -e "\033[1;32m✅ Database backup created successfully ($backup_size)!\033[0m"
@@ -5398,6 +5722,10 @@ EOF
         local dir_size=$(du -sh "$backup_path" | cut -f1)
         printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Size:" "$dir_size"
     fi
+    
+    # Показываем версию панели
+    local current_panel_version=$(get_panel_version)
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Panel:" "v$current_panel_version"
     
     if [ "$include_configs" = true ]; then
         if [ "$compress" = true ]; then
@@ -5423,10 +5751,10 @@ EOF
     if [ "$include_configs" = true ]; then
         if [ "$compress" = true ]; then
             echo -e "\033[38;5;244m1. tar -xzf \"$backup_path\"\033[0m"
-            echo -e "\033[38;5;244m2. Copy configs to appropriate locations\033[0m"
+            echo -e "\033[38;5;244m2. Copy .env, docker-compose.yml and other configs to app directory\033[0m"
             echo -e "\033[38;5;244m3. cat database.sql | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
         else
-            echo -e "\033[38;5;244m1. Copy configs from backup directory\033[0m"
+            echo -e "\033[38;5;244m1. Copy .env, docker-compose.yml and other configs from backup directory\033[0m"
             echo -e "\033[38;5;244m2. cat \"$backup_path/database.sql\" | docker exec -i DB_CONTAINER psql -U postgres -d postgres\033[0m"
         fi
     else
@@ -7045,7 +7373,7 @@ case "$COMMAND" in
     edit-env-sub) edit_env_sub_command ;;
     console) console_command ;;
     pm2-monitor) pm2_monitor ;;
-    backup) backup_command ;;
+    backup) backup_command "$@" ;;
     restore) restore_command "$@" ;; 
     menu) main_menu ;;  
     help) smart_usage "help" "$1" ;;

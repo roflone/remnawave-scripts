@@ -139,7 +139,7 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave
 #### Backup System
 | Command | Description | Usage |
 |---------|-------------|-------|
-| `backup` | Create manual backup | `remnawave backup [--compress] [--data-only]` |
+| `backup` | Create manual backup | `remnawave backup [--no-compress] [--data-only]` |
 | `restore` | Restore from backup | `remnawave restore [--file FILE] [--database-only]` |
 | `schedule` | Manage scheduled backups | `remnawave schedule` |
 
@@ -149,14 +149,14 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave
 
 #### Manual Backups
 ```bash
-# Full system backup with compression
-remnawave backup --compress
+# Full system backup (compressed by default)
+remnawave backup
 
 # Database only backup  
 remnawave backup --data-only
 
-# Quick database backup
-remnawave backup --data-only --compress
+# Uncompressed backup (not recommended)
+remnawave backup --no-compress
 ```
 
 #### Scheduled Backups
@@ -169,6 +169,7 @@ remnawave schedule
 # - Compression settings
 # - Retention policies (days, minimum backups)
 # - Telegram delivery configuration
+# - Automatic backup script version checking
 ```
 
 #### Migration & Restore
@@ -181,6 +182,8 @@ remnawave restore --database-only --file database.sql.gz
 
 # Restore with safety backup
 remnawave restore --file backup.tar.gz  # Automatic safety backup created
+
+# Note: Automatic panel version compatibility checking during restore
 ```
 
 ---
