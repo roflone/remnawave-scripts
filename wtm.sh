@@ -6,6 +6,9 @@
 set -e
 SCRIPT_VERSION="1.1.6"
 
+# Script URL for updates
+SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/wtm.sh"
+
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -150,14 +153,80 @@ step() {
     echo -e "\033[1;37m🔧 $1\033[0m"
 }
 
+check_root() {
+    if [ "$(id -u)" != "0" ]; then
+        error "This script must be run as root"
+        echo "Please run: sudo $0"
+        exit 1
+    fi
+}
+
 error_exit() {
     error "$1"
     exit 1
 }
 
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        error_exit "This script must be run as root"
+# ===== VERSION AND UPDATE FUNCTIONS =====
+
+show_version() {
+    echo -e "\033[1;37m🌐 WARP & Tor Manager\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+    echo -e "\033[38;5;250mVersion: \033[38;5;15m$SCRIPT_VERSION\033[0m"
+    echo -e "\033[38;5;250mAuthor:  \033[38;5;15mDigneZzZ\033[0m"
+    echo -e "\033[38;5;250mGitHub:  \033[38;5;15mhttps://github.com/DigneZzZ/remnawave-scripts\033[0m"
+    echo -e "\033[38;5;250mProject: \033[38;5;15mhttps://gig.ovh\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+}
+
+check_for_updates() {
+    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    if [ -z "$remote_script_version" ]; then
+        warn "Unable to check for updates (no internet connection)"
+        return 1
+    fi
+    
+    if [ "$remote_script_version" != "$SCRIPT_VERSION" ]; then
+        echo -e "\033[1;33m🆙 New version available: $remote_script_version (current: $SCRIPT_VERSION)\033[0m"
+        echo -e "   Update with: \033[1;37mwtm self-update\033[0m"
+        return 0
+    else
+        ok "You are using the latest version ($SCRIPT_VERSION)"
+        return 1
+    fi
+}
+
+update_wtm_script() {
+    info "Updating WARP & Tor Manager script..."
+    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/wtm
+    ok "WARP & Tor Manager script updated successfully"
+}
+
+self_update() {
+    if [ "$(id -u)" != "0" ]; then
+        error "This operation requires root privileges"
+        echo "Please run: sudo wtm self-update"
+        exit 1
+    fi
+    
+    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    if [ -z "$remote_script_version" ]; then
+        error_exit "Unable to download update (no internet connection)"
+    fi
+    
+    if [ "$remote_script_version" = "$SCRIPT_VERSION" ]; then
+        ok "You are already using the latest version ($SCRIPT_VERSION)"
+        return 0
+    fi
+    
+    info "Updating from version $SCRIPT_VERSION to $remote_script_version..."
+    
+    if update_wtm_script; then
+        ok "Successfully updated to version $remote_script_version"
+        echo -e "\033[1;36mRestart wtm to use the new version\033[0m"
+    else
+        error_exit "Failed to update script"
     fi
 }
 
@@ -850,13 +919,32 @@ show_usage_examples() {
     
     echo -e "\033[1;32m🗑️ Uninstallation:\033[0m"
     echo -e "\033[38;5;250m   # Remove WARP only\033[0m"
-    echo -e "\033[38;5;244m   sudo wtm uninstall-warp\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm remove-warp\033[0m"
     echo
     echo -e "\033[38;5;250m   # Remove Tor only\033[0m"
-    echo -e "\033[38;5;244m   sudo wtm uninstall-tor\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm remove-tor\033[0m"
     echo
-    echo -e "\033[38;5;250m   # Remove everything\033[0m"
-    echo -e "\033[38;5;244m   sudo wtm uninstall-all\033[0m"
+    
+    echo -e "\033[1;32m🔄 Updates & Version:\033[0m"
+    echo -e "\033[38;5;250m   # Show current version\033[0m"
+    echo -e "\033[38;5;244m   wtm version\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Check for updates\033[0m"
+    echo -e "\033[38;5;244m   wtm check-updates\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Auto-update script\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm self-update\033[0m"
+    echo
+    
+    echo -e "\033[1;32m❓ Help & Information:\033[0m"
+    echo -e "\033[38;5;250m   # Show help\033[0m"
+    echo -e "\033[38;5;244m   wtm help\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Show system information\033[0m"
+    echo -e "\033[38;5;244m   wtm system-info\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Show usage examples\033[0m"
+    echo -e "\033[38;5;244m   wtm usage-examples\033[0m"
     echo
 }
 
@@ -1697,6 +1785,15 @@ main() {
             usage-examples)
                 show_usage_examples
                 ;;
+            version|--version|-v)
+                show_version
+                ;;
+            check-updates)
+                check_for_updates
+                ;;
+            self-update|update)
+                self_update
+                ;;
             help|--help|-h)
                 show_help
                 ;;
@@ -1707,6 +1804,11 @@ main() {
                 ;;
         esac
         return
+    fi
+    
+    # Интерактивный режим - проверяем обновления при первом запуске
+    if check_for_updates 2>/dev/null; then
+        echo
     fi
     
     # Интерактивный режим - основной цикл меню
