@@ -338,7 +338,7 @@ Production-готовый Bash-скрипт для установки и упр�
 
 ```bash
 # Установка RemnaNode
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
 
 # Установка с пользовательским именем
 sudo remnanode.sh install --name node-prod
