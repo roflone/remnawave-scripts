@@ -607,39 +607,50 @@ get_service_memory() {
     if [ "$service" = "wg-quick@warp" ]; then
         # Проверим, активен ли интерфейс warp
         if ip link show warp >/dev/null 2>&1; then
-            # Попробуем найти процессы, связанные с wg или warp
-            local pids=$(pgrep -f "wg\|warp" 2>/dev/null | head -10)
-            if [ -z "$pids" ]; then
-                # Если нет процессов wg, попробуем через systemctl для самого сервиса
-                if systemctl is-active --quiet "$service" 2>/dev/null; then
-                    memory_kb=$(systemctl show "$service" --property=MemoryCurrent --value 2>/dev/null)
-                    if [ -n "$memory_kb" ] && [ "$memory_kb" != "[not set]" ] && [ "$memory_kb" != "0" ] && [ "$memory_kb" -gt 0 ] 2>/dev/null; then
-                        local memory_mb=$((memory_kb / 1024))
-                        echo "${memory_mb}MB"
-                        return
-                    fi
-                fi
-                # WireGuard работает в kernel space, показываем символическое значение
-                echo "~1MB"
-                return
-            else
-                local total_memory=0
-                for pid in $pids; do
-                    local mem=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
-                    if [ -n "$mem" ] && [ "$mem" -gt 0 ] 2>/dev/null; then
-                        total_memory=$((total_memory + mem))
-                    fi
-                done
+            # Метод 1: Размер модуля wireguard из /proc/modules
+            local wg_module_size=$(awk '/^wireguard/ {print $2}' /proc/modules 2>/dev/null)
+            
+            if [ -n "$wg_module_size" ] && [ "$wg_module_size" -gt 0 ] 2>/dev/null; then
+                # Конвертируем байты в KB
+                local wg_memory_kb=$((wg_module_size / 1024))
                 
-                if [ "$total_memory" -gt 0 ]; then
-                    local memory_mb=$((total_memory / 1024))
-                    echo "${memory_mb}MB"
-                    return
-                else
-                    echo "~1MB"
-                    return
+                # Добавляем оценку памяти для активных соединений
+                local active_peers=$(wg show warp peers 2>/dev/null | wc -l 2>/dev/null || echo 0)
+                if [ "$active_peers" -gt 0 ]; then
+                    # Примерно 4KB на peer для состояния соединения
+                    wg_memory_kb=$((wg_memory_kb + active_peers * 4))
                 fi
+                
+                # Форматируем вывод
+                if [ "$wg_memory_kb" -lt 1024 ]; then
+                    echo "${wg_memory_kb}KB"
+                else
+                    local wg_memory_mb=$((wg_memory_kb / 1024))
+                    echo "${wg_memory_mb}MB"
+                fi
+                return
             fi
+            
+            # Метод 2: Подсчет через kernel workers и интерфейс
+            local wg_workers=$(ps aux | grep -c "\[wg-crypt-warp\]\|\[kworker.*wg-crypt-warp\]" 2>/dev/null || echo 0)
+            local base_memory=64  # Базовая память для интерфейса
+            
+            if [ "$wg_workers" -gt 0 ]; then
+                # Каждый worker добавляет примерно 8KB
+                local total_kb=$((base_memory + wg_workers * 8))
+                echo "${total_kb}KB"
+                return
+            fi
+            
+            # Метод 3: Проверка через /sys/class/net
+            if [ -d "/sys/class/net/warp" ]; then
+                # Интерфейс существует, но модуль не найден - минимальная оценка
+                echo "~64KB"
+                return
+            fi
+            
+            echo "~32KB"
+            return
         else
             echo "N/A"
             return
@@ -893,7 +904,13 @@ show_usage_examples() {
     echo -e "\033[38;5;244m   sudo wtm restart-tor\033[0m"
     echo
     
-    echo -e "\033[1;32m🧪 Testing Connections:\033[0m"
+    echo -e "\033[1;32m🧪 Testing & Diagnostics:\033[0m"
+    echo -e "\033[38;5;250m   # Test all connections\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm test\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # WARP memory diagnostic\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm warp-memory\033[0m"
+    echo
     echo -e "\033[38;5;250m   # Test WARP connection\033[0m"
     echo -e "\033[38;5;244m   curl --interface warp https://www.cloudflare.com/cdn-cgi/trace\033[0m"
     echo
@@ -937,12 +954,26 @@ show_usage_examples() {
     echo -e "\033[38;5;244m   sudo wtm self-update\033[0m"
     echo
     
+    echo -e "\033[1;32m⚙️ Script Installation:\033[0m"
+    echo -e "\033[38;5;250m   # Install script globally (manual)\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-script\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Uninstall global script\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm uninstall-script\033[0m"
+    echo
+    echo -e "\033[38;5;214m   💡 Note: Script installs automatically when running any install command\033[0m"
+    echo -e "\033[38;5;214m      This allows you to use 'wtm' command from anywhere\033[0m"
+    echo
+    
     echo -e "\033[1;32m❓ Help & Information:\033[0m"
     echo -e "\033[38;5;250m   # Show help\033[0m"
     echo -e "\033[38;5;244m   wtm help\033[0m"
     echo
     echo -e "\033[38;5;250m   # Show system information\033[0m"
     echo -e "\033[38;5;244m   wtm system-info\033[0m"
+    echo
+    echo -e "\033[38;5;250m   # Show WARP memory diagnostic\033[0m"
+    echo -e "\033[38;5;244m   wtm warp-memory\033[0m"
     echo
     echo -e "\033[38;5;250m   # Show usage examples\033[0m"
     echo -e "\033[38;5;244m   wtm usage-examples\033[0m"
@@ -993,6 +1024,10 @@ show_help() {
     printf "1. Choose 'Install' → 'WARP' or 'Tor'\n"
     printf "2. Configure using 'Config' menu\n"
     printf "3. Test connection with 'Manage' → 'Test'\n\n"
+    
+    printf "${BOLD}${CYAN}Auto Installation:${NC}\n"
+    printf "Script automatically installs globally when you run any\n"
+    printf "install command. This allows you to use ${GREEN}wtm${NC} from anywhere.\n\n"
     
     printf "${BOLD}${CYAN}Common Issues:${NC}\n"
     printf "• Run as root: ${GREEN}sudo wtm${NC}\n"
@@ -1046,7 +1081,7 @@ show_main_menu() {
                     printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Endpoint:" "$endpoint"
                 fi
             else
-                printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Interface not found\033[0m\n" "WireGuard:"
+                printf "   \033[38;5;15m%-12s\033[0m \033[1;31m❌ Not found\033[0m\n" "WireGuard:"
             fi
             ;;
         "installed")
@@ -1449,7 +1484,7 @@ show_xray_config_page() {
     printf "        }\n"
     printf "      }\n"
     printf "    },\n"
-    printf "    {\n"
+    printf "       {\n"
     printf "      \"tag\": \"tor\",\n"
     printf "      \"protocol\": \"socks\",\n"
     printf "      \"settings\": {\n"
@@ -1512,11 +1547,6 @@ show_xray_config_page() {
     printf "          \"geosite:cn\",\n"
     printf "          \"geosite:ru\"\n"
     printf "        ]\n"
-    printf "      },\n"
-    printf "      {\n"
-    printf "        \"type\": \"field\",\n"
-    printf "        \"inboundTag\": [\"api\"],\n"
-    printf "        \"outboundTag\": \"api\"\n"
     printf "      }\n"
     printf "    ]\n"
     printf "  }\n"
@@ -1689,6 +1719,7 @@ test_connections() {
 # Алиасы для совместимости с новой системой меню
 install_warp_client() {
     print_banner
+    auto_install_script_if_needed
     detect_os
     detect_arch
     update_packages
@@ -1697,6 +1728,7 @@ install_warp_client() {
 
 install_tor_complete() {
     print_banner
+    auto_install_script_if_needed
     detect_os
     detect_arch
     update_packages
@@ -1711,6 +1743,169 @@ remove_warp_client() {
 remove_tor() {
     print_banner
     uninstall_tor
+}
+
+# ===== WARP MEMORY DIAGNOSTIC FUNCTION =====
+
+get_warp_memory_detailed() {
+    echo -e "\033[1;37m🔍 WARP Memory Diagnostic:\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+    # 1. Проверка интерфейса
+    if ip link show warp >/dev/null 2>&1; then
+        echo -e "\033[1;32m✅ Interface warp exists\033[0m"
+    else
+        echo -e "\033[1;31m❌ Interface warp not found\033[0m"
+        return 1
+    fi
+    
+    # 2. Размер модуля WireGuard
+    if [ -f "/proc/modules" ]; then
+        local wg_info=$(grep "^wireguard" /proc/modules 2>/dev/null)
+        if [ -n "$wg_info" ]; then
+            echo -e "   ✅ Module loaded: $wg_info"
+            local wg_size=$(echo "$wg_info" | awk '{print $2}')
+            local wg_size_kb=$((wg_size / 1024))
+            echo -e "   📊 Module size: ${wg_size} bytes (${wg_size_kb}KB)"
+        else
+            echo -e "   ❌ WireGuard module not found in /proc/modules"
+        fi
+    else
+        echo -e "   ❌ /proc/modules not accessible"
+    fi
+    echo
+    
+    # 3. Проверка kernel workers
+    echo -e "\033[1;36m⚙️ Kernel Workers:\033[0m"
+    local workers=$(ps aux | grep -E "\[wg-crypt-warp\]|\[kworker.*wg-crypt-warp\]" | grep -v grep 2>/dev/null)
+    if [ -n "$workers" ]; then
+        local worker_count=$(echo "$workers" | wc -l)
+        echo -e "   ✅ Found $worker_count WireGuard workers"
+        echo "$workers" | sed 's/^/   /' | head -5
+        if [ "$worker_count" -gt 5 ]; then
+            echo -e "   \033[38;5;244m   ... and $((worker_count - 5)) more\033[0m"
+        fi
+    else
+        echo -e "   ⚠️  No WireGuard workers found"
+    fi
+    echo
+    
+    # 4. Проверка активных соединений
+    echo -e "\033[1;36m🔗 Active Connections:\033[0m"
+    if command -v wg >/dev/null 2>&1; then
+        local peer_info=$(wg show warp 2>/dev/null)
+        if [ -n "$peer_info" ]; then
+            echo -e "   ✅ WireGuard interface active"
+            local peer_count=$(echo "$peer_info" | grep "peer:" | wc -l 2>/dev/null || echo 0)
+            echo -e "   📊 Active peers: $peer_count"
+            if [ "$peer_count" -gt 0 ]; then
+                wg show warp | sed 's/^/   /'
+            fi
+        else
+            echo -e "   ⚠️  No active WireGuard connections"
+        fi
+    else
+        echo -e "   ❌ wg command not available"
+    fi
+    echo
+    
+    # 5. Проверка systemd сервиса
+    echo -e "\033[1;36m🔧 Service Status:\033[0m"
+    local service_status=$(systemctl is-active wg-quick@warp 2>/dev/null || echo "unknown")
+    local service_memory=$(systemctl show wg-quick@warp --property=MemoryCurrent --value 2>/dev/null)
+    
+    echo -e "   Status: $service_status"
+    echo -e "   Memory (systemd): $service_memory"
+    
+    local last_start=$(systemctl show wg-quick@warp --property=ActiveEnterTimestamp --value 2>/dev/null)
+    if [ -n "$last_start" ] && [ "$last_start" != "n/a" ]; then
+        echo -e "   Last start: $last_start"
+    fi
+    echo
+    
+    # Итоговая оценка памяти
+    echo -e "\033[1;36m📊 Memory Estimation:\033[0m"
+    local estimated_memory=$(get_service_memory "wg-quick@warp")
+    echo -e "   💾 Estimated usage: \033[1;32m$estimated_memory\033[0m"
+    echo
+    
+    echo -e "\033[1;33m💡 Note:\033[0m WireGuard operates in kernel space, making exact"
+    echo -e "   memory measurement challenging. Values are estimated based on"
+    echo -e "   module size, active workers, and connection state."
+    echo
+    
+    read -p "Press Enter to continue..."
+}
+
+# ===== SCRIPT INSTALLATION FUNCTIONS =====
+
+# Автоматическая установка скрипта в систему (если не установлен)
+auto_install_script_if_needed() {
+    # Проверяем, установлен ли скрипт уже
+    if [ -f "/usr/local/bin/wtm" ]; then
+        return 0  # Уже установлен
+    fi
+    
+    # Проверяем, запущен ли скрипт локально (не из /usr/local/bin)
+    local script_path="$(readlink -f "${BASH_SOURCE[0]}")"
+    if [[ "$script_path" != "/usr/local/bin/wtm" ]]; then
+        # Проверяем, что это не повторный вызов в той же сессии
+        if [ "$AUTO_INSTALL_ATTEMPTED" = "true" ]; then
+            return 0
+        fi
+        export AUTO_INSTALL_ATTEMPTED="true"
+        
+        echo
+        info "Installing WTM script globally for easy access..."
+        echo -e "\033[38;5;244m   This will allow you to use 'wtm' command from anywhere\033[0m"
+        
+        if curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/wtm 2>/dev/null; then
+            ok "✅ WTM script installed successfully at /usr/local/bin/wtm"
+            echo -e "\033[1;37m💡 You can now use 'wtm' command from anywhere!\033[0m"
+            echo
+        else
+            warn "Failed to install script globally, continuing with installation..."
+        fi
+    fi
+}
+
+install_wtm_script_globally() {
+    info "Installing WARP & Tor Manager script globally..."
+    curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/wtm
+    ok "WTM script installed successfully at /usr/local/bin/wtm"
+}
+
+install_script_command() {
+    check_root
+    info "Installing WTM script globally"
+    install_wtm_script_globally
+    ok "✅ Script installed successfully!"
+    echo -e "\033[1;37mYou can now run 'wtm' from anywhere\033[0m"
+    echo
+    echo -e "\033[1;37m📋 Quick commands to try:\033[0m"
+    echo -e "   \033[38;5;15mwtm version\033[0m       - Show version information"
+    echo -e "   \033[38;5;15mwtm status\033[0m        - Check services status"
+    echo -e "   \033[38;5;15mwtm install-all\033[0m   - Install WARP + Tor"
+    echo -e "   \033[38;5;15mwtm help\033[0m          - Show help information"
+}
+
+uninstall_script_command() {
+    check_root
+    if [ ! -f "/usr/local/bin/wtm" ]; then
+        warn "WTM script is not installed globally"
+        echo "Nothing to uninstall"
+        exit 0
+    fi
+    
+    read -p "Are you sure you want to remove the WTM script? (y/n): " -r
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Operation cancelled"
+        exit 0
+    fi
+    
+    info "Removing WTM script"
+    rm -f /usr/local/bin/wtm
+    ok "✅ Script removed successfully!"
 }
 
 # ===== MAIN FUNCTION =====
@@ -1747,6 +1942,12 @@ main() {
             remove-tor)
                 remove_tor
                 ;;
+            install-script)
+                install_script_command
+                ;;
+            uninstall-script)
+                uninstall_script_command
+                ;;
             status)
                 show_status
                 ;;
@@ -1761,6 +1962,9 @@ main() {
                 ;;
             system-info)
                 show_system_info
+                ;;
+            warp-memory)
+                get_warp_memory_detailed
                 ;;
             start-warp)
                 control_service start warp
@@ -1806,6 +2010,9 @@ main() {
         esac
         return
     fi
+    
+    # Интерактивный режим - автоматическая установка скрипта если нужно
+    auto_install_script_if_needed
     
     # Интерактивный режим - проверяем обновления при первом запуске
     if check_for_updates 2>/dev/null; then
