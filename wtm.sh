@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # WARP & Tor Network Setup Script
 # This script installs and manages Cloudflare WARP and Tor connections
-# VERSION=1.1.4
+# VERSION=1.1.6
 
 set -e
-SCRIPT_VERSION="1.1.4"
+SCRIPT_VERSION="1.1.6"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -791,36 +791,36 @@ show_usage_examples() {
     
     echo -e "\033[1;32m🚀 Quick Installation:\033[0m"
     echo -e "\033[38;5;250m   # Install WARP only\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-warp\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-warp\033[0m"
     echo
     echo -e "\033[38;5;250m   # Install Tor only\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-tor\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-tor\033[0m"
     echo
     echo -e "\033[38;5;250m   # Install both (recommended)\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-all\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-all\033[0m"
     echo
     echo -e "\033[1;33m🔄 Force Installation (overwrite existing):\033[0m"
     echo -e "\033[38;5;250m   # Force reinstall WARP\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-warp-force\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-warp-force\033[0m"
     echo
     echo -e "\033[38;5;250m   # Force reinstall Tor\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-tor-force\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-tor-force\033[0m"
     echo
     echo -e "\033[38;5;250m   # Force reinstall both\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh install-all-force\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm install-all-force\033[0m"
     echo
     
     echo -e "\033[1;32m⚙️ Service Management:\033[0m"
     echo -e "\033[38;5;250m   # Check status\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh status\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm status\033[0m"
     echo
     echo -e "\033[38;5;250m   # View live logs\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh logs warp\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh logs tor\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm logs warp\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm logs tor\033[0m"
     echo
     echo -e "\033[38;5;250m   # Restart services\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh restart-warp\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh restart-tor\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm restart-warp\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm restart-tor\033[0m"
     echo
     
     echo -e "\033[1;32m🧪 Testing Connections:\033[0m"
@@ -850,13 +850,13 @@ show_usage_examples() {
     
     echo -e "\033[1;32m🗑️ Uninstallation:\033[0m"
     echo -e "\033[38;5;250m   # Remove WARP only\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh uninstall-warp\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm uninstall-warp\033[0m"
     echo
     echo -e "\033[38;5;250m   # Remove Tor only\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh uninstall-tor\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm uninstall-tor\033[0m"
     echo
     echo -e "\033[38;5;250m   # Remove everything\033[0m"
-    echo -e "\033[38;5;244m   bash warp.sh uninstall-all\033[0m"
+    echo -e "\033[38;5;244m   sudo wtm uninstall-all\033[0m"
     echo
 }
 
@@ -906,7 +906,7 @@ show_help() {
     printf "3. Test connection with 'Manage' → 'Test'\n\n"
     
     printf "${BOLD}${CYAN}Common Issues:${NC}\n"
-    printf "• Run as root: ${GREEN}sudo ./warp.sh${NC}\n"
+    printf "• Run as root: ${GREEN}sudo wtm${NC}\n"
     printf "• Check logs if service fails to start\n"
     printf "• Disable conflicting VPNs\n\n"
     
@@ -1355,7 +1355,7 @@ show_xray_config_page() {
     printf "      \"settings\": {},\n"
     printf "      \"streamSettings\": {\n"
     printf "        \"sockopt\": {\n"
-    printf "          \"bindToDevice\": \"warp\"\n"
+    printf "          \"interface\": \"warp\"\n"
     printf "        }\n"
     printf "      }\n"
     printf "    },\n"

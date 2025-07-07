@@ -224,7 +224,7 @@ socks5 127.0.0.1 9050
       "settings": {},
       "streamSettings": {
         "sockopt": {
-          "bindToDevice": "warp"
+          "interface": "warp"
         }
       }
     },
@@ -252,7 +252,7 @@ socks5 127.0.0.1 9050
           "to-foreign-inbound"
         ],
         "outboundTag": "tor",
-        "domain": ["regexp:.*\\.onion$"]
+        "domain": ["regexp:.*\\\\.onion$"]
       },
       {
         "type": "field",
