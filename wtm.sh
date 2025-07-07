@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # WARP & Tor Network Setup Script
 # This script installs and manages Cloudflare WARP and Tor connections
-# VERSION=1.1.6
+# VERSION=1.2.1
 
 set -e
-SCRIPT_VERSION="1.1.6"
+SCRIPT_VERSION="1.2.1"
 
 # Script URL for updates
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/wtm.sh"
@@ -179,10 +179,11 @@ show_version() {
 }
 
 check_for_updates() {
+    info "Checking for updates..."
     local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
     
     if [ -z "$remote_script_version" ]; then
-        warn "Unable to check for updates (no internet connection)"
+        warn "Unable to check for updates (no internet connection or invalid URL)"
         return 1
     fi
     
@@ -1116,6 +1117,7 @@ show_main_menu() {
     echo -e "\033[1;37m📖 Configuration:\033[0m"
     echo -e "   \033[38;5;15m7)\033[0m ⚙️  XRay Configuration"
     echo -e "   \033[38;5;15m8)\033[0m ❓ Help & Usage Examples"
+    echo -e "   \033[38;5;15m9)\033[0m 🔄 Check Updates"
     echo
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
     echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit"
@@ -1719,8 +1721,7 @@ main() {
     setup_colors
     
     # Если есть аргументы командной строки, выполняем их
-    if [ $# -gt 0 ]; then
-        local COMMAND="$1"
+    if [ -n "$COMMAND" ]; then
         case "$COMMAND" in
             install-warp)
                 install_warp_client
@@ -1943,6 +1944,24 @@ main() {
                     2) show_usage_examples_page ;;
                     3) show_testing_commands_page ;;
                 esac
+                ;;
+            9)
+                # Check Updates
+                clear
+                echo -e "\033[1;37m🔄 Update Manager\033[0m"
+                echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
+                echo
+                show_version
+                echo
+                if check_for_updates; then
+                    echo
+                    read -p "Do you want to update now? (y/n): " update_choice
+                    if [[ "$update_choice" =~ ^[Yy]$ ]]; then
+                        self_update
+                    fi
+                fi
+                echo
+                read -p "Press Enter to continue..."
                 ;;
             0)
                 echo -e "\033[1;32m👋 Goodbye!\033[0m"
