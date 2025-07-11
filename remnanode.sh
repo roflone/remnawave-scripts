@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Version: 3.1.2
+# Version: 3.1.3
 set -e
-SCRIPT_VERSION="3.1.2"
+SCRIPT_VERSION="3.1.3"
+
+# Handle @ prefix for consistency with other scripts
+if [ $# -gt 0 ] && [ "$1" = "@" ]; then
+    shift  
+fi
 
 # Parse command line arguments
 COMMAND=""
