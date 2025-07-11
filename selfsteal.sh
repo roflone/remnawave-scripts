@@ -3,6 +3,11 @@
 # This script installs and manages Caddy for Reality traffic masking
 # VERSION=2.1.3
 
+# Handle @ prefix for consistency with other scripts
+if [ $# -gt 0 ] && [ "$1" = "@" ]; then
+    shift  
+fi
+
 set -e
 SCRIPT_VERSION="2.1.3"
 GITHUB_REPO="dignezzz/remnawave-scripts"
@@ -28,6 +33,7 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 GRAY='\033[0;37m'
 NC='\033[0m' # No Color
+
 
 # Parse command line arguments
 COMMAND=""
