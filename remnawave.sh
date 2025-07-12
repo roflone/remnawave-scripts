@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.5.6
+# VERSION=3.5.8
 
 set -e
-SCRIPT_VERSION="3.5.6"
+SCRIPT_VERSION="3.5.8"
 BACKUP_SCRIPT_VERSION="1.0.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1026,7 +1026,8 @@ ensure_cron_installed() {
 }
 
 schedule_get_status() {
-    if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT_FILE"; then
+    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    if crontab -l 2>/dev/null | grep -q "$escaped_script_path"; then
         echo "enabled"
     else
         echo "disabled"
@@ -1078,10 +1079,11 @@ schedule_enable() {
         schedule_create_backup_script
     fi
 
-    local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
+    local cron_entry="$schedule PATH=\$PATH:/usr/local/bin:/usr/bin:/bin $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
     
-    # Удаляем старую запись если есть
-    if (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE"; echo "$cron_entry") | crontab - 2>/dev/null; then
+    # Удаляем старую запись если есть (экранируем специальные символы для grep)
+    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    if (crontab -l 2>/dev/null | grep -v "$escaped_script_path"; echo "$cron_entry") | crontab - 2>/dev/null; then
         echo -e "\033[1;32m✅ Backup scheduler enabled!\033[0m"
         echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
     else
@@ -1099,12 +1101,14 @@ schedule_disable() {
         return
     fi
     
-    if crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab - 2>/dev/null; then
+    # Экранируем специальные символы для grep
+    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    if crontab -l 2>/dev/null | grep -v "$escaped_script_path" | crontab - 2>/dev/null; then
         echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
     else
-        # Попробуем создать пустой crontab если его не было
-        if crontab -l 2>/dev/null | wc -l | grep -q "^0$"; then
-            echo "" | crontab - 2>/dev/null
+        # Если crontab пуст или не содержал нашу запись, всё равно считаем успехом
+        local current_cron_count=$(crontab -l 2>/dev/null | wc -l)
+        if [ "$current_cron_count" -eq 0 ]; then
             echo -e "\033[1;32m✅ Backup scheduler disabled (crontab was empty)!\033[0m"
         else
             echo -e "\033[1;33m⚠️  Could not modify crontab, but scheduler should be disabled\033[0m"
@@ -1740,7 +1744,7 @@ schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
     
-    cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
+    cat > "$BACKUP_SCRIPT_FILE" <<BACKUP_SCRIPT_EOF
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
