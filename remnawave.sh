@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.5.8
+# VERSION=3.6.1
 
 set -e
-SCRIPT_VERSION="3.5.8"
+SCRIPT_VERSION="3.6.1"
 BACKUP_SCRIPT_VERSION="1.0.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -138,20 +138,26 @@ validate_panel_version_compatibility() {
 # ===== END PANEL VERSION FUNCTIONS =====
 
 check_backup_script_version() {
-    local current_version="$BACKUP_SCRIPT_VERSION"
-    
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
         return 1  # Script doesn't exist
     fi
     
-    # Извлекаем версию из существующего скрипта
-    local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+    # Максимально простая и безопасная проверка версии
+    local script_version=""
     
+    # Пробуем прочитать только первую строку с версией
+    script_version=$(sed -n '1,10p' "$BACKUP_SCRIPT_FILE" 2>/dev/null | grep "^BACKUP_SCRIPT_VERSION=" 2>/dev/null | head -1 | cut -d'"' -f2 2>/dev/null)
+    
+    # Если sed не сработал, пробуем awk
     if [ -z "$script_version" ]; then
-        return 2  # Old script without version
+        script_version=$(awk '/^BACKUP_SCRIPT_VERSION=/ {gsub(/.*"/,""); gsub(/".*/,""); print; exit}' "$BACKUP_SCRIPT_FILE" 2>/dev/null)
     fi
     
-    if [ "$script_version" != "$current_version" ]; then
+    if [ -z "$script_version" ]; then
+        return 2  # Old script without version or error reading
+    fi
+    
+    if [ "$script_version" != "$BACKUP_SCRIPT_VERSION" ]; then
         return 3  # Version mismatch
     fi
     
@@ -175,7 +181,13 @@ prompt_backup_script_update() {
             echo -e "\033[38;5;244m   Script needs to be updated for compatibility\033[0m"
             ;;
         3)
-            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+            # Безопасное чтение версии с timeout
+            local script_version=""
+            if command -v timeout >/dev/null 2>&1; then
+                script_version=$(timeout 5 head -5 "$BACKUP_SCRIPT_FILE" 2>/dev/null | grep "^BACKUP_SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
+            else
+                script_version=$(head -5 "$BACKUP_SCRIPT_FILE" 2>/dev/null | grep "^BACKUP_SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
+            fi
             echo -e "\033[38;5;250m🔄 Version mismatch detected\033[0m"
             echo -e "\033[38;5;244m   Current: ${script_version:-'unknown'} → Latest: $BACKUP_SCRIPT_VERSION\033[0m"
             ;;
@@ -581,9 +593,18 @@ schedule_menu() {
         case "$choice" in
             1) schedule_setup_menu ;;
             2) schedule_toggle ;;
-            3) schedule_test_backup ;;
-            4) schedule_test_telegram ;;
-            5) schedule_status ;;
+            3) 
+                schedule_test_backup
+                read -p "Press Enter to continue..."
+                ;;
+            4) 
+                schedule_test_telegram
+                read -p "Press Enter to continue..."
+                ;;
+            5) 
+                schedule_status
+                read -p "Press Enter to continue..."
+                ;;
             6) schedule_show_logs ;;
             7) schedule_cleanup ;;
             8) schedule_run_backup ;;
@@ -626,48 +647,27 @@ schedule_update_script() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 30))\033[0m"
     echo
     
-    # Проверяем текущую версию
-    check_backup_script_version
-    local version_status=$?
+    # Упрощённое обновление - просто пересоздаём скрипт
+    echo -e "\033[1;33m🔄 Updating backup script to latest version...\033[0m"
+    echo -e "\033[38;5;244m   Recreating script with version $BACKUP_SCRIPT_VERSION\033[0m"
+    echo
     
-    case $version_status in
-        0)
-            echo -e "\033[1;32m✅ Current backup script is already up-to-date (v$BACKUP_SCRIPT_VERSION)\033[0m"
-            echo -e "\033[38;5;244m   No update required\033[0m"
-            ;;
-        1)
-            echo -e "\033[1;33m⚠️  Backup script not found\033[0m"
-            echo -e "\033[38;5;244m   Creating new backup script...\033[0m"
-            schedule_create_backup_script
-            echo -e "\033[1;32m✅ Backup script created successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
-            ;;
-        2)
-            echo -e "\033[1;33m📜 Legacy backup script detected (no version info)\033[0m"
-            echo -e "\033[38;5;244m   Updating to latest version with improvements...\033[0m"
-            echo
-            schedule_create_backup_script
-            echo -e "\033[1;32m✅ Backup script updated successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
-            ;;
-        3)
-            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
-            echo -e "\033[1;33m🔄 Outdated backup script detected\033[0m"
-            echo -e "\033[38;5;244m   Current: ${script_version:-'unknown'} → Latest: $BACKUP_SCRIPT_VERSION\033[0m"
-            echo
-            schedule_create_backup_script
-            echo -e "\033[1;32m✅ Backup script updated successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
-            ;;
-    esac
+    # Создаём новый скрипт
+    schedule_create_backup_script
     
-    if [ $version_status -ne 0 ]; then
+    if [ -f "$BACKUP_SCRIPT_FILE" ]; then
+        echo -e "\033[1;32m✅ Backup script updated successfully (v$BACKUP_SCRIPT_VERSION)\033[0m"
+        echo -e "\033[38;5;244m   Script location: $BACKUP_SCRIPT_FILE\033[0m"
+        
         echo
-        echo -e "\033[1;37m🚀 New features in v$BACKUP_SCRIPT_VERSION:\033[0m"
+        echo -e "\033[1;37m🚀 Features in v$BACKUP_SCRIPT_VERSION:\033[0m"
         echo -e "\033[38;5;250m   ✓ Unified backup structure (compatible with manual backups)\033[0m"
         echo -e "\033[38;5;250m   ✓ Improved compression and file handling\033[0m"
         echo -e "\033[38;5;250m   ✓ Better error handling and logging\033[0m"
         echo -e "\033[38;5;250m   ✓ Enhanced restore compatibility\033[0m"
         echo -e "\033[38;5;250m   ✓ Automatic version checking\033[0m"
         
-        # Если scheduler включен, предлагаем перезапустить
+        # Если scheduler включен, показываем статус
         local status=$(schedule_get_status)
         if [ "$status" = "enabled" ]; then
             echo
@@ -675,6 +675,8 @@ schedule_update_script() {
             echo -e "\033[38;5;250m   Updated script will be used for next scheduled backup\033[0m"
             echo -e "\033[38;5;244m   No restart required - changes take effect immediately\033[0m"
         fi
+    else
+        echo -e "\033[1;31m❌ Failed to update backup script\033[0m"
     fi
     
     echo
@@ -1026,8 +1028,7 @@ ensure_cron_installed() {
 }
 
 schedule_get_status() {
-    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    if crontab -l 2>/dev/null | grep -q "$escaped_script_path"; then
+    if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT_FILE"; then
         echo "enabled"
     else
         echo "disabled"
@@ -1038,10 +1039,15 @@ schedule_toggle() {
     local status=$(schedule_get_status)
     
     if [ "$status" = "enabled" ]; then
+        echo -e "\033[1;33mDisabling scheduler...\033[0m"
         schedule_disable
     else
+        echo -e "\033[1;33mEnabling scheduler...\033[0m"
         schedule_enable
     fi
+    
+    # Add pause to show result before returning to menu
+    read -p "Press Enter to continue..."
 }
 
 schedule_enable() {
@@ -1058,6 +1064,13 @@ schedule_enable() {
         return
     fi
     
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "\033[1;31m❌ jq is not installed! Please install jq first.\033[0m"
+        echo -e "\033[38;5;244m   Install with: sudo apt-get install jq\033[0m"
+        sleep 3
+        return
+    fi
+    
     local schedule=$(jq -r '.schedule // ""' "$BACKUP_CONFIG_FILE" 2>/dev/null)
     if [ -z "$schedule" ] || [ "$schedule" = "null" ]; then
         echo -e "\033[1;31m❌ No schedule configured! Please set backup schedule first.\033[0m"
@@ -1065,25 +1078,20 @@ schedule_enable() {
         return
     fi
 
-    # Проверяем версию backup скрипта перед включением
-    check_backup_script_version
-    local version_status=$?
-    
-    if [ $version_status -ne 0 ]; then
-        echo
-        echo -e "\033[1;33m⚠️  Updating backup script before enabling scheduler...\033[0m"
+    # Проверяем и создаём backup скрипт если необходимо
+    if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
+        echo -e "\033[1;33m⚠️  Creating backup script...\033[0m"
         schedule_create_backup_script
-        echo -e "\033[1;32m✅ Backup script updated\033[0m"
-        echo
     else
+        # Простая проверка - если файл есть, но версия может быть старой, обновляем
+        echo -e "\033[1;33m⚠️  Ensuring backup script is up-to-date...\033[0m"
         schedule_create_backup_script
     fi
 
-    local cron_entry="$schedule PATH=\$PATH:/usr/local/bin:/usr/bin:/bin $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1"
+    local cron_entry="$schedule $BACKUP_SCRIPT_FILE >> $BACKUP_LOG_FILE 2>&1 # Remnawave Backup Scheduler"
     
-    # Удаляем старую запись если есть (экранируем специальные символы для grep)
-    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    if (crontab -l 2>/dev/null | grep -v "$escaped_script_path"; echo "$cron_entry") | crontab - 2>/dev/null; then
+    # Удаляем старую запись для backup-scheduler.sh если есть
+    if (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE"; echo "$cron_entry") | crontab - 2>/dev/null; then
         echo -e "\033[1;32m✅ Backup scheduler enabled!\033[0m"
         echo -e "\033[38;5;250mSchedule: $schedule\033[0m"
     else
@@ -1101,14 +1109,12 @@ schedule_disable() {
         return
     fi
     
-    # Экранируем специальные символы для grep
-    local escaped_script_path=$(printf '%s\n' "$BACKUP_SCRIPT_FILE" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    if crontab -l 2>/dev/null | grep -v "$escaped_script_path" | crontab - 2>/dev/null; then
+    if crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_FILE" | crontab - 2>/dev/null; then
         echo -e "\033[1;32m✅ Backup scheduler disabled!\033[0m"
     else
-        # Если crontab пуст или не содержал нашу запись, всё равно считаем успехом
-        local current_cron_count=$(crontab -l 2>/dev/null | wc -l)
-        if [ "$current_cron_count" -eq 0 ]; then
+        # Попробуем создать пустой crontab если его не было
+        if crontab -l 2>/dev/null | wc -l | grep -q "^0$"; then
+            echo "" | crontab - 2>/dev/null
             echo -e "\033[1;32m✅ Backup scheduler disabled (crontab was empty)!\033[0m"
         else
             echo -e "\033[1;33m⚠️  Could not modify crontab, but scheduler should be disabled\033[0m"
@@ -1744,11 +1750,11 @@ schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
     
-    cat > "$BACKUP_SCRIPT_FILE" <<BACKUP_SCRIPT_EOF
+    cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
-BACKUP_SCRIPT_VERSION="$BACKUP_SCRIPT_VERSION"
+BACKUP_SCRIPT_VERSION="1.0.1"
 BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
 
 # Читаем конфигурацию backup
@@ -3843,7 +3849,13 @@ schedule_status() {
             echo -e "\033[38;5;244m   Update recommended for latest features\033[0m"
             ;;
         3)
-            local script_version=$(grep "^BACKUP_SCRIPT_VERSION=" "$BACKUP_SCRIPT_FILE" 2>/dev/null | cut -d'"' -f2)
+            # Безопасное чтение версии с timeout
+            local script_version=""
+            if command -v timeout >/dev/null 2>&1; then
+                script_version=$(timeout 5 head -5 "$BACKUP_SCRIPT_FILE" 2>/dev/null | grep "^BACKUP_SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
+            else
+                script_version=$(head -5 "$BACKUP_SCRIPT_FILE" 2>/dev/null | grep "^BACKUP_SCRIPT_VERSION=" | cut -d'"' -f2 2>/dev/null)
+            fi
             echo -e "\033[1;33m⚠️  Script version: Outdated (${script_version:-'unknown'})\033[0m"
             echo -e "\033[38;5;244m   Current version: $BACKUP_SCRIPT_VERSION - update recommended\033[0m"
             ;;
@@ -4014,17 +4026,11 @@ schedule_run_backup() {
     echo -e "\033[38;5;250m🏃‍♂️ Running backup now...\033[0m"
     echo
 
-    # Проверяем версию backup скрипта
-    check_backup_script_version
-    local version_status=$?
-    
-    if [ $version_status -ne 0 ]; then
+    # Создаем/обновляем backup скрипт
+    if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
+        schedule_create_backup_script
+        echo -e "\033[1;32m✅ Backup script created\033[0m"
         echo
-        if prompt_backup_script_update $version_status; then
-            schedule_create_backup_script
-            echo -e "\033[1;32m✅ Backup script updated successfully\033[0m"
-            echo
-        fi
     fi
     
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
@@ -4037,6 +4043,7 @@ schedule_run_backup() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] MANUAL FULL BACKUP STARTED by user" >> "$BACKUP_LOG_FILE"
     echo "=============================================" >> "$BACKUP_LOG_FILE"
     
+    # Запускаем backup скрипт
     bash "$BACKUP_SCRIPT_FILE" 2>&1 | tee -a "$BACKUP_LOG_FILE"
     
     local exit_code=${PIPESTATUS[0]}
@@ -4192,28 +4199,34 @@ schedule_cleanup() {
     printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Files to delete:" "$old_count"
     printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Files to keep:" "$remaining_count"
     
+    # Простой подсчет размера без сложных операций
     local delete_size=0
-    echo "$old_files" | while IFS= read -r file; do
+    local temp_file="/tmp/delete_size_$$"
+    echo "0" > "$temp_file"
+    
+    for file in $old_files; do
         if [ -f "$file" ]; then
             local size_bytes=$(stat -c %s "$file" 2>/dev/null || echo "0")
             delete_size=$((delete_size + size_bytes))
         fi
-    done > /tmp/delete_size_$$
+    done
+    echo "$delete_size" > "$temp_file"
     
     local delete_size_human=""
     if command -v numfmt >/dev/null 2>&1; then
-        delete_size_human=$(numfmt --to=iec --suffix=B $(cat /tmp/delete_size_$$ 2>/dev/null || echo "0"))
+        delete_size_human=$(numfmt --to=iec --suffix=B $(cat "$temp_file" 2>/dev/null || echo "0"))
     else
         delete_size_human="Unknown"
     fi
-    rm -f /tmp/delete_size_$$
+    rm -f "$temp_file"
     
     if [ "$delete_size_human" != "Unknown" ]; then
         printf "   \033[38;5;15m%-20s\033[0m \033[38;5;250m%s\033[0m\n" "Space to free:" "$delete_size_human"
     fi
     
     echo
-    read -p "Proceed with cleanup? [y/N]: " confirm
+    echo -n "Proceed with cleanup? [y/N]: "
+    read confirm
     
     if [[ $confirm =~ ^[Yy]$ ]]; then
         echo
@@ -5974,7 +5987,7 @@ is_remnawave_installed() {
 
 is_remnawave_up() {
     detect_compose
-    if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a)" ]; then
+    if [ -z "$($COMPOSE -f $COMPOSE_FILE ps -q -a 2>/dev/null)" ]; then
         return 1
     else
         return 0
