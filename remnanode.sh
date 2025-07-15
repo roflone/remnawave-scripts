@@ -1844,18 +1844,60 @@ check_editor() {
 }
 
 xray_log_out() {
-        if ! is_remnanode_installed; then
-            colorized_echo red "RemnaNode not installed!"
-            exit 1
-        fi
+    if ! is_remnanode_installed; then
+        colorized_echo red "RemnaNode not installed!"
+        exit 1
+    fi
     detect_compose
 
-        if ! is_remnanode_up; then
-            colorized_echo red "RemnaNode is not running. Start it first with 'remnanode up'"
-            exit 1
-        fi
+    if ! is_remnanode_up; then
+        colorized_echo red "RemnaNode is not running. Start it first with 'remnanode up'"
+        exit 1
+    fi
 
-    docker exec -it $APP_NAME tail -n +1 -f /var/log/supervisor/xray.out.log
+    # Запрашиваем ключевое слово для фильтрации
+    read -p "Enter keyword to filter logs (leave empty for no filter): " keyword
+
+    # Определяем команду для получения логов
+    local log_command="docker exec -it $APP_NAME tail -n +1 -f /var/log/supervisor/xray.out.log"
+
+    # Форматирование логов с помощью awk
+    local awk_script='
+    BEGIN {
+        print "\033[1;37mTimestamp                Source IP:Port            Protocol  Destination                  Region         Email\033[0m"
+        print "\033[38;5;8m" sprintf("%-80s", "────────────────────────────────────────────────────────────────────────────────") "\033[0m"
+    }
+    {
+        # Парсим строку лога
+        if ($0 ~ /from.*accepted.*email:/) {
+            timestamp = $1 " " $2
+            split($3, source, ":")
+            source_ip = source[1] == "from" ? $4 : source[2]
+            source_port = source_ip == $4 ? $5 : source[3]
+            source_port = source_port ~ /^[0-9]+$/ ? source_port : substr(source_port, 1, index(source_port, "]")-1)
+            protocol = $6
+            destination = $7
+            region = $8 " " $9 " " $10
+            email = $NF
+
+            # Удаляем лишние символы
+            gsub(/[\[\]]/, "", region)
+            gsub(/:/, "", source_port)
+            gsub(/email:/, "", email)
+
+            # Форматируем вывод с цветами
+            printf "\033[38;5;250m%-23s\033[0m \033[38;5;117m%-25s\033[0m \033[38;5;178m%-9s\033[0m \033[38;5;244m%-27s\033[0m \033[38;5;68m%-15s\033[0m \033[38;5;15m%s\033[0m\n",
+                   timestamp, source_ip ":" source_port, protocol, destination, region, email
+        }
+    }'
+
+    if [ -z "$keyword" ]; then
+        # Без фильтрации: выводим отформатированные логи
+        eval "$log_command" | awk -v RS='\n' "$awk_script"
+    else
+        # С фильтрацией: сначала фильтруем, затем форматируем
+        eval "$log_command" | grep --line-buffered "$keyword" | awk -v RS='\n' "$awk_script"
+    fi
 }
 
 xray_log_err() {
