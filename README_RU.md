@@ -16,6 +16,8 @@
 
 ## [Readme on ENGLISH](/README.md)
 
+## За поддержкой сюда: https://gig.ovh/t/remnawave-managment-scripts-by-dignezzz/116
+
 ---
 
 ## 🧭 Меню навигации
