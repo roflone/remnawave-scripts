@@ -16,6 +16,8 @@ A comprehensive collection of enterprise-grade Bash scripts for **Remnawave Pane
 
 ## [Readme на русском](/README_RU.md)
 
+## Support here: https://gig.ovh/t/remnawave-managment-scripts-by-dignezzz/116
+
 ---
 
 ## 🧭 Navigation Menu
