@@ -261,11 +261,11 @@ get_xray_core() {
             
             echo
             if [ "$selected_prerelease" = "true" ]; then
-                colorized_echo yellow "⚠️  Выбрана предварительная версия: $selected_version"
-                colorized_echo cyan "   Предварительные релизы могут содержать ошибки и не рекомендуются для продакшена."
-                read -p "Вы уверены, что хотите продолжить? (y/n): " -r confirm_prerelease
+                colorized_echo yellow "⚠️  Selected pre-release version: $selected_version"
+                colorized_echo cyan "   Pre-releases may contain bugs and are not recommended for production."
+                read -p "Are you sure you want to continue? (y/n): " -r confirm_prerelease
                 if [[ ! $confirm_prerelease =~ ^[Yy]$ ]]; then
-                    colorized_echo red "❌ Установка отменена."
+                    colorized_echo red "❌ Installation cancelled."
                     continue
                 fi
             else
@@ -367,6 +367,21 @@ get_xray_core() {
     colorized_echo blue "📦 Extracting Xray-core..."
     if unzip -o "${xray_filename}" -d "/var/lib/remnanode" >/dev/null 2>&1; then
         colorized_echo green "✅ Extraction completed successfully"
+        
+        # Set permissions for executable
+        chmod +x "/var/lib/remnanode/xray"
+        
+        # Check what files were extracted
+        colorized_echo blue "📋 Extracted files:"
+        if [ -f "/var/lib/remnanode/xray" ]; then
+            colorized_echo green "   ✅ xray executable"
+        fi
+        if [ -f "/var/lib/remnanode/geoip.dat" ]; then
+            colorized_echo green "   ✅ geoip.dat"
+        fi
+        if [ -f "/var/lib/remnanode/geosite.dat" ]; then
+            colorized_echo green "   ✅ geosite.dat"
+        fi
     else
         colorized_echo red "❌ Extraction error!"
         colorized_echo cyan "   The downloaded file may be corrupted."
@@ -374,7 +389,6 @@ get_xray_core() {
     fi
     
     rm "${xray_filename}"
-    chmod +x "/var/lib/remnanode/xray"
     
     colorized_echo green "🎉 Xray-core $selected_version installation completed!"
 }
@@ -457,6 +471,8 @@ escape_for_sed() {
 update_docker_compose() {
     local compose_file="$REMNANODE_DIR/docker-compose.yml"
     local xray_file="/var/lib/remnanode/xray"
+    local geoip_file="/var/lib/remnanode/geoip.dat"
+    local geosite_file="/var/lib/remnanode/geosite.dat"
     
     if [ ! -f "$compose_file" ]; then
         colorized_echo red "docker-compose.yml file not found in $REMNANODE_DIR"
@@ -484,29 +500,49 @@ update_docker_compose() {
     local escaped_service_indent=$(escape_for_sed "$service_indent")
     local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
     
+    # Prepare volume mounts
+    local volume_mounts=""
+    volume_mounts="${volume_item_indent}- $xray_file:/usr/local/bin/xray"
+    
+    if [ -f "$geoip_file" ]; then
+        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat"
+    fi
+    
+    if [ -f "$geosite_file" ]; then
+        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat"
+    fi
+    
     if grep -q "^${escaped_service_indent}volumes:" "$compose_file"; then
-        if ! grep -q "$xray_file:/usr/local/bin/xray" "$compose_file"; then
-            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $xray_file:/usr/local/bin/xray" "$compose_file"
-            colorized_echo green "Added Xray volume to existing volumes section"
-        else
-            colorized_echo yellow "Xray volume already exists in volumes section"
-        fi
+        # Remove existing xray-related volumes
+        sed -i "/$xray_file/d" "$compose_file"
+        sed -i "/geoip\.dat/d" "$compose_file"
+        sed -i "/geosite\.dat/d" "$compose_file"
+        
+        # Add new volume mounts
+        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$compose_file"
+        colorized_echo green "Updated Xray volumes in existing volumes section"
+        
     elif grep -q "^${escaped_service_indent}# volumes:" "$compose_file"; then
         sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$compose_file"
+        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$compose_file"
+        colorized_echo green "Uncommented volumes section and added Xray volumes"
         
-        if grep -q "^${escaped_volume_item_indent}#.*$xray_file:/usr/local/bin/xray" "$compose_file"; then
-            sed -i "s|^${escaped_volume_item_indent}#.*$xray_file:/usr/local/bin/xray|${volume_item_indent}- $xray_file:/usr/local/bin/xray|g" "$compose_file"
-            colorized_echo green "Uncommented volumes section and Xray line"
-        else
-            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $xray_file:/usr/local/bin/xray" "$compose_file"
-            colorized_echo green "Uncommented volumes section and added Xray line"
-        fi
     else
-        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_item_indent}- $xray_file:/usr/local/bin/xray" "$compose_file"
-        colorized_echo green "Added new volumes section with Xray volume"
+        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_mounts}" "$compose_file"
+        colorized_echo green "Added new volumes section with Xray volumes"
     fi
     
     colorized_echo green "docker-compose.yml configuration updated"
+    
+    # Show what was mounted
+    colorized_echo blue "📋 Mounted volumes:"
+    colorized_echo green "   ✅ xray → /usr/local/bin/xray"
+    if [ -f "$geoip_file" ]; then
+        colorized_echo green "   ✅ geoip.dat → /usr/local/share/xray/geoip.dat"
+    fi
+    if [ -f "$geosite_file" ]; then
+        colorized_echo green "   ✅ geosite.dat → /usr/local/share/xray/geosite.dat"
+    fi
 }
 
 # Restart RemnaNode
@@ -529,7 +565,7 @@ restart_remnanode() {
     local compose_file="$REMNANODE_DIR/docker-compose.yml"
     local app_name=$(basename "$REMNANODE_DIR")
     
-    colorized_echo blue "Перезапуск RemnaNode..."
+    colorized_echo blue "Restarting RemnaNode..."
     
     cd "$REMNANODE_DIR"
     

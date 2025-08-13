@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.1.3
+# Version: 3.1.6
 set -e
-SCRIPT_VERSION="3.1.3"
+SCRIPT_VERSION="3.1.6"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -72,6 +72,8 @@ DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 XRAY_FILE="$DATA_DIR/xray"
+GEOIP_FILE="$DATA_DIR/geoip.dat"
+GEOSITE_FILE="$DATA_DIR/geosite.dat"
 SCRIPT_URL="https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh"  # Убедитесь, что URL актуален
 
 # Color definitions
@@ -330,9 +332,22 @@ install_latest_xray_core() {
         colorized_echo red "Error: Failed to extract Xray-core."
         exit 1
     fi
-    
+
     rm "${xray_filename}"
     chmod +x "$XRAY_FILE"
+    
+    # Check what files were extracted
+    colorized_echo blue "Extracted files:"
+    if [ -f "$XRAY_FILE" ]; then
+        colorized_echo green "  ✅ xray executable"
+    fi
+    if [ -f "$GEOIP_FILE" ]; then
+        colorized_echo green "  ✅ geoip.dat"
+    fi
+    if [ -f "$GEOSITE_FILE" ]; then
+        colorized_echo green "  ✅ geosite.dat"
+    fi
+    
     colorized_echo green "Latest Xray-core (${latest_release}) installed at $XRAY_FILE"
 }
 
@@ -573,6 +588,17 @@ EOL
         cat >> "$COMPOSE_FILE" <<EOL
     volumes:
       - $XRAY_FILE:/usr/local/bin/xray
+EOL
+        
+        # Add geo files if they exist
+        if [ -f "$GEOIP_FILE" ]; then
+            echo "      - $GEOIP_FILE:/usr/local/share/xray/geoip.dat" >> "$COMPOSE_FILE"
+        fi
+        if [ -f "$GEOSITE_FILE" ]; then
+            echo "      - $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" >> "$COMPOSE_FILE"
+        fi
+        
+        cat >> "$COMPOSE_FILE" <<EOL
       # - $DATA_DIR:$DATA_DIR
 EOL
     else
@@ -580,6 +606,8 @@ EOL
         cat >> "$COMPOSE_FILE" <<EOL
     # volumes:
     #   - $XRAY_FILE:/usr/local/bin/xray
+    #   - $GEOIP_FILE:/usr/local/share/xray/geoip.dat
+    #   - $GEOSITE_FILE:/usr/local/share/xray/geosite.dat
     #   - $DATA_DIR:$DATA_DIR
 EOL
     fi
@@ -1770,27 +1798,46 @@ update_core_command() {
     local escaped_service_indent=$(escape_for_sed "$service_indent")
     local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
     
+    # Prepare volume mounts
+    local volume_mounts=""
+    volume_mounts="${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray"
+    
+    if [ -f "$GEOIP_FILE" ]; then
+        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat"
+    fi
+    
+    if [ -f "$GEOSITE_FILE" ]; then
+        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat"
+    fi
 
     if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
-        if ! grep -q "$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
-            colorized_echo green "Added Xray volume to existing volumes section"
-        else
-            colorized_echo yellow "Xray volume already exists in volumes section"
-        fi
+        # Remove existing xray-related volumes
+        sed -i "/$XRAY_FILE/d" "$COMPOSE_FILE"
+        sed -i "/geoip\.dat/d" "$COMPOSE_FILE"
+        sed -i "/geosite\.dat/d" "$COMPOSE_FILE"
+        
+        # Add new volume mounts
+        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$COMPOSE_FILE"
+        colorized_echo green "Updated Xray volumes in existing volumes section"
+        
     elif grep -q "^${escaped_service_indent}# volumes:" "$COMPOSE_FILE"; then
         sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$COMPOSE_FILE"
+        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$COMPOSE_FILE"
+        colorized_echo green "Uncommented volumes section and added Xray volumes"
         
-        if grep -q "^${escaped_volume_item_indent}#.*$XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"; then
-            sed -i "s|^${escaped_volume_item_indent}#.*$XRAY_FILE:/usr/local/bin/xray|${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray|g" "$COMPOSE_FILE"
-            colorized_echo green "Uncommented volumes section and Xray volume line"
-        else
-            sed -i "/^${escaped_service_indent}volumes:/a\\${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
-            colorized_echo green "Uncommented volumes section and added Xray volume line"
-        fi
     else
-        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
-        colorized_echo green "Added new volumes section with Xray volume"
+        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_mounts}" "$COMPOSE_FILE"
+        colorized_echo green "Added new volumes section with Xray volumes"
+    fi
+    
+    # Show what was mounted
+    colorized_echo blue "Mounted volumes:"
+    colorized_echo green "  ✅ xray → /usr/local/bin/xray"
+    if [ -f "$GEOIP_FILE" ]; then
+        colorized_echo green "  ✅ geoip.dat → /usr/local/share/xray/geoip.dat"
+    fi
+    if [ -f "$GEOSITE_FILE" ]; then
+        colorized_echo green "  ✅ geosite.dat → /usr/local/share/xray/geosite.dat"
     fi
     
 
