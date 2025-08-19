@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.1.6
+# Version: 3.1.7
 set -e
-SCRIPT_VERSION="3.1.6"
+SCRIPT_VERSION="3.1.7"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1797,18 +1797,6 @@ update_core_command() {
 
     local escaped_service_indent=$(escape_for_sed "$service_indent")
     local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
-    
-    # Prepare volume mounts
-    local volume_mounts=""
-    volume_mounts="${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray"
-    
-    if [ -f "$GEOIP_FILE" ]; then
-        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat"
-    fi
-    
-    if [ -f "$GEOSITE_FILE" ]; then
-        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat"
-    fi
 
     if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
         # Remove existing xray-related volumes
@@ -1816,17 +1804,83 @@ update_core_command() {
         sed -i "/geoip\.dat/d" "$COMPOSE_FILE"
         sed -i "/geosite\.dat/d" "$COMPOSE_FILE"
         
-        # Add new volume mounts
-        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$COMPOSE_FILE"
+        # Add new volume mounts using more compatible approach
+        if [ -f "$GEOSITE_FILE" ] && [ -f "$GEOIP_FILE" ]; then
+            # All three volumes
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOIP_FILE" ]; then
+            # Xray and geoip
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOSITE_FILE" ]; then
+            # Xray and geosite
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        else
+            # Only xray
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+        fi
         colorized_echo green "Updated Xray volumes in existing volumes section"
         
     elif grep -q "^${escaped_service_indent}# volumes:" "$COMPOSE_FILE"; then
         sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$COMPOSE_FILE"
-        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$COMPOSE_FILE"
+        # Add new volume mounts using more compatible approach
+        if [ -f "$GEOSITE_FILE" ] && [ -f "$GEOIP_FILE" ]; then
+            # All three volumes
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOIP_FILE" ]; then
+            # Xray and geoip
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOSITE_FILE" ]; then
+            # Xray and geosite
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        else
+            # Only xray
+            sed -i "/^${escaped_service_indent}volumes:/a\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+        fi
         colorized_echo green "Uncommented volumes section and added Xray volumes"
         
     else
-        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_mounts}" "$COMPOSE_FILE"
+        # Add new volumes section using more compatible approach
+        if [ -f "$GEOSITE_FILE" ] && [ -f "$GEOIP_FILE" ]; then
+            # All three volumes
+            sed -i "/^${escaped_service_indent}restart: always/a\\
+${service_indent}volumes:\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOIP_FILE" ]; then
+            # Xray and geoip
+            sed -i "/^${escaped_service_indent}restart: always/a\\
+${service_indent}volumes:\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOIP_FILE:/usr/local/share/xray/geoip.dat" "$COMPOSE_FILE"
+        elif [ -f "$GEOSITE_FILE" ]; then
+            # Xray and geosite
+            sed -i "/^${escaped_service_indent}restart: always/a\\
+${service_indent}volumes:\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray\\
+${volume_item_indent}- $GEOSITE_FILE:/usr/local/share/xray/geosite.dat" "$COMPOSE_FILE"
+        else
+            # Only xray
+            sed -i "/^${escaped_service_indent}restart: always/a\\
+${service_indent}volumes:\\
+${volume_item_indent}- $XRAY_FILE:/usr/local/bin/xray" "$COMPOSE_FILE"
+        fi
         colorized_echo green "Added new volumes section with Xray volumes"
     fi
     
