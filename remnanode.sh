@@ -1347,12 +1347,13 @@ get_xray_core() {
             printf "   \033[38;5;15m%-3s\033[0m %s\n" "A:" "🧪 Show all releases (including pre-releases)"
         fi
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "R:" "🔄 Refresh version list"
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "D:" "🏠 Restore to container default Xray"
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "Q:" "❌ Quit installer"
         echo
         
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
         echo -e "\033[1;37m📖 Usage:\033[0m"
-        echo -e "   Choose a number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual, \033[38;5;15mA/S\033[0m to toggle releases, or \033[38;5;15mQ\033[0m to quit"
+        echo -e "   Choose a number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual, \033[38;5;15mA/S\033[0m to toggle releases, \033[38;5;15mD\033[0m to restore default, or \033[38;5;15mQ\033[0m to quit"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     }
     
@@ -1497,6 +1498,24 @@ get_xray_core() {
                 continue
             fi
             
+        elif [ "$choice" == "D" ] || [ "$choice" == "d" ]; then
+            echo
+            echo -e "\033[1;33m🏠 Restore to Container Default Xray\033[0m"
+            echo -e "\033[38;5;8m   This will remove external Xray mount and use the version built into the container.\033[0m"
+            echo
+            read -p "Are you sure you want to restore to container default? (y/n): " -r confirm_restore
+            if [[ $confirm_restore =~ ^[Yy]$ ]]; then
+                restore_to_container_default
+                echo
+                echo -n -e "\033[38;5;8mPress Enter to continue...\033[0m"
+                read
+            else
+                echo -e "\033[1;31m❌ Restore cancelled.\033[0m"
+                echo
+                echo -n -e "\033[38;5;8mPress Enter to continue...\033[0m"
+                read
+            fi
+            
         elif [ "$choice" == "Q" ] || [ "$choice" == "q" ]; then
             echo
             echo -e "\033[1;31m❌ Installation cancelled by user.\033[0m"
@@ -1505,7 +1524,7 @@ get_xray_core() {
         else
             echo
             echo -e "\033[1;31m❌ Invalid choice: '$choice'\033[0m"
-            echo -e "\033[38;5;8m   Please enter a number between 1-${#versions[@]}, M for manual, A/S to toggle releases, R to refresh, or Q to quit.\033[0m"
+            echo -e "\033[38;5;8m   Please enter a number between 1-${#versions[@]}, M for manual, A/S to toggle releases, R to refresh, D to restore default, or Q to quit.\033[0m"
             echo
             echo -n -e "\033[38;5;8mPress Enter to continue...\033[0m"
             read
@@ -1877,6 +1896,85 @@ update_core_command() {
         colorized_echo green "Installation of XRAY-CORE version $selected_version completed."
         
 
+        read -p "Operation completed successfully. Do you want to keep the backup file? (y/n): " -r keep_backup
+        if [[ ! $keep_backup =~ ^[Yy]$ ]]; then
+            rm "$backup_file"
+            colorized_echo blue "Backup file removed"
+        else
+            colorized_echo blue "Backup file kept at: $backup_file"
+        fi
+
+        cleanup_old_backups "$COMPOSE_FILE"
+        
+    else
+        colorized_echo red "Docker-compose.yml validation failed! Restoring backup..."
+        if restore_backup "$backup_file" "$COMPOSE_FILE"; then
+            colorized_echo green "Backup restored successfully"
+            colorized_echo red "Please check the docker-compose.yml file manually"
+        else
+            colorized_echo red "Failed to restore backup! Original file may be corrupted"
+            colorized_echo red "Backup location: $backup_file"
+        fi
+        exit 1
+    fi
+}
+
+
+restore_to_container_default() {
+    check_running_as_root
+    colorized_echo blue "Restoring to container default Xray-core..."
+    
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        colorized_echo red "Docker Compose file not found at $COMPOSE_FILE"
+        exit 1
+    fi
+    
+    # Create backup before making changes
+    colorized_echo blue "Creating backup of docker-compose.yml..."
+    backup_file=$(create_backup "$COMPOSE_FILE")
+    if [ $? -eq 0 ]; then
+        colorized_echo green "Backup created: $backup_file"
+    else
+        colorized_echo red "Failed to create backup"
+        exit 1
+    fi
+    
+    local service_indent=$(get_service_property_indentation "$COMPOSE_FILE")
+    local escaped_service_indent=$(escape_for_sed "$service_indent")
+    
+    # Remove xray-related volume mounts using # as delimiter
+    colorized_echo blue "Removing external Xray volume mounts..."
+    sed -i "\#$XRAY_FILE#d" "$COMPOSE_FILE"
+    sed -i "\#geoip\.dat#d" "$COMPOSE_FILE"
+    sed -i "\#geosite\.dat#d" "$COMPOSE_FILE"
+    
+    # Check if volumes section is now empty and comment it out
+    if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
+        # Count non-empty lines after volumes: line within the service
+        volume_count=$(sed -n "/^${escaped_service_indent}volumes:/,/^${service_indent}[a-zA-Z_]/p" "$COMPOSE_FILE" | \
+                      grep -v "^${escaped_service_indent}volumes:" | \
+                      grep -v "^$" | \
+                      grep -v "^${service_indent}[a-zA-Z_]" | \
+                      wc -l)
+        
+        if [ "$volume_count" -eq 0 ]; then
+            colorized_echo blue "Commenting out empty volumes section..."
+            sed -i "s|^${escaped_service_indent}volumes:|${service_indent}# volumes:|g" "$COMPOSE_FILE"
+        fi
+    fi
+    
+    # Validate the docker-compose file
+    colorized_echo blue "Validating docker-compose.yml..."
+    if validate_compose_file "$COMPOSE_FILE"; then
+        colorized_echo green "Docker-compose.yml validation successful"
+        
+        colorized_echo blue "Restarting RemnaNode to use container default Xray..."
+        restart_command -n
+        
+        colorized_echo green "✅ Successfully restored to container default Xray-core"
+        colorized_echo blue "The container will now use its built-in Xray version"
+        
+        # Ask about backup
         read -p "Operation completed successfully. Do you want to keep the backup file? (y/n): " -r keep_backup
         if [[ ! $keep_backup =~ ^[Yy]$ ]]; then
             rm "$backup_file"
