@@ -464,7 +464,7 @@ get_service_property_indentation() {
 
 escape_for_sed() {
     local text="$1"
-    echo "$text" | sed 's/[[\.*^$()+?{|]/\\&/g' | sed 's/\t/\\t/g'
+    echo "$text" | sed 's/[]\.*^$()+?{|[]/\\&/g' | sed 's/\t/\\t/g'
 }
 
 # Update docker-compose.yml configuration
@@ -499,36 +499,61 @@ update_docker_compose() {
     
     local escaped_service_indent=$(escape_for_sed "$service_indent")
     local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
-    
-    # Prepare volume mounts
-    local volume_mounts=""
-    volume_mounts="${volume_item_indent}- $xray_file:/usr/local/bin/xray"
-    
-    if [ -f "$geoip_file" ]; then
-        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat"
-    fi
-    
-    if [ -f "$geosite_file" ]; then
-        volume_mounts="${volume_mounts}\\n${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat"
-    fi
-    
+
     if grep -q "^${escaped_service_indent}volumes:" "$compose_file"; then
-        # Remove existing xray-related volumes
-        sed -i "/$xray_file/d" "$compose_file"
-        sed -i "/geoip\.dat/d" "$compose_file"
-        sed -i "/geosite\.dat/d" "$compose_file"
+        # Remove existing xray-related volumes using # as delimiter to avoid issues with / in paths
+        sed -i "\#$xray_file#d" "$compose_file"
+        sed -i "\#geoip\.dat#d" "$compose_file"
+        sed -i "\#geosite\.dat#d" "$compose_file"
         
-        # Add new volume mounts
-        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$compose_file"
+        # Create temporary file with volume mounts
+        temp_volumes=$(mktemp)
+        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" > "$temp_volumes"
+        if [ -f "$geoip_file" ]; then
+            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
+        fi
+        if [ -f "$geosite_file" ]; then
+            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
+        fi
+        
+        # Insert volumes after the volumes: line
+        sed -i "/^${escaped_service_indent}volumes:/r $temp_volumes" "$compose_file"
+        rm "$temp_volumes"
         colorized_echo green "Updated Xray volumes in existing volumes section"
         
     elif grep -q "^${escaped_service_indent}# volumes:" "$compose_file"; then
         sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$compose_file"
-        sed -i "/^${escaped_service_indent}volumes:/a\\${volume_mounts}" "$compose_file"
+        
+        # Create temporary file with volume mounts
+        temp_volumes=$(mktemp)
+        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" > "$temp_volumes"
+        if [ -f "$geoip_file" ]; then
+            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
+        fi
+        if [ -f "$geosite_file" ]; then
+            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
+        fi
+        
+        # Insert volumes after the volumes: line
+        sed -i "/^${escaped_service_indent}volumes:/r $temp_volumes" "$compose_file"
+        rm "$temp_volumes"
         colorized_echo green "Uncommented volumes section and added Xray volumes"
         
     else
-        sed -i "/^${escaped_service_indent}restart: always/a\\${service_indent}volumes:\\n${volume_mounts}" "$compose_file"
+        # Create temporary file with volumes section
+        temp_volumes=$(mktemp)
+        echo "${service_indent}volumes:" > "$temp_volumes"
+        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" >> "$temp_volumes"
+        if [ -f "$geoip_file" ]; then
+            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
+        fi
+        if [ -f "$geosite_file" ]; then
+            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
+        fi
+        
+        # Insert volumes section after restart: always
+        sed -i "/^${escaped_service_indent}restart: always/r $temp_volumes" "$compose_file"
+        rm "$temp_volumes"
         colorized_echo green "Added new volumes section with Xray volumes"
     fi
     
