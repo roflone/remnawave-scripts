@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.3
+# VERSION=2.1.4
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -9,7 +9,7 @@ if [ $# -gt 0 ] && [ "$1" = "@" ]; then
 fi
 
 set -e
-SCRIPT_VERSION="2.1.3"
+SCRIPT_VERSION="2.1.4"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -1444,6 +1444,25 @@ template_command() {
                     fi
                 else
                     echo -e "${RED}❌ Failed to download 503 error template${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            11)
+                echo
+                if download_template "11"; then
+                    echo -e "${GREEN}🎉 503 Error v2 template downloaded successfully!${NC}"
+                    echo
+                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+                    if [ "$running_services" -gt 0 ]; then
+                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+                            cd "$APP_DIR" && docker compose restart
+                            echo -e "${GREEN}✅ Caddy restarted${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}❌ Failed to download 503 error v2 template${NC}"
                 fi
                 read -p "Press Enter to continue..."
                 ;;
