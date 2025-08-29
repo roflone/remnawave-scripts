@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.7.0
+# VERSION=3.7.3
 
 set -e
-SCRIPT_VERSION="3.7.0"
-BACKUP_SCRIPT_VERSION="1.0.1"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.7.3"
+BACKUP_SCRIPT_VERSION="1.0.2"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -408,8 +408,90 @@ install_remnawave_script() {
     fi  
 }
 
-
-
+# Функция для проверки и восстановления поврежденного backup-config.json
+validate_and_fix_backup_config() {
+    if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
+        return 0  # Файл не существует, будет создан позже
+    fi
+    
+    # Проверяем валидность JSON
+    if ! jq . "$BACKUP_CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "\033[1;33m⚠️  Backup configuration file is corrupted, attempting to recover...\033[0m"
+        
+        # Пытаемся извлечь токен из поврежденного файла
+        local existing_token=""
+        local existing_chat_id=""
+        local existing_thread_id=""
+        
+        if [ -f "$BACKUP_CONFIG_FILE" ]; then
+            # Ищем токен в поврежденном файле (может быть без кавычек)
+            existing_token=$(grep -o '"bot_token":[[:space:]]*[^,}]*' "$BACKUP_CONFIG_FILE" 2>/dev/null | sed 's/"bot_token":[[:space:]]*//' | sed 's/^"//;s/"$//' || echo "")
+            existing_chat_id=$(grep -o '"chat_id":[[:space:]]*[^,}]*' "$BACKUP_CONFIG_FILE" 2>/dev/null | sed 's/"chat_id":[[:space:]]*//' | sed 's/^"//;s/"$//' || echo "")
+            existing_thread_id=$(grep -o '"thread_id":[[:space:]]*[^,}]*' "$BACKUP_CONFIG_FILE" 2>/dev/null | sed 's/"thread_id":[[:space:]]*//' | sed 's/^"//;s/"$//' || echo "")
+            
+            # Создаем бэкап поврежденного файла
+            cp "$BACKUP_CONFIG_FILE" "$BACKUP_CONFIG_FILE.corrupted.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        fi
+        
+        # Определяем значения для восстановления
+        local bot_token_value="null"
+        local chat_id_value="null"
+        local thread_id_value="null"
+        local telegram_enabled="false"
+        
+        if [ -n "$existing_token" ] && [ "$existing_token" != "null" ] && [ "$existing_token" != "*" ]; then
+            bot_token_value="\"$existing_token\""
+            telegram_enabled="true"
+        fi
+        
+        if [ -n "$existing_chat_id" ] && [ "$existing_chat_id" != "null" ]; then
+            chat_id_value="\"$existing_chat_id\""
+        fi
+        
+        if [ -n "$existing_thread_id" ] && [ "$existing_thread_id" != "null" ]; then
+            thread_id_value="\"$existing_thread_id\""
+        fi
+        
+        # Пересоздаем конфигурационный файл с сохраненными данными
+        cat > "$BACKUP_CONFIG_FILE" << EOF
+{
+  "app_name": "remnawave",
+  "schedule": "0 2 * * *",
+  "compression": {
+    "enabled": true,
+    "level": 6
+  },
+  "retention": {
+    "days": 7,
+    "min_backups": 3
+  },
+  "telegram": {
+    "enabled": $telegram_enabled,
+    "bot_token": $bot_token_value,
+    "chat_id": $chat_id_value,
+    "thread_id": $thread_id_value,
+    "split_large_files": true,
+    "max_file_size": 49,
+    "api_server": "https://api.telegram.org",
+    "use_custom_api": false
+  }
+}
+EOF
+        
+        # Проверяем что новый файл валиден
+        if jq . "$BACKUP_CONFIG_FILE" >/dev/null 2>&1; then
+            echo -e "\033[1;32m✅ Backup configuration restored successfully\033[0m"
+            if [ "$telegram_enabled" = "true" ]; then
+                echo -e "\033[1;36m📱 Telegram settings were preserved from corrupted file\033[0m"
+            fi
+        else
+            echo -e "\033[1;31m❌ Failed to restore backup configuration\033[0m"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
 
 ensure_backup_dirs() {
     if [ ! -d "$APP_DIR" ]; then
@@ -417,6 +499,9 @@ ensure_backup_dirs() {
         echo -e "\033[38;5;8m   Run '\033[38;5;15msudo $APP_NAME install\033[38;5;8m' first\033[0m"
         return 1
     fi
+    
+    # Проверяем и исправляем поврежденный конфиг если нужно
+    validate_and_fix_backup_config
     
     mkdir -p "$APP_DIR/logs" 2>/dev/null || true
     mkdir -p "$APP_DIR/backups" 2>/dev/null || true
@@ -921,7 +1006,17 @@ schedule_configure_telegram() {
                 sleep 2
                 return
             fi
-            schedule_update_config ".telegram.bot_token" "\"$bot_token\""
+            
+            # Экранируем специальные символы в токене для безопасного JSON
+            bot_token_escaped=$(printf '%s' "$bot_token" | sed 's/"/\\"/g')
+            
+            if schedule_update_config ".telegram.bot_token" "\"$bot_token_escaped\""; then
+                echo -e "\033[1;32m✅ Bot token saved successfully\033[0m"
+            else
+                echo -e "\033[1;31m❌ Failed to save bot token\033[0m"
+                sleep 2
+                return
+            fi
         fi
         
         # Chat ID
@@ -964,12 +1059,22 @@ schedule_configure_telegram() {
 schedule_update_config() {
     local key="$1"
     local value="$2"
+    
+    # Проверяем и исправляем поврежденный конфиг если нужно
+    validate_and_fix_backup_config
+    
     if [ ! -f "$BACKUP_CONFIG_FILE" ]; then
         echo '{}' > "$BACKUP_CONFIG_FILE"
     fi
 
     local temp_file=$(mktemp)
-    jq "$key = $value" "$BACKUP_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$BACKUP_CONFIG_FILE"
+    if jq "$key = $value" "$BACKUP_CONFIG_FILE" > "$temp_file" 2>/dev/null; then
+        mv "$temp_file" "$BACKUP_CONFIG_FILE"
+    else
+        echo -e "\033[1;31m❌ Failed to update backup configuration\033[0m"
+        rm -f "$temp_file"
+        return 1
+    fi
 }
 
 ensure_cron_installed() {
@@ -1750,6 +1855,9 @@ schedule_create_backup_script() {
     local config_dir="$(dirname "$BACKUP_CONFIG_FILE")"
     mkdir -p "$config_dir"
     
+    # Проверяем и исправляем поврежденный конфиг если нужно
+    validate_and_fix_backup_config
+    
     cat > "$BACKUP_SCRIPT_FILE" <<'BACKUP_SCRIPT_EOF'
 #!/bin/bash
 
@@ -1787,6 +1895,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
+# Проверяем валидность JSON конфигурации
+if ! jq . "$CONFIG_FILE" >/dev/null 2>&1; then
+    log_message "ERROR: Backup configuration file is corrupted: $CONFIG_FILE"
+    log_message "Please run the main script to recreate configuration"
+    exit 1
+fi
+
 APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
 APP_DIR="/opt/$APP_NAME"
 BACKUP_DIR="$APP_DIR/backups"
@@ -1812,16 +1927,27 @@ mkdir -p "$temp_backup_dir"
 # Шаг 1: Экспорт базы данных
 log_message "Step 1: Exporting database..."
 
+# Читаем параметры БД из .env файла
+postgres_user="postgres"
+postgres_password="postgres"
+postgres_db="postgres"
+
+if [ -f "$APP_DIR/.env" ]; then
+    postgres_user=$(grep "^POSTGRES_USER=" "$APP_DIR/.env" | cut -d'=' -f2 2>/dev/null | sed 's/^"//;s/"$//' || echo "postgres")
+    postgres_password=$(grep "^POSTGRES_PASSWORD=" "$APP_DIR/.env" | cut -d'=' -f2 2>/dev/null | sed 's/^"//;s/"$//' || echo "postgres")
+    postgres_db=$(grep "^POSTGRES_DB=" "$APP_DIR/.env" | cut -d'=' -f2 2>/dev/null | sed 's/^"//;s/"$//' || echo "postgres")
+fi
+
 db_container="${APP_NAME}-db"
-if ! docker exec "$db_container" pg_isready -U postgres >/dev/null 2>&1; then
+if ! docker exec "$db_container" pg_isready -U "$postgres_user" >/dev/null 2>&1; then
     log_message "ERROR: Database container is not ready"
     rm -rf "$temp_backup_dir"
     exit 1
 fi
 
 database_file="$temp_backup_dir/database.sql"
-if docker exec -e PGPASSWORD=postgres "$db_container" \
-    pg_dump -U postgres -d postgres --clean --if-exists > "$database_file" 2>/dev/null; then
+if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+    pg_dump -U "$postgres_user" -d "$postgres_db" --clean --if-exists > "$database_file" 2>/dev/null; then
     
     # ИСПРАВЛЕНО: убрал local
     db_size=$(du -sh "$database_file" | cut -f1)
