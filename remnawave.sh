@@ -2103,8 +2103,8 @@ if [ "$TELEGRAM_ENABLED" = "true" ];
 📅 *Date:* $(date '+%Y-%m-%d %H:%M:%S')
 🔢 *Size:* $(du -sh "$final_backup_file" | cut -f1)
 🏷️ *Type:* Full System Backup
-� *Panel:* v$panel_version
-�🖥️ *Server:* $(hostname)
+📊 *Panel:* v$panel_version
+🖥️ *Server:* $(hostname)
 ✅ *Status:* Success"
           # Если файл меньше 50MB, отправляем его
         file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
