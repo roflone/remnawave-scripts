@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.4
+# VERSION=2.1.5
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -9,7 +9,7 @@ if [ $# -gt 0 ] && [ "$1" = "@" ]; then
 fi
 
 set -e
-SCRIPT_VERSION="2.1.4"
+SCRIPT_VERSION="2.1.5"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
@@ -1494,7 +1494,20 @@ install_management_script() {
     
     # Определить путь к скрипту
     local script_path
+    local target_path="/usr/local/bin/$APP_NAME"
+    
+    # Проверим, не является ли источник тем же файлом, что и целевой
     if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "@" ]; then
+        # Получаем абсолютные пути для сравнения
+        local source_real_path=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+        local target_real_path=$(realpath "$target_path" 2>/dev/null || readlink -f "$target_path" 2>/dev/null || echo "$target_path")
+        
+        # Если это один и тот же файл, пропускаем копирование
+        if [ "$source_real_path" = "$target_real_path" ]; then
+            echo -e "${GREEN}✅ Management script already installed: $target_path${NC}"
+            return 0
+        fi
+        
         script_path="$0"
     else
         # Попытаться найти скрипт в /tmp или скачать заново
@@ -1509,11 +1522,14 @@ install_management_script() {
         fi
     fi
     
-    # Установить скрипт
+    # Установить скрипт только если это разные файлы
     if [ -f "$script_path" ]; then
-        cp "$script_path" "/usr/local/bin/$APP_NAME"
-        chmod +x "/usr/local/bin/$APP_NAME"
-        echo -e "${GREEN}✅ Management script installed: /usr/local/bin/$APP_NAME${NC}"
+        if cp "$script_path" "$target_path" 2>/dev/null; then
+            chmod +x "$target_path"
+            echo -e "${GREEN}✅ Management script installed: $target_path${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Management script installation skipped (already exists)${NC}"
+        fi
         
         # Очистить временный файл если использовался
         if [ "$script_path" = "/tmp/selfsteal-install.sh" ]; then
