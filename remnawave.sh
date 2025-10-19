@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.7.3
+# VERSION=3.7.8
 
-SCRIPT_VERSION="3.7.7"
+SCRIPT_VERSION="3.7.8"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1869,6 +1869,108 @@ rollback_from_safety_backup() {
 }
 
 # Функция проверки целостности после восстановления
+restore_telegram_bots() {
+    local target_dir="$1"
+    local target_app_name="$2"
+    local bots_dir="$target_dir/telegram-bots"
+    local success_count=0
+    local failed_count=0
+    
+    if [ ! -d "$bots_dir" ]; then
+        return 0
+    fi
+    
+    echo -e "\033[38;5;244m   Searching for Telegram bot backups...\033[0m"
+    
+    for bot_dir in "$bots_dir"/*; do
+        if [ ! -d "$bot_dir" ]; then
+            continue
+        fi
+        
+        local bot_name=$(basename "$bot_dir")
+        echo -e "\033[38;5;244m   Found bot: $bot_name\033[0m"
+        
+        # Проверяем что контейнер бота существует
+        if ! docker ps -a --format '{{.Names}}' | grep -q "^${bot_name}$"; then
+            echo -e "\033[1;33m   ⚠️  Container $bot_name not found\033[0m"
+            echo -e "\033[38;5;244m      Bot needs to be created first via docker-compose\033[0m"
+            echo -e "\033[38;5;244m      Volumes and configs are saved in: $bot_dir\033[0m"
+            failed_count=$((failed_count + 1))
+            continue
+        fi
+        
+        # Останавливаем контейнер бота
+        echo -e "\033[38;5;244m   Stopping $bot_name...\033[0m"
+        docker stop "$bot_name" 2>/dev/null || true
+        
+        # Восстанавливаем volumes если есть
+        if [ -d "$bot_dir/volumes" ]; then
+            echo -e "\033[38;5;244m   Restoring volumes...\033[0m"
+            local volume_restored=false
+            
+            for volume_archive in "$bot_dir/volumes"/*.tar.gz; do
+                if [ ! -f "$volume_archive" ]; then
+                    continue
+                fi
+                
+                local volume_name=$(basename "$volume_archive" .tar.gz)
+                echo -e "\033[38;5;244m     Restoring volume: $volume_name\033[0m"
+                
+                # Удаляем старый volume
+                docker volume rm "$volume_name" 2>/dev/null || true
+                
+                # Создаем новый volume
+                docker volume create "$volume_name" >/dev/null 2>&1
+                
+                # Восстанавливаем данные
+                if docker run --rm \
+                    -v "$volume_name:/target" \
+                    -v "$bot_dir/volumes:/source:ro" \
+                    alpine \
+                    sh -c "cd /target && tar -xzf /source/$(basename "$volume_archive")" >/dev/null 2>&1; then
+                    echo -e "\033[38;5;244m     ✅ Volume $volume_name restored\033[0m"
+                    volume_restored=true
+                else
+                    echo -e "\033[1;31m     ❌ Failed to restore volume $volume_name\033[0m"
+                    failed_count=$((failed_count + 1))
+                fi
+            done
+        fi
+        
+        # Показываем информацию о переменных окружения
+        if [ -f "$bot_dir/environment.json" ]; then
+            echo -e "\033[38;5;244m   ℹ️  Environment variables backed up\033[0m"
+            echo -e "\033[38;5;244m      Note: Environment cannot be auto-applied to existing container\033[0m"
+            echo -e "\033[38;5;244m      If bot fails to start, recreate container with correct env\033[0m"
+        fi
+        
+        # Запускаем контейнер бота
+        echo -e "\033[38;5;244m   Starting $bot_name...\033[0m"
+        if docker start "$bot_name" >/dev/null 2>&1; then
+            echo -e "\033[1;32m   ✅ Bot $bot_name restored and started\033[0m"
+            success_count=$((success_count + 1))
+        else
+            echo -e "\033[1;31m   ❌ Failed to start bot $bot_name\033[0m"
+            echo -e "\033[38;5;244m      Check: docker logs $bot_name\033[0m"
+            failed_count=$((failed_count + 1))
+        fi
+        
+        echo
+    done
+    
+    # Итоговая статистика
+    if [ $success_count -gt 0 ]; then
+        echo -e "\033[1;32m   Summary: $success_count bot(s) restored successfully\033[0m"
+    fi
+    
+    if [ $failed_count -gt 0 ]; then
+        echo -e "\033[1;33m   Warning: $failed_count bot(s) failed or skipped\033[0m"
+        return 1
+    fi
+    
+    return 0
+}
+
 verify_restore_integrity() {
     local target_dir="$1"
     local app_name="$2"
@@ -2479,6 +2581,87 @@ else
     echo "   Check logs: docker logs ${APP_NAME}-db"
     echo "   Current status: \$(docker inspect --format='{{.State.Health.Status}}' "${APP_NAME}-db" 2>/dev/null || echo 'unknown')"
 fi
+
+# Восстановление Telegram ботов (если есть)
+if [ -d "$SCRIPT_DIR/telegram-bots" ]; then
+    echo
+    echo "==================================="
+    echo "Restoring Telegram Bots"
+    echo "==================================="
+    echo
+    
+    for bot_dir in "$SCRIPT_DIR/telegram-bots"/*; do
+        if [ ! -d "$bot_dir" ]; then
+            continue
+        fi
+        
+        bot_name=\$(basename "$bot_dir")
+        echo "Found bot: $bot_name"
+        
+        # Проверяем что контейнер бота существует
+        if ! docker ps -a --format '{{.Names}}' | grep -q "^${bot_name}$"; then
+            echo "⚠️  Container $bot_name not found, skipping restore"
+            echo "   Create container first using docker-compose"
+            continue
+        fi
+        
+        # Останавливаем контейнер бота
+        echo "  Stopping $bot_name..."
+        docker stop "$bot_name" 2>/dev/null || true
+        
+        # Восстанавливаем volumes если есть
+        if [ -d "$bot_dir/volumes" ]; then
+            echo "  Restoring volumes..."
+            for volume_archive in "$bot_dir/volumes"/*.tar.gz; do
+                if [ ! -f "$volume_archive" ]; then
+                    continue
+                fi
+                
+                volume_name=\$(basename "$volume_archive" .tar.gz)
+                echo "    Restoring volume: $volume_name"
+                
+                # Удаляем старый volume
+                docker volume rm "$volume_name" 2>/dev/null || true
+                
+                # Создаем новый volume
+                docker volume create "$volume_name"
+                
+                # Восстанавливаем данные
+                docker run --rm \
+                    -v "$volume_name:/target" \
+                    -v "$bot_dir/volumes:/source:ro" \
+                    alpine \
+                    sh -c "cd /target && tar -xzf /source/\$(basename "$volume_archive")"
+                    
+                if [ $? -eq 0 ]; then
+                    echo "    ✅ Volume $volume_name restored"
+                else
+                    echo "    ❌ Failed to restore volume $volume_name"
+                fi
+            done
+        fi
+        
+        # Применяем переменные окружения (через docker inspect и update)
+        if [ -f "$bot_dir/environment.json" ]; then
+            echo "  ℹ️  Environment variables backed up (apply manually if needed)"
+            echo "     File: $bot_dir/environment.json"
+        fi
+        
+        # Запускаем контейнер бота
+        echo "  Starting $bot_name..."
+        docker start "$bot_name" 2>/dev/null || true
+        
+        echo "  ✅ Bot $bot_name restored"
+    done
+    
+    echo
+    echo "✅ All Telegram bots restored"
+fi
+
+echo
+echo "==================================="
+echo "Restore Complete!"
+echo "==================================="
 RESTORE_SCRIPT_EOF
 
     # Заменяем __APP_NAME__ на реальное имя
@@ -3960,6 +4143,18 @@ restore_full_from_archive() {
         return 1
     else
         log_restore_operation "Database Restore" "SUCCESS" "Database successfully restored"
+    fi
+    
+    # Step 6.5: Восстановление Telegram ботов (если есть)
+    if [ -d "$target_dir/telegram-bots" ]; then
+        echo -e "\033[38;5;250m📝 Step 6.5:\033[0m Restoring Telegram bots..."
+        if restore_telegram_bots "$target_dir" "$target_app_name"; then
+            echo -e "\033[1;32m✅ Telegram bots restored successfully\033[0m"
+            log_restore_operation "Telegram Bots Restore" "SUCCESS" "Telegram bots restored"
+        else
+            echo -e "\033[1;33m⚠️  Some Telegram bots failed to restore, check logs\033[0m"
+            log_restore_operation "Telegram Bots Restore" "WARNING" "Some bots failed to restore"
+        fi
     fi
     
     # Step 7: Проверка целостности восстановления
