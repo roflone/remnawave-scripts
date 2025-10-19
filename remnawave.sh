@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.7.8
+# VERSION=3.8.0
 
-SCRIPT_VERSION="3.7.8"
+SCRIPT_VERSION="3.8.0"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1899,9 +1899,78 @@ restore_telegram_bots() {
             continue
         fi
         
-        # Останавливаем контейнер бота
-        echo -e "\033[38;5;244m   Stopping $bot_name...\033[0m"
-        docker stop "$bot_name" 2>/dev/null || true
+        # Проверяем наличие docker-compose.yml для определения метода остановки
+        local bot_compose_file="/opt/remnawave/telegram-bots/$bot_name/docker-compose.yml"
+        local use_compose_down=false
+        
+        if [ -f "$bot_compose_file" ]; then
+            use_compose_down=true
+        fi
+
+        # Предупреждение перед остановкой и удалением
+        echo ""
+        echo -e "\033[1;33m   ⚠️  ВНИМАНИЕ! Сейчас будут выполнены следующие действия:\033[0m"
+        echo ""
+        if [ "$use_compose_down" = true ]; then
+            echo -e "\033[38;5;244m     1. Остановка всех контейнеров бота через docker compose down\033[0m"
+            echo -e "\033[38;5;244m        (это остановит: $bot_name и ${bot_name}-db)\033[0m"
+        else
+            echo -e "\033[38;5;244m     1. Принудительная остановка и удаление контейнеров:\033[0m"
+            echo -e "\033[38;5;244m        - $bot_name\033[0m"
+            echo -e "\033[38;5;244m        - ${bot_name}-db\033[0m"
+        fi
+        echo -e "\033[38;5;244m     2. Удаление существующих volumes:\033[0m"
+        echo -e "\033[38;5;244m        - ${bot_name}-data\033[0m"
+        echo -e "\033[38;5;244m        - ${bot_name}-db-data\033[0m"
+        echo -e "\033[38;5;244m     3. Восстановление данных из бэкапа\033[0m"
+        echo -e "\033[38;5;244m     4. Восстановление базы данных\033[0m"
+        echo -e "\033[38;5;244m     5. Запуск бота с восстановленными данными\033[0m"
+        echo ""
+        echo -e "\033[1;33m     Все текущие данные бота будут заменены данными из бэкапа!\033[0m"
+        echo ""
+        
+        read -p "   Продолжить восстановление бота $bot_name? (y/n): " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo -e "\033[1;31m   ❌ Восстановление отменено пользователем\033[0m"
+            failed_count=$((failed_count + 1))
+            continue
+        fi
+        echo ""
+
+        # Останавливаем и удаляем контейнеры бота
+        if [ "$use_compose_down" = true ]; then
+            echo -e "\033[38;5;244m   Останавливаем все контейнеры бота через docker compose down...\033[0m"
+            cd "/opt/remnawave/telegram-bots/$bot_name"
+            if docker compose down -v 2>/dev/null; then
+                echo -e "\033[38;5;244m   ✅ Контейнеры успешно остановлены через docker compose\033[0m"
+            else
+                echo -e "\033[1;33m   ⚠️  docker compose down не удался, используем принудительную остановку\033[0m"
+                use_compose_down=false
+            fi
+            cd - > /dev/null
+        fi
+        
+        # Если compose down не сработал или файл отсутствует - принудительная остановка
+        if [ "$use_compose_down" = false ]; then
+            echo -e "\033[38;5;244m   Принудительно останавливаем и удаляем контейнеры...\033[0m"
+            
+            # Останавливаем оба контейнера
+            for container in "$bot_name" "${bot_name}-db"; do
+                if docker ps -aq -f name="^${container}$" | grep -q .; then
+                    echo -e "\033[38;5;244m     Stopping $container...\033[0m"
+                    docker stop "$container" 2>/dev/null || true
+                    docker rm -f "$container" 2>/dev/null || true
+                fi
+            done
+        fi
+
+        # Дополнительная проверка - убедимся что контейнеры удалены
+        for container in "$bot_name" "${bot_name}-db"; do
+            if docker ps -aq -f name="^${container}$" | grep -q .; then
+                echo -e "\033[1;33m     ⚠️  Контейнер $container все еще существует, удаляем принудительно...\033[0m"
+                docker rm -f "$container" 2>/dev/null || true
+            fi
+        done
         
         # Восстанавливаем volumes если есть
         if [ -d "$bot_dir/volumes" ]; then
@@ -1937,6 +2006,52 @@ restore_telegram_bots() {
             done
         fi
         
+        # Восстанавливаем БД бота если есть дамп
+        local bot_db_dump="$bot_dir/bot-database.sql.gz"
+        local bot_db_container="${bot_name}-db"
+        
+        if [ -f "$bot_db_dump" ]; then
+            echo -e "\033[38;5;244m   Found bot database dump, checking for DB container...\033[0m"
+            
+            if docker ps -a --format '{{.Names}}' | grep -q "^${bot_db_container}$"; then
+                echo -e "\033[38;5;244m   Restoring bot database...\033[0m"
+                
+                # Запускаем контейнер БД бота
+                docker start "$bot_db_container" >/dev/null 2>&1
+                
+                # Ждем готовности БД бота (используем существующую функцию)
+                echo -e "\033[38;5;244m   Waiting for bot DB to be ready...\033[0m"
+                local bot_db_wait=0
+                local bot_db_max_wait=30
+                
+                until [ "$(docker inspect --format='{{.State.Health.Status}}' "$bot_db_container" 2>/dev/null)" == "healthy" ]; do
+                    sleep 2
+                    echo -n "."
+                    bot_db_wait=$((bot_db_wait + 1))
+                    if [ $bot_db_wait -gt $bot_db_max_wait ]; then
+                        echo ""
+                        echo -e "\033[1;33m   ⚠️  Bot DB health check timeout, proceeding anyway...\033[0m"
+                        break
+                    fi
+                done
+                
+                if [ $bot_db_wait -le $bot_db_max_wait ]; then
+                    echo ""
+                    echo -e "\033[38;5;244m   ✓ Bot DB is healthy\033[0m"
+                fi
+                
+                # Восстанавливаем дамп
+                echo -e "\033[38;5;244m   Importing database dump...\033[0m"
+                if gunzip -c "$bot_db_dump" | docker exec -i "$bot_db_container" psql -U postgres -q >/dev/null 2>&1; then
+                    echo -e "\033[1;32m   ✓ Bot database restored successfully\033[0m"
+                else
+                    echo -e "\033[1;33m   ⚠️  Failed to restore bot database (bot may not work correctly)\033[0m"
+                fi
+            else
+                echo -e "\033[1;33m   ⚠️  DB container $bot_db_container not found, skipping DB restore\033[0m"
+            fi
+        fi
+        
         # Показываем информацию о переменных окружения
         if [ -f "$bot_dir/environment.json" ]; then
             echo -e "\033[38;5;244m   ℹ️  Environment variables backed up\033[0m"
@@ -1947,6 +2062,28 @@ restore_telegram_bots() {
         # Запускаем контейнер бота
         echo -e "\033[38;5;244m   Starting $bot_name...\033[0m"
         if docker start "$bot_name" >/dev/null 2>&1; then
+            # Ждем готовности бота (если есть healthcheck)
+            if docker inspect --format='{{.State.Health}}' "$bot_name" 2>/dev/null | grep -q "Status"; then
+                echo -e "\033[38;5;244m   Waiting for bot to be healthy...\033[0m"
+                local bot_wait=0
+                local bot_max_wait=15
+                
+                until [ "$(docker inspect --format='{{.State.Health.Status}}' "$bot_name" 2>/dev/null)" == "healthy" ]; do
+                    sleep 2
+                    echo -n "."
+                    bot_wait=$((bot_wait + 1))
+                    if [ $bot_wait -gt $bot_max_wait ]; then
+                        echo ""
+                        echo -e "\033[1;33m   ⚠️  Bot health check timeout, but container is running\033[0m"
+                        break
+                    fi
+                done
+                
+                if [ $bot_wait -le $bot_max_wait ]; then
+                    echo ""
+                fi
+            fi
+            
             echo -e "\033[1;32m   ✅ Bot $bot_name restored and started\033[0m"
             success_count=$((success_count + 1))
         else
@@ -2442,6 +2579,20 @@ BOT_INFO_EOF
         # Бэкапим переменные окружения (без секретов в логах)
         docker inspect "$bot_name" --format='{{json .Config.Env}}' > "$bot_backup_dir/environment.json" 2>/dev/null || true
         
+        # Проверяем наличие отдельного контейнера БД для бота
+        local bot_db_container="${bot_name}-db"
+        if docker ps --format '{{.Names}}' | grep -q "^${bot_db_container}$"; then
+            log_message "  Found separate DB container: $bot_db_container, backing up database..."
+            
+            # Бэкапим БД бота через pg_dumpall
+            local bot_db_dump="$bot_backup_dir/bot-database.sql.gz"
+            if docker exec -t "$bot_db_container" pg_dumpall -c -U postgres 2>/dev/null | gzip -9 > "$bot_db_dump"; then
+                log_message "  ✓ Bot database backed up successfully"
+            else
+                log_message "  WARNING: Failed to backup bot database from $bot_db_container"
+            fi
+        fi
+        
         # Бэкапим volumes если есть
         local volumes=$(docker inspect "$bot_name" --format='{{range .Mounts}}{{.Name}},{{end}}' 2>/dev/null | sed 's/,$//')
         if [ -n "$volumes" ]; then
@@ -2605,9 +2756,120 @@ if [ -d "$SCRIPT_DIR/telegram-bots" ]; then
             continue
         fi
         
-        # Останавливаем контейнер бота
-        echo "  Stopping $bot_name..."
-        docker stop "$bot_name" 2>/dev/null || true
+        # Проверяем наличие docker-compose.yml для определения метода остановки
+        bot_compose_file="/opt/remnawave/telegram-bots/\$bot_name/docker-compose.yml"
+        use_compose_down=false
+        
+        if [ -f "\$bot_compose_file" ]; then
+            use_compose_down=true
+        fi
+
+        # Предупреждение перед остановкой и удалением
+        echo ""
+        echo "⚠️  ВНИМАНИЕ! Сейчас будут выполнены следующие действия:"
+        echo ""
+        if [ "\$use_compose_down" = "true" ]; then
+            echo "  1. Остановка всех контейнеров бота через docker compose down"
+            echo "     (это остановит: \$bot_name и \${bot_name}-db)"
+        else
+            echo "  1. Принудительная остановка и удаление контейнеров:"
+            echo "     - \$bot_name"
+            echo "     - \${bot_name}-db"
+        fi
+        echo "  2. Удаление существующих volumes:"
+        echo "     - \${bot_name}-data"
+        echo "     - \${bot_name}-db-data"
+        echo "  3. Восстановление данных из бэкапа"
+        echo "  4. Восстановление базы данных"
+        echo "  5. Запуск бота с восстановленными данными"
+        echo ""
+        echo "Все текущие данные бота будут заменены данными из бэкапа!"
+        echo ""
+        
+        read -p "Продолжить восстановление бота \$bot_name? (y/n): " confirm
+        if [[ ! "\$confirm" =~ ^[Yy]$ ]]; then
+            echo "❌ Восстановление отменено пользователем"
+            continue
+        fi
+        echo ""
+
+        # Останавливаем и удаляем контейнеры бота
+        if [ "\$use_compose_down" = "true" ]; then
+            echo "  Останавливаем все контейнеры бота через docker compose down..."
+            cd "/opt/remnawave/telegram-bots/\$bot_name"
+            if docker compose down -v 2>/dev/null; then
+                echo "  ✅ Контейнеры успешно остановлены через docker compose"
+            else
+                echo "  ⚠️  docker compose down не удался, используем принудительную остановку"
+                use_compose_down=false
+            fi
+            cd - > /dev/null
+        fi
+        
+        # Если compose down не сработал или файл отсутствует - принудительная остановка
+        if [ "\$use_compose_down" = "false" ]; then
+            echo "  Принудительно останавливаем и удаляем контейнеры..."
+            
+            # Останавливаем оба контейнера
+            for container in "\$bot_name" "\${bot_name}-db"; do
+                if docker ps -aq -f name="^\${container}$" | grep -q .; then
+                    echo "    Stopping \$container..."
+                    docker stop "\$container" 2>/dev/null || true
+                    docker rm -f "\$container" 2>/dev/null || true
+                fi
+            done
+        fi
+
+        # Дополнительная проверка - убедимся что контейнеры удалены
+        for container in "\$bot_name" "\${bot_name}-db"; do
+            if docker ps -aq -f name="^\${container}$" | grep -q .; then
+                echo "    ⚠️  Контейнер \$container все еще существует, удаляем принудительно..."
+                docker rm -f "\$container" 2>/dev/null || true
+            fi
+        done
+        
+        # Восстанавливаем БД бота если есть дамп
+        bot_db_dump="$bot_dir/bot-database.sql.gz"
+        bot_db_container="${bot_name}-db"
+        
+        if [ -f "$bot_db_dump" ]; then
+            echo "  Found bot database dump"
+            
+            if docker ps -a --format '{{.Names}}' | grep -q "^${bot_db_container}$"; then
+                echo "  Restoring bot database..."
+                
+                # Запускаем контейнер БД бота
+                docker start "$bot_db_container" 2>/dev/null || true
+                
+                # Ждем готовности БД бота
+                echo "  Waiting for bot DB to be ready..."
+                bot_db_wait=0
+                bot_db_max_wait=30
+                
+                until [ "\$(docker inspect --format='{{.State.Health.Status}}' "$bot_db_container" 2>/dev/null)" == "healthy" ]; do
+                    sleep 2
+                    bot_db_wait=\$((bot_db_wait + 1))
+                    if [ \$bot_db_wait -gt \$bot_db_max_wait ]; then
+                        echo "  ⚠️  Bot DB health check timeout"
+                        break
+                    fi
+                done
+                
+                if [ \$bot_db_wait -le \$bot_db_max_wait ]; then
+                    echo "  ✓ Bot DB is healthy"
+                fi
+                
+                # Восстанавливаем дамп
+                echo "  Importing database dump..."
+                if gunzip -c "$bot_db_dump" | docker exec -i "$bot_db_container" psql -U postgres -q >/dev/null 2>&1; then
+                    echo "  ✅ Bot database restored"
+                else
+                    echo "  ⚠️  Failed to restore bot database"
+                fi
+            else
+                echo "  ⚠️  DB container $bot_db_container not found"
+            fi
+        fi
         
         # Восстанавливаем volumes если есть
         if [ -d "$bot_dir/volumes" ]; then
@@ -2649,7 +2911,23 @@ if [ -d "$SCRIPT_DIR/telegram-bots" ]; then
         
         # Запускаем контейнер бота
         echo "  Starting $bot_name..."
-        docker start "$bot_name" 2>/dev/null || true
+        if docker start "$bot_name" 2>/dev/null; then
+            # Ждем готовности бота если есть healthcheck
+            if docker inspect --format='{{.State.Health}}' "$bot_name" 2>/dev/null | grep -q "Status"; then
+                echo "  Waiting for bot to be healthy..."
+                bot_wait=0
+                bot_max_wait=15
+                
+                until [ "\$(docker inspect --format='{{.State.Health.Status}}' "$bot_name" 2>/dev/null)" == "healthy" ]; do
+                    sleep 2
+                    bot_wait=\$((bot_wait + 1))
+                    if [ \$bot_wait -gt \$bot_max_wait ]; then
+                        echo "  ⚠️  Bot health check timeout"
+                        break
+                    fi
+                done
+            fi
+        fi
         
         echo "  ✅ Bot $bot_name restored"
     done
