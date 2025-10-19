@@ -3,7 +3,6 @@
 # This script installs and manages Remnawave Panel
 # VERSION=3.7.3
 
-set -e
 SCRIPT_VERSION="3.7.6"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
@@ -416,6 +415,12 @@ validate_and_fix_backup_config() {
         return 0  # Файл не существует, будет создан позже
     fi
     
+    # Проверяем наличие jq перед использованием
+    if ! command -v jq >/dev/null 2>&1; then
+        # jq недоступен, пропускаем валидацию
+        return 0
+    fi
+    
     # Проверяем валидность JSON
     if ! jq . "$BACKUP_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "\033[1;33m⚠️  Backup configuration file is corrupted, attempting to recover...\033[0m"
@@ -632,6 +637,21 @@ schedule_command() {
 
 
 schedule_menu() {
+    # Проверяем наличие jq
+    if ! command -v jq >/dev/null 2>&1; then
+        clear
+        echo -e "\033[1;31m❌ Требуется установка jq\033[0m"
+        echo
+        echo -e "\033[38;5;250mjq необходим для работы системы бэкапов\033[0m"
+        echo
+        echo -e "\033[1;37mУстановка:\033[0m"
+        echo -e "\033[38;5;244m  Ubuntu/Debian: sudo apt install jq\033[0m"
+        echo -e "\033[38;5;244m  CentOS/RHEL:   sudo yum install jq\033[0m"
+        echo
+        read -p "Нажмите Enter для возврата в меню..."
+        return 1
+    fi
+    
     if ! ensure_backup_dirs; then
         return 1
     fi
