@@ -3,7 +3,7 @@
 # This script installs and manages Remnawave Panel
 # VERSION=3.8.0
 
-SCRIPT_VERSION="3.8.0"
+SCRIPT_VERSION="3.8.1"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -4296,6 +4296,54 @@ restore_full_from_archive() {
     # Step 3: Извлечение архива
     echo -e "\033[38;5;250m📝 Step 3:\033[0m Extracting backup to target directory..."
     
+    # Предварительная валидация архива
+    echo -e "\033[38;5;244m   Validating backup archive...\033[0m"
+    
+    # Проверка 1: Файл существует
+    if [ ! -f "$backup_file" ]; then
+        echo -e "\033[1;31m❌ Backup file does not exist: $backup_file\033[0m"
+        log_restore_operation "Archive Validation" "ERROR" "Backup file not found: $backup_file"
+        return 1
+    fi
+    
+    # Проверка 2: Файл читаемый
+    if [ ! -r "$backup_file" ]; then
+        echo -e "\033[1;31m❌ Backup file is not readable: $backup_file\033[0m"
+        log_restore_operation "Archive Validation" "ERROR" "Backup file not readable"
+        return 1
+    fi
+    
+    # Проверка 3: Размер файла > 0
+    local file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null)
+    if [ -z "$file_size" ] || [ "$file_size" -eq 0 ]; then
+        echo -e "\033[1;31m❌ Backup file is empty or size cannot be determined\033[0m"
+        log_restore_operation "Archive Validation" "ERROR" "Backup file is empty"
+        return 1
+    fi
+    echo -e "\033[38;5;244m   Archive size: $(numfmt --to=iec-i --suffix=B $file_size 2>/dev/null || echo "${file_size} bytes")\033[0m"
+    
+    # Проверка 4: Валидный tar.gz архив
+    if ! tar -tzf "$backup_file" >/dev/null 2>&1; then
+        echo -e "\033[1;31m❌ Backup file is not a valid tar.gz archive or is corrupted!\033[0m"
+        echo -e "\033[38;5;244m   File: $backup_file\033[0m"
+        log_restore_operation "Archive Validation" "ERROR" "Invalid or corrupted tar.gz archive"
+        return 1
+    fi
+    echo -e "\033[38;5;244m   ✅ Archive validation passed\033[0m"
+    
+    # Проверка 5: Достаточно места на диске
+    local available_space=$(df "$(dirname "$target_dir")" | awk 'NR==2 {print $4}')
+    local required_space=$((file_size * 3 / 1024))  # Примерно 3x размера архива
+    if [ "$available_space" -lt "$required_space" ]; then
+        echo -e "\033[1;31m❌ Insufficient disk space!\033[0m"
+        echo -e "\033[38;5;244m   Required: ~$(numfmt --to=iec-i --suffix=B $((required_space * 1024)) 2>/dev/null || echo "${required_space}KB")\033[0m"
+        echo -e "\033[38;5;244m   Available: $(numfmt --to=iec-i --suffix=B $((available_space * 1024)) 2>/dev/null || echo "${available_space}KB")\033[0m"
+        log_restore_operation "Archive Validation" "ERROR" "Insufficient disk space"
+        return 1
+    fi
+    
+    log_restore_operation "Archive Validation" "SUCCESS" "Archive validated successfully"
+    
     # Удаляем старую директорию если нужно
     if [ -d "$target_dir" ]; then
         rm -rf "$target_dir"
@@ -4305,56 +4353,91 @@ restore_full_from_archive() {
     mkdir -p "$(dirname "$target_dir")"
     
     # Извлекаем архив
+    echo -e "\033[38;5;244m   Extracting archive...\033[0m"
     local temp_extract_dir="/tmp/restore_extract_$$"
     mkdir -p "$temp_extract_dir"
     
-    if tar -xzf "$backup_file" -C "$temp_extract_dir" 2>/dev/null; then
+    # Извлекаем с показом реальных ошибок
+    local tar_error_log="/tmp/tar_error_$$"
+    if tar -xzf "$backup_file" -C "$temp_extract_dir" 2>"$tar_error_log"; then
         # Находим директорию с бэкапом
         local backup_content=$(ls "$temp_extract_dir")
         local backup_dir_name=$(echo "$backup_content" | head -1)
         
-            if [ -d "$temp_extract_dir/$backup_dir_name" ]; then
-                # Проверяем структуру - новый unified формат или старый с app/
-                if [ -f "$temp_extract_dir/$backup_dir_name/docker-compose.yml" ]; then
-                    # НОВЫЙ ФОРМАТ: файлы приложения в корне бэкапа
-                    mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
-                    echo -e "\033[1;32m✅ Backup extracted successfully (unified format)\033[0m"
-                    log_restore_operation "Archive Extraction" "SUCCESS" "Unified format backup extracted"
-                elif [ -d "$temp_extract_dir/$backup_dir_name/app" ]; then
-                    # СТАРЫЙ ФОРМАТ: приложение в поддиректории app
-                    mv "$temp_extract_dir/$backup_dir_name/app" "$target_dir"
-                    
-                    # Копируем database.sql в target_dir для последующего использования
-                    if [ -f "$temp_extract_dir/$backup_dir_name/database.sql" ]; then
-                        cp "$temp_extract_dir/$backup_dir_name/database.sql" "$target_dir/"
-                    fi
+        if [ -d "$temp_extract_dir/$backup_dir_name" ]; then
+            # Проверяем структуру - новый unified формат или старый с app/
+            if [ -f "$temp_extract_dir/$backup_dir_name/docker-compose.yml" ]; then
+                # НОВЫЙ ФОРМАТ: файлы приложения в корне бэкапа
+                mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
+                echo -e "\033[1;32m✅ Backup extracted successfully (unified format)\033[0m"
+                log_restore_operation "Archive Extraction" "SUCCESS" "Unified format backup extracted"
+            elif [ -d "$temp_extract_dir/$backup_dir_name/app" ]; then
+                # СТАРЫЙ ФОРМАТ: приложение в поддиректории app
+                mv "$temp_extract_dir/$backup_dir_name/app" "$target_dir"
+                
+                # Копируем database.sql в target_dir для последующего использования
+                if [ -f "$temp_extract_dir/$backup_dir_name/database.sql" ]; then
+                    cp "$temp_extract_dir/$backup_dir_name/database.sql" "$target_dir/"
+                fi
                 
                 # Сохраняем скрипт установки
                 if [ -f "$temp_extract_dir/$backup_dir_name/install-script.sh" ]; then
                     cp "$temp_extract_dir/$backup_dir_name/install-script.sh" "/tmp/restore_script_$$"
                 fi
+                
                 echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
                 log_restore_operation "Archive Extraction" "SUCCESS" "Legacy format backup extracted"
             else
                 # Очень старый формат - вся директория является приложением
                 mv "$temp_extract_dir/$backup_dir_name" "$target_dir"
-                echo -e "\033[1;32m✅ Backup extracted successfully (legacy format)\033[0m"
+                echo -e "\033[1;32m✅ Backup extracted successfully (very old format)\033[0m"
                 log_restore_operation "Archive Extraction" "SUCCESS" "Very old format backup extracted"
             fi
         else
             echo -e "\033[1;31m❌ Unexpected backup structure!\033[0m"
+            echo -e "\033[38;5;244m   Expected directory not found in archive\033[0m"
             log_restore_operation "Archive Extraction" "ERROR" "Unexpected backup structure"
             rm -rf "$temp_extract_dir"
+            rm -f "$tar_error_log"
             return 1
         fi
     else
-        echo -e "\033[1;31m❌ Failed to extract backup!\033[0m"
-        log_restore_operation "Archive Extraction" "ERROR" "Failed to extract tar archive"
+        # Показываем детальную ошибку tar
+        echo -e "\033[1;31m❌ Failed to extract backup archive!\033[0m"
+        echo -e "\033[38;5;244m   File: $backup_file\033[0m"
+        
+        # Формируем полный текст ошибки для лога (все строки через точку с запятой)
+        local full_error_text=""
+        if [ -s "$tar_error_log" ]; then
+            echo -e "\033[1;33m   Error details:\033[0m"
+            while IFS= read -r line; do
+                echo -e "\033[38;5;244m   $line\033[0m"
+                # Добавляем строку в полный текст ошибки
+                if [ -z "$full_error_text" ]; then
+                    full_error_text="$line"
+                else
+                    full_error_text="$full_error_text; $line"
+                fi
+            done < "$tar_error_log"
+        else
+            full_error_text="No error details available"
+        fi
+        
+        echo -e "\033[38;5;244m   Possible causes:\033[0m"
+        echo -e "\033[38;5;244m   - Archive is corrupted\033[0m"
+        echo -e "\033[38;5;244m   - Archive was not created properly\033[0m"
+        echo -e "\033[38;5;244m   - Insufficient permissions\033[0m"
+        echo -e "\033[38;5;244m   - Disk I/O error\033[0m"
+        
+        # Логируем с полным текстом ошибки
+        log_restore_operation "Archive Extraction" "ERROR" "Failed to extract tar archive: $full_error_text"
         rm -rf "$temp_extract_dir"
+        rm -f "$tar_error_log"
         return 1
     fi
     
     rm -rf "$temp_extract_dir"
+    rm -f "$tar_error_log"
     
     # Step 4: Проверка совместимости версий (если есть метаданные)
     if [ -f "$target_dir/backup-metadata.json" ]; then
