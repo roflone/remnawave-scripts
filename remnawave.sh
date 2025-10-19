@@ -4,8 +4,8 @@
 # VERSION=3.7.3
 
 set -e
-SCRIPT_VERSION="3.7.3"
-BACKUP_SCRIPT_VERSION="1.0.2"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.7.6"
+BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -194,9 +194,11 @@ prompt_backup_script_update() {
     esac
     
     echo
-    echo -e "\033[1;37m🔧 Improvements in latest version:\033[0m"
-    echo -e "\033[38;5;250m   ✓ Unified backup structure (manual + scheduled)\033[0m"
-    echo -e "\033[38;5;250m   ✓ Improved file compression and handling\033[0m"
+    echo -e "\033[1;37m🔧 Improvements in latest version ($BACKUP_SCRIPT_VERSION):\033[0m"
+    echo -e "\033[38;5;250m   ✓ Added volume backup support (3-10x faster)\033[0m"
+    echo -e "\033[38;5;250m   ✓ Three backup types: SQL dump, volume, or both\033[0m"
+    echo -e "\033[38;5;250m   ✓ Automatic restore scripts included\033[0m"
+    echo -e "\033[38;5;250m   ✓ Fixed Telegram file size limits (auto-split large backups)\033[0m"
     echo -e "\033[38;5;250m   ✓ Better error handling and logging\033[0m"
     echo -e "\033[38;5;250m   ✓ Enhanced restore compatibility\033[0m"
     echo
@@ -513,6 +515,7 @@ ensure_backup_dirs() {
 {
   "app_name": "$APP_NAME",
   "schedule": "0 2 * * *",
+  "backup_type": "sql_dump",
   "compression": {
     "enabled": true,
     "level": 6
@@ -579,7 +582,19 @@ schedule_command() {
         schedule_menu
         return
     fi
-        if [ "$#" -eq 0 ]; then
+    
+    # Проверяем версию backup-скрипта перед выполнением команд
+    check_backup_script_version
+    local version_status=$?
+    
+    if [ $version_status -ne 0 ] && [ "$1" != "help" ] && [ "$1" != "-h" ] && [ "$1" != "--help" ]; then
+        if prompt_backup_script_update $version_status; then
+            schedule_recreate_script
+            echo
+        fi
+    fi
+    
+    if [ "$#" -eq 0 ]; then
         schedule_menu  
         return 0       
     fi
@@ -619,6 +634,18 @@ schedule_command() {
 schedule_menu() {
     if ! ensure_backup_dirs; then
         return 1
+    fi
+    
+    # Проверяем версию скрипта при входе в меню
+    check_backup_script_version
+    local version_status=$?
+    
+    if [ $version_status -ne 0 ]; then
+        if prompt_backup_script_update $version_status; then
+            schedule_recreate_script
+            echo
+            read -p "Press Enter to continue..."
+        fi
     fi
     
     while true; do
@@ -784,10 +811,21 @@ schedule_setup_menu() {
         if [ -f "$BACKUP_CONFIG_FILE" ]; then
             echo -e "\033[1;37m📋 Current Settings:\033[0m"
             local schedule=$(jq -r '.schedule // "Not set"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+            local backup_type=$(jq -r '.backup_type // "sql_dump"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             local compression=$(jq -r '.compression.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             local retention=$(jq -r '.retention.days // 7' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             local telegram_enabled=$(jq -r '.telegram.enabled // false' "$BACKUP_CONFIG_FILE" 2>/dev/null)
             
+            # Красивое отображение типа бэкапа
+            local backup_type_display=""
+            case "$backup_type" in
+                "sql_dump") backup_type_display="SQL Dump (standard)" ;;
+                "volume") backup_type_display="Volume (fast)" ;;
+                "both") backup_type_display="Both (SQL + Volume)" ;;
+                *) backup_type_display="$backup_type" ;;
+            esac
+            
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Backup Type:" "$backup_type_display"
             printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Schedule:" "$schedule"
             printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Compression:" "$([ "$compression" = "true" ] && echo "Enabled" || echo "Disabled")"
             printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s days\033[0m\n" "Retention:" "$retention"
@@ -796,24 +834,26 @@ schedule_setup_menu() {
         fi
         
         echo -e "\033[1;37m⚙️  Configuration Options:\033[0m"
-        echo -e "   \033[38;5;15m1)\033[0m ⏰ Set backup schedule"
-        echo -e "   \033[38;5;15m2)\033[0m 🗜️  Configure compression"
-        echo -e "   \033[38;5;15m3)\033[0m 🗂️  Set retention policy"
-        echo -e "   \033[38;5;15m4)\033[0m 📱 Configure Telegram"
-        echo -e "   \033[38;5;15m5)\033[0m 🔄 Reset to defaults"
-        echo -e "   \033[38;5;15m6)\033[0m 🔧 Recreate backup script"
+        echo -e "   \033[38;5;15m1)\033[0m 💾 Set backup type"
+        echo -e "   \033[38;5;15m2)\033[0m ⏰ Set backup schedule"
+        echo -e "   \033[38;5;15m3)\033[0m 🗜️  Configure compression"
+        echo -e "   \033[38;5;15m4)\033[0m 🗂️  Set retention policy"
+        echo -e "   \033[38;5;15m5)\033[0m 📱 Configure Telegram"
+        echo -e "   \033[38;5;15m6)\033[0m 🔄 Reset to defaults"
+        echo -e "   \033[38;5;15m7)\033[0m 🔧 Recreate backup script"
         echo -e "   \033[38;5;244m0)\033[0m ⬅️  Back"
         echo
         
-        read -p "Select option [0-6]: " choice
+        read -p "Select option [0-7]: " choice
         
         case "$choice" in
-            1) schedule_configure_schedule ;;
-            2) schedule_configure_compression ;;
-            3) schedule_configure_retention ;;
-            4) schedule_configure_telegram ;;
-            5) schedule_reset_config ;;
-            6) schedule_recreate_script ;;
+            1) schedule_configure_backup_type ;;
+            2) schedule_configure_schedule ;;
+            3) schedule_configure_compression ;;
+            4) schedule_configure_retention ;;
+            5) schedule_configure_telegram ;;
+            6) schedule_reset_config ;;
+            7) schedule_recreate_script ;;
             0) 
                 return 0  
                 ;;
@@ -850,6 +890,83 @@ schedule_recreate_script() {
     sleep 2
 }
 
+
+schedule_configure_backup_type() {
+    clear
+    echo -e "\033[1;37m💾 Configure Backup Type\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    
+    local current_type=$(jq -r '.backup_type // "sql_dump"' "$BACKUP_CONFIG_FILE" 2>/dev/null)
+    echo -e "\033[38;5;250mCurrent type: \033[1;37m$current_type\033[0m"
+    echo
+    
+    echo -e "\033[1;37m📋 Available Backup Types:\033[0m"
+    echo
+    echo -e "   \033[38;5;15m1) SQL Dump\033[0m (Recommended)"
+    echo -e "      \033[38;5;244m✓ Works across PostgreSQL versions\033[0m"
+    echo -e "      \033[38;5;244m✓ Human-readable and editable\033[0m"
+    echo -e "      \033[38;5;244m✓ Can restore specific tables\033[0m"
+    echo -e "      \033[38;5;244m⚠ Slower for large databases (>1GB)\033[0m"
+    echo
+    echo -e "   \033[38;5;15m2) Volume Backup\033[0m (Fast)"
+    echo -e "      \033[38;5;244m✓ Much faster (3-10x speed)\033[0m"
+    echo -e "      \033[38;5;244m✓ Exact binary copy of database\033[0m"
+    echo -e "      \033[38;5;244m✓ Includes all PostgreSQL settings\033[0m"
+    echo -e "      \033[38;5;244m⚠ Requires exact PostgreSQL version match\033[0m"
+    echo -e "      \033[38;5;244m⚠ Database stopped during backup (~10s)\033[0m"
+    echo
+    echo -e "   \033[38;5;15m3) Both\033[0m (Maximum Safety)"
+    echo -e "      \033[38;5;244m✓ SQL dump + Volume backup\033[0m"
+    echo -e "      \033[38;5;244m✓ Choose restore method later\033[0m"
+    echo -e "      \033[38;5;244m✓ Best for critical systems\033[0m"
+    echo -e "      \033[38;5;244m⚠ Larger backup size\033[0m"
+    echo -e "      \033[38;5;244m⚠ Takes longer to create\033[0m"
+    echo
+    echo -e "   \033[38;5;244m0) Cancel\033[0m"
+    echo
+    
+    read -p "Select backup type [1-3, 0 to cancel]: " choice
+    
+    local backup_type=""
+    case "$choice" in
+        1) 
+            backup_type="sql_dump"
+            echo -e "\033[1;32m✅ Selected: SQL Dump\033[0m"
+            ;;
+        2) 
+            backup_type="volume"
+            echo -e "\033[1;32m✅ Selected: Volume Backup\033[0m"
+            echo -e "\033[1;33m⚠️  Note: Database will be stopped for ~10 seconds during backup\033[0m"
+            ;;
+        3) 
+            backup_type="both"
+            echo -e "\033[1;32m✅ Selected: Both (SQL Dump + Volume)\033[0m"
+            echo -e "\033[1;33m⚠️  Note: Larger backup size and longer backup time\033[0m"
+            ;;
+        0) 
+            echo -e "\033[38;5;244mCancelled\033[0m"
+            sleep 1
+            return
+            ;;
+        *) 
+            echo -e "\033[1;31m❌ Invalid option!\033[0m"
+            sleep 2
+            return
+            ;;
+    esac
+    
+    # Обновляем конфиг
+    schedule_update_config ".backup_type" "\"$backup_type\""
+    
+    echo
+    echo -e "\033[1;33m🔄 Recreating backup script with new type...\033[0m"
+    schedule_recreate_script
+    
+    echo
+    echo -e "\033[1;32m✅ Backup type updated successfully!\033[0m"
+    sleep 3
+}
 
 schedule_configure_schedule() {
     clear
@@ -1862,7 +1979,7 @@ schedule_create_backup_script() {
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
-BACKUP_SCRIPT_VERSION="1.0.1"
+BACKUP_SCRIPT_VERSION="1.1.1"
 BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
 
 # Читаем конфигурацию backup
@@ -1883,6 +2000,53 @@ check_command() {
         log_message "ERROR: Required command '$1' not found"
         exit 1
     fi
+}
+
+# Функция ожидания готовности БД через healthcheck
+wait_for_db_health() {
+    local container_name="$1"
+    local max_wait="${2:-60}"
+    local wait_count=0
+    
+    log_message "Waiting for database to be healthy..."
+    
+    until [ "$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null)" == "healthy" ]; do
+        sleep 2
+        echo -n "."
+        wait_count=$((wait_count + 1))
+        
+        if [ $wait_count -gt $max_wait ]; then
+            log_message "ERROR: Database health check timeout after $((max_wait * 2)) seconds"
+            return 1
+        fi
+        
+        # Проверяем что контейнер вообще существует и запущен
+        if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
+            log_message "ERROR: Container $container_name is not running"
+            return 1
+        fi
+    done
+    
+    echo ""
+    log_message "Database is healthy and ready"
+    return 0
+}
+
+# Функция проверки что контейнер запущен
+check_container_running() {
+    local container_name="$1"
+    
+    if ! docker inspect "$container_name" > /dev/null 2>&1; then
+        log_message "ERROR: Container '$container_name' not found"
+        return 1
+    fi
+    
+    if ! docker container inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null | grep -q "true"; then
+        log_message "ERROR: Container '$container_name' is not running"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Проверяем необходимые команды
@@ -1906,6 +2070,7 @@ APP_NAME=$(jq -r '.app_name // "remnawave"' "$CONFIG_FILE")
 APP_DIR="/opt/$APP_NAME"
 BACKUP_DIR="$APP_DIR/backups"
 TEMP_BACKUP_ROOT="/tmp/${APP_NAME}_backup"
+BACKUP_TYPE=$(jq -r '.backup_type // "sql_dump"' "$CONFIG_FILE")
 COMPRESS_ENABLED=$(jq -r '.compression.enabled // true' "$CONFIG_FILE")
 TELEGRAM_ENABLED=$(jq -r '.telegram.enabled // false' "$CONFIG_FILE")
 
@@ -1924,10 +2089,7 @@ log_message "Creating full system backup: $backup_name"
 # Создаем временную директорию для сборки бэкапа
 mkdir -p "$temp_backup_dir"
 
-# Шаг 1: Экспорт базы данных
-log_message "Step 1: Exporting database..."
-
-# Читаем параметры БД из .env файла
+# Читаем параметры БД из .env файла (нужны для всех типов бэкапа)
 postgres_user="postgres"
 postgres_password="postgres"
 postgres_db="postgres"
@@ -1939,24 +2101,135 @@ if [ -f "$APP_DIR/.env" ]; then
 fi
 
 db_container="${APP_NAME}-db"
-if ! docker exec "$db_container" pg_isready -U "$postgres_user" >/dev/null 2>&1; then
+
+# Проверяем что контейнер существует и запущен
+if ! check_container_running "$db_container"; then
     log_message "ERROR: Database container is not ready"
     rm -rf "$temp_backup_dir"
     exit 1
 fi
 
-database_file="$temp_backup_dir/database.sql"
-if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
-    pg_dump -U "$postgres_user" -d "$postgres_db" --clean --if-exists > "$database_file" 2>/dev/null; then
-    
-    # ИСПРАВЛЕНО: убрал local
-    db_size=$(du -sh "$database_file" | cut -f1)
-    log_message "Database exported successfully ($db_size)"
-else
-    log_message "ERROR: Database export failed"
+# Дополнительная проверка готовности через pg_isready
+if ! docker exec "$db_container" pg_isready -U "$postgres_user" >/dev/null 2>&1; then
+    log_message "ERROR: Database is not accepting connections"
     rm -rf "$temp_backup_dir"
     exit 1
 fi
+
+# Шаг 1: Экспорт базы данных (в зависимости от типа бэкапа)
+log_message "Step 1: Backing up database (method: $BACKUP_TYPE)..."
+
+case "$BACKUP_TYPE" in
+    "sql_dump")
+        log_message "Using SQL dump method..."
+        database_file="$temp_backup_dir/database.sql"
+        
+        if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+            pg_dump -U "$postgres_user" -d "$postgres_db" --clean --if-exists > "$database_file" 2>/dev/null; then
+            
+            db_size=$(du -sh "$database_file" | cut -f1)
+            log_message "Database SQL dump created successfully ($db_size)"
+        else
+            log_message "ERROR: Database SQL dump failed"
+            rm -rf "$temp_backup_dir"
+            exit 1
+        fi
+        ;;
+        
+    "volume")
+        log_message "Using volume backup method..."
+        
+        # Останавливаем контейнер БД для консистентности
+        log_message "Stopping database container for consistent backup..."
+        docker stop "$db_container" >/dev/null 2>&1
+        
+        # Находим volume базы данных
+        db_volume="${APP_NAME}-db-data"
+        
+        # Создаем директорию для volume
+        volume_backup_dir="$temp_backup_dir/database-volume"
+        mkdir -p "$volume_backup_dir"
+        
+        # Копируем данные из volume
+        log_message "Copying database volume data..."
+        docker run --rm \
+            -v "$db_volume:/source:ro" \
+            -v "$volume_backup_dir:/backup" \
+            alpine \
+            sh -c "cd /source && cp -a . /backup/" 2>/dev/null
+        
+        if [ $? -eq 0 ]; then
+            db_size=$(du -sh "$volume_backup_dir" | cut -f1)
+            log_message "Database volume backup created successfully ($db_size)"
+        else
+            log_message "ERROR: Database volume backup failed"
+            docker start "$db_container" >/dev/null 2>&1
+            rm -rf "$temp_backup_dir"
+            exit 1
+        fi
+        
+        # Запускаем контейнер обратно
+        log_message "Starting database container..."
+        docker start "$db_container" >/dev/null 2>&1
+        sleep 3
+        ;;
+        
+    "both")
+        log_message "Using both SQL dump and volume backup methods..."
+        
+        # Сначала SQL dump (без остановки контейнера)
+        database_file="$temp_backup_dir/database.sql"
+        log_message "Creating SQL dump..."
+        
+        if docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
+            pg_dump -U "$postgres_user" -d "$postgres_db" --clean --if-exists > "$database_file" 2>/dev/null; then
+            
+            sql_size=$(du -sh "$database_file" | cut -f1)
+            log_message "SQL dump created successfully ($sql_size)"
+        else
+            log_message "ERROR: SQL dump failed"
+            rm -rf "$temp_backup_dir"
+            exit 1
+        fi
+        
+        # Затем volume (с остановкой)
+        log_message "Stopping database container for volume backup..."
+        docker stop "$db_container" >/dev/null 2>&1
+        
+        db_volume="${APP_NAME}-db-data"
+        volume_backup_dir="$temp_backup_dir/database-volume"
+        mkdir -p "$volume_backup_dir"
+        
+        log_message "Copying database volume data..."
+        docker run --rm \
+            -v "$db_volume:/source:ro" \
+            -v "$volume_backup_dir:/backup" \
+            alpine \
+            sh -c "cd /source && cp -a . /backup/" 2>/dev/null
+        
+        if [ $? -eq 0 ]; then
+            vol_size=$(du -sh "$volume_backup_dir" | cut -f1)
+            log_message "Volume backup created successfully ($vol_size)"
+        else
+            log_message "ERROR: Volume backup failed"
+            docker start "$db_container" >/dev/null 2>&1
+            rm -rf "$temp_backup_dir"
+            exit 1
+        fi
+        
+        log_message "Starting database container..."
+        docker start "$db_container" >/dev/null 2>&1
+        sleep 3
+        
+        db_size="SQL: $sql_size, Volume: $vol_size"
+        ;;
+        
+    *)
+        log_message "ERROR: Unknown backup type: $BACKUP_TYPE"
+        rm -rf "$temp_backup_dir"
+        exit 1
+        ;;
+esac
 
 # Шаг 2: Копирование конфигурационных файлов прямо в корень
 log_message "Step 2: Creating application configuration backup..."
@@ -2016,6 +2289,73 @@ else
     exit 1
 fi
 
+# Шаг 2.5: Бэкап Telegram ботов (если найдены)
+log_message "Step 2.5: Checking for Telegram bot containers..."
+
+# Функция бекапа Telegram бота
+backup_telegram_bot() {
+    local bot_name="$1"
+    
+    if docker ps --format '{{.Names}}' | grep -q "^${bot_name}$"; then
+        log_message "Found Telegram bot: $bot_name, backing up..."
+        
+        # Создаем директорию для бота
+        local bot_backup_dir="$temp_backup_dir/telegram-bots/$bot_name"
+        mkdir -p "$bot_backup_dir"
+        
+        # Получаем информацию о контейнере
+        local image=$(docker inspect --format='{{.Config.Image}}' "$bot_name" 2>/dev/null || echo "unknown")
+        local created=$(docker inspect --format='{{.Created}}' "$bot_name" 2>/dev/null || echo "unknown")
+        
+        # Сохраняем метаданные
+        cat > "$bot_backup_dir/bot-info.json" <<BOT_INFO_EOF
+{
+    "name": "$bot_name",
+    "image": "$image",
+    "created": "$created",
+    "backup_time": "$(date -Iseconds)"
+}
+BOT_INFO_EOF
+        
+        # Бэкапим переменные окружения (без секретов в логах)
+        docker inspect "$bot_name" --format='{{json .Config.Env}}' > "$bot_backup_dir/environment.json" 2>/dev/null || true
+        
+        # Бэкапим volumes если есть
+        local volumes=$(docker inspect "$bot_name" --format='{{range .Mounts}}{{.Name}},{{end}}' 2>/dev/null | sed 's/,$//')
+        if [ -n "$volumes" ]; then
+            log_message "  Backing up bot volumes: $volumes"
+            mkdir -p "$bot_backup_dir/volumes"
+            
+            IFS=',' read -ra VOL_ARRAY <<< "$volumes"
+            for vol in "${VOL_ARRAY[@]}"; do
+                if [ -n "$vol" ]; then
+                    docker run --rm -v "$vol":/source -v "$bot_backup_dir/volumes":/backup \
+                        alpine tar czf "/backup/${vol}.tar.gz" -C /source . 2>/dev/null || \
+                        log_message "  WARNING: Failed to backup volume $vol"
+                fi
+            done
+        fi
+        
+        log_message "  Telegram bot $bot_name backup completed"
+        return 0
+    fi
+    return 1
+}
+
+# Проверяем известные имена Telegram ботов
+bot_found=false
+for bot_variant in "${APP_NAME}-telegram-shop" "${APP_NAME}-tg-shop" "${APP_NAME}-telegram-bot" "${APP_NAME}-bot"; do
+    if backup_telegram_bot "$bot_variant"; then
+        bot_found=true
+    fi
+done
+
+if [ "$bot_found" = false ]; then
+    log_message "No Telegram bot containers found (checked ${APP_NAME}-telegram-shop, ${APP_NAME}-tg-shop variants)"
+else
+    log_message "Telegram bot backup completed"
+fi
+
 # Шаг 3: Добавляем скрипт управления
 log_message "Step 3: Including management script..."
 
@@ -2027,8 +2367,194 @@ else
     log_message "WARNING: Management script not found at $script_source"
 fi
 
-# Шаг 4: Создаем метаданные
-log_message "Step 4: Creating backup metadata..."
+# Шаг 4: Создаем скрипт восстановления для volume (если используется volume backup)
+if [ "$BACKUP_TYPE" = "volume" ] || [ "$BACKUP_TYPE" = "both" ]; then
+    log_message "Step 4: Creating volume restore script..."
+    
+    cat > "$temp_backup_dir/restore-volume.sh" << 'RESTORE_SCRIPT_EOF'
+#!/bin/bash
+# Remnawave Volume Restore Script
+# This script restores database from volume backup
+
+set -e
+
+APP_NAME="__APP_NAME__"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "==================================="
+echo "Remnawave Volume Restore"
+echo "==================================="
+echo
+
+# Проверяем что volume backup существует
+if [ ! -d "$SCRIPT_DIR/database-volume" ]; then
+    echo "ERROR: database-volume directory not found"
+    exit 1
+fi
+
+# Останавливаем контейнер
+echo "Stopping database container..."
+docker stop "${APP_NAME}-db" 2>/dev/null || true
+
+# Удаляем старый volume (с подтверждением)
+echo
+echo "WARNING: This will DELETE existing database!"
+read -p "Continue? [y/N]: " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Restore cancelled"
+    docker start "${APP_NAME}-db" 2>/dev/null || true
+    exit 1
+fi
+
+echo "Removing old volume..."
+docker volume rm "${APP_NAME}-db-data" 2>/dev/null || true
+
+# Создаем новый volume
+echo "Creating new volume..."
+docker volume create "${APP_NAME}-db-data"
+
+# Восстанавливаем данные
+echo "Restoring database volume..."
+docker run --rm \
+    -v "${APP_NAME}-db-data:/target" \
+    -v "$SCRIPT_DIR/database-volume:/source:ro" \
+    alpine \
+    sh -c "cd /target && cp -a /source/. ."
+
+if [ $? -eq 0 ]; then
+    echo "Volume restored successfully"
+else
+    echo "ERROR: Volume restore failed"
+    exit 1
+fi
+
+# Запускаем контейнер
+echo "Starting database container..."
+docker start "${APP_NAME}-db"
+
+echo
+echo "Waiting for database to be ready (checking healthcheck)..."
+
+# Функция ожидания здоровья БД
+wait_for_db_health() {
+    local container_name="\$1"
+    local max_wait="\${2:-60}"
+    local wait_count=0
+    
+    until [ "\$(docker inspect --format='{{.State.Health.Status}}' "\$container_name" 2>/dev/null)" == "healthy" ]; do
+        sleep 2
+        wait_count=\$((wait_count + 1))
+        if [ \$wait_count -gt \$max_wait ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+if wait_for_db_health "${APP_NAME}-db" 30; then
+    echo "✅ Database restored successfully!"
+else
+    echo "⚠️  Database container started but healthcheck timeout"
+    echo "   Check logs: docker logs ${APP_NAME}-db"
+    echo "   Current status: \$(docker inspect --format='{{.State.Health.Status}}' "${APP_NAME}-db" 2>/dev/null || echo 'unknown')"
+fi
+RESTORE_SCRIPT_EOF
+
+    # Заменяем __APP_NAME__ на реальное имя
+    sed -i "s/__APP_NAME__/$APP_NAME/g" "$temp_backup_dir/restore-volume.sh" 2>/dev/null || \
+        sed -i.bak "s/__APP_NAME__/$APP_NAME/g" "$temp_backup_dir/restore-volume.sh"
+    
+    chmod +x "$temp_backup_dir/restore-volume.sh"
+    log_message "Volume restore script created"
+fi
+
+# Шаг 5: Создаем инструкцию по восстановлению
+log_message "Step 5: Creating restore instructions..."
+
+cat > "$temp_backup_dir/RESTORE-INSTRUCTIONS.md" << 'INSTRUCTIONS_EOF'
+# Remnawave Backup Restore Instructions
+
+## Backup Information
+
+- **Backup Type**: __BACKUP_TYPE__
+- **Created**: __TIMESTAMP__
+- **App Name**: __APP_NAME__
+- **Panel Version**: __PANEL_VERSION__
+
+## Quick Restore
+
+### Recommended: Automatic Restore
+```bash
+# 1. Extract backup
+tar -xzf backup_file.tar.gz
+
+# 2. Use built-in restore
+sudo bash install-script.sh @ restore
+```
+
+## Manual Restore by Type
+
+### SQL Dump Restore (backup_type: sql_dump)
+```bash
+# Stop services
+sudo __APP_NAME__ down
+
+# Restore database
+cat database.sql | docker exec -i -e PGPASSWORD="postgres" __APP_NAME__-db psql -U postgres -d postgres
+
+# Start services
+sudo __APP_NAME__ up -d
+```
+
+### Volume Restore (backup_type: volume)
+```bash
+# Use provided restore script
+sudo bash restore-volume.sh
+
+# Or manually:
+docker stop __APP_NAME__-db
+docker volume rm __APP_NAME__-db-data
+docker volume create __APP_NAME__-db-data
+docker run --rm -v __APP_NAME__-db-data:/target -v $(pwd)/database-volume:/source:ro alpine sh -c "cd /target && cp -a /source/. ."
+docker start __APP_NAME__-db
+```
+
+### Both Types Available (backup_type: both)
+Choose either SQL dump or volume restore method above.
+Volume restore is faster but requires exact version match.
+SQL dump is more flexible and works across versions.
+
+## Advantages by Type
+
+### SQL Dump
+- ✅ Works across different PostgreSQL versions
+- ✅ Human-readable and editable
+- ✅ Can restore specific tables
+- ⚠️ Slower for large databases
+
+### Volume
+- ✅ Much faster restore
+- ✅ Exact binary copy
+- ✅ Includes all database settings
+- ⚠️ Requires same PostgreSQL version
+
+## Support
+
+For automatic restore with all safety checks:
+```bash
+sudo __APP_NAME__ restore
+```
+INSTRUCTIONS_EOF
+
+    # Заменяем переменные
+    sed -i "s/__BACKUP_TYPE__/$BACKUP_TYPE/g; s/__APP_NAME__/$APP_NAME/g; s/__TIMESTAMP__/$(date)/g; s/__PANEL_VERSION__/$panel_version/g" "$temp_backup_dir/RESTORE-INSTRUCTIONS.md" 2>/dev/null || \
+        sed -i.bak "s/__BACKUP_TYPE__/$BACKUP_TYPE/g; s/__APP_NAME__/$APP_NAME/g; s/__TIMESTAMP__/$(date)/g; s/__PANEL_VERSION__/$panel_version/g" "$temp_backup_dir/RESTORE-INSTRUCTIONS.md"
+    
+    log_message "Restore instructions created"
+
+# Шаг 6: Создаем метаданные
+log_message "Step 6: Creating backup metadata..."
 
 metadata_file="$temp_backup_dir/backup-metadata.json"
 
@@ -2038,14 +2564,17 @@ panel_version=$(docker exec "${APP_NAME}" awk -F'"' '/"version"/{print $4; exit}
 cat > "$metadata_file" <<METADATA_EOF
 {
     "backup_type": "full_system",
+    "database_backup_method": "$BACKUP_TYPE",
     "app_name": "$APP_NAME",
     "timestamp": "$timestamp",
     "date_created": "$(date -Iseconds)",
     "script_version": "$(grep '^SCRIPT_VERSION=' "$script_source" | cut -d'=' -f2 | tr -d '"' || echo 'unknown')",
+    "backup_script_version": "$BACKUP_SCRIPT_VERSION",
     "panel_version": "$panel_version",
     "database_included": true,
     "application_files_included": true,
     "management_script_included": $([ -f "$temp_backup_dir/install-script.sh" ] && echo "true" || echo "false"),
+    "restore_script_included": $([ -f "$temp_backup_dir/restore-volume.sh" ] && echo "true" || echo "false"),
     "docker_images": {
 $(docker images --format '        "{{.Repository}}:{{.Tag}}": "{{.ID}}"' | grep -E "(remnawave|postgres|valkey)" | head -10 || echo '')
     },
@@ -2060,9 +2589,9 @@ METADATA_EOF
 
 log_message "Backup metadata created"
 
-# Шаг 5: Сжатие бэкапа (если включено)
+# Шаг 7: Сжатие бэкапа (если включено)
 if [ "$COMPRESS_ENABLED" = "true" ]; then
-    log_message "Step 5: Compressing backup..."
+    log_message "Step 7: Compressing backup..."
     
     cd "$(dirname "$temp_backup_dir")"
     if tar -czf "$BACKUP_DIR/${backup_name}.tar.gz" -C "$TEMP_BACKUP_ROOT" "temp_$timestamp" 2>/dev/null; then
@@ -2087,9 +2616,9 @@ else
     log_message "Backup created successfully: $backup_name ($backup_size)"
 fi
 
-# Шаг 6: Отправка в Telegram (если включено)
+# Шаг 8: Отправка в Telegram (если включено)
 if [ "$TELEGRAM_ENABLED" = "true" ]; 
-    then    log_message "Step 6: Sending backup to Telegram..."
+    then    log_message "Step 8: Sending backup to Telegram..."
     
     telegram_bot_token=$(jq -r '.telegram.bot_token' "$CONFIG_FILE")
     telegram_chat_id=$(jq -r '.telegram.chat_id' "$CONFIG_FILE")
@@ -2106,58 +2635,173 @@ if [ "$TELEGRAM_ENABLED" = "true" ];
 📊 *Panel:* v$panel_version
 🖥️ *Server:* $(hostname)
 ✅ *Status:* Success"
-          # Если файл меньше 50MB, отправляем его
-        file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || echo "0")
-        max_size=$((50 * 1024 * 1024))  # 50MB в байтах
+          # Получаем размер файла в байтах
+        file_size_bytes=$(stat -c%s "$final_backup_file" 2>/dev/null || stat -f%z "$final_backup_file" 2>/dev/null || echo "0")
+        max_telegram_size=$((49 * 1024 * 1024))  # 49MB в байтах (безопасный лимит для Telegram)
         
-        if [ "$file_size_bytes" -lt "$max_size" ] && [[ "$final_backup_file" =~ \.tar\.gz$ ]]; then
-            log_message "Sending file via Telegram API: $(basename "$final_backup_file")"
+        # Функция экранирования спецсимволов для MarkdownV2
+        escape_markdown_v2() {
+            local text="$1"
+            # Экранируем спецсимволы Telegram MarkdownV2: _ * [ ] ( ) ~ ` > # + - = | { } . !
+            echo "$text" | sed -e 's/\\_/\\\\_/g' \
+                              -e 's/\*/\\*/g' \
+                              -e 's/\[/\\[/g' \
+                              -e 's/\]/\\]/g' \
+                              -e 's/(/\\(/g' \
+                              -e 's/)/\\)/g' \
+                              -e 's/~/\\~/g' \
+                              -e 's/`/\\`/g' \
+                              -e 's/>/\\>/g' \
+                              -e 's/#/\\#/g' \
+                              -e 's/+/\\+/g' \
+                              -e 's/-/\\-/g' \
+                              -e 's/=/\\=/g' \
+                              -e 's/|/\\|/g' \
+                              -e 's/{/\\{/g' \
+                              -e 's/}/\\}/g' \
+                              -e 's/\./\\./g' \
+                              -e 's/!/\\!/g'
+        }
+        
+        # Функция отправки файла в Telegram
+        send_telegram_file() {
+            local file_path="$1"
+            local caption="$2"
+            local part_info="$3"
             
-            # Отправляем с учетом thread_id
+            local full_caption="${caption}"
+            if [ -n "$part_info" ]; then
+                full_caption="${caption}
+
+${part_info}"
+            fi
+            
+            # Используем обычный Markdown вместо MarkdownV2 для совместимости
             if [ -n "$telegram_thread_id" ] && [ "$telegram_thread_id" != "null" ]; then
-                log_message "Sending to thread: $telegram_thread_id"
                 curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
                     -F "chat_id=$telegram_chat_id" \
-                    -F "document=@$final_backup_file" \
-                    -F "caption=$backup_info" \
+                    -F "document=@$file_path" \
+                    -F "caption=$full_caption" \
                     -F "parse_mode=Markdown" \
-                    -F "message_thread_id=$telegram_thread_id" >/dev/null
+                    -F "message_thread_id=$telegram_thread_id" >/dev/null 2>&1
             else
                 curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendDocument" \
                     -F "chat_id=$telegram_chat_id" \
-                    -F "document=@$final_backup_file" \
-                    -F "caption=$backup_info" \
-                    -F "parse_mode=Markdown" >/dev/null
+                    -F "document=@$file_path" \
+                    -F "caption=$full_caption" \
+                    -F "parse_mode=Markdown" >/dev/null 2>&1
             fi
             
-            if [ $? -eq 0 ]; then
+            return $?
+        }
+        
+        # Функция отправки текстового сообщения
+        send_telegram_message() {
+            local message="$1"
+            
+            if [ -n "$telegram_thread_id" ] && [ "$telegram_thread_id" != "null" ]; then
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "text=$message" \
+                    -F "parse_mode=Markdown" \
+                    -F "message_thread_id=$telegram_thread_id" >/dev/null 2>&1
+            else
+                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
+                    -F "chat_id=$telegram_chat_id" \
+                    -F "text=$message" \
+                    -F "parse_mode=Markdown" >/dev/null 2>&1
+            fi
+            
+            return $?
+        }
+        
+        # Проверяем размер и отправляем
+        if [ "$file_size_bytes" -lt "$max_telegram_size" ] && [[ "$final_backup_file" =~ \.tar\.gz$ ]]; then
+            # Файл помещается в одно сообщение
+            log_message "Sending file via Telegram API: $(basename "$final_backup_file") ($(du -sh "$final_backup_file" | cut -f1))"
+            
+            if send_telegram_file "$final_backup_file" "$backup_info" ""; then
                 log_message "File sent successfully to Telegram"
             else
                 log_message "ERROR: Failed to send file to Telegram"
             fi
         else
-            log_message "Sending backup notification to Telegram (file too large for upload)"
+            # Файл слишком большой - разбиваем на части
+            log_message "File is too large for single Telegram message ($(du -sh "$final_backup_file" | cut -f1))"
+            log_message "Splitting file into 49MB chunks..."
             
-            # Отправляем текстовое сообщение с учетом thread_id
-            if [ -n "$telegram_thread_id" ] && [ "$telegram_thread_id" != "null" ]; then
-                log_message "Sending to thread: $telegram_thread_id"
-                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
-                    -F "chat_id=$telegram_chat_id" \
-                    -F "text=$backup_info" \
-                    -F "parse_mode=Markdown" \
-                    -F "message_thread_id=$telegram_thread_id" >/dev/null
+            # Создаем временную директорию для частей
+            split_dir="${TEMP_BACKUP_ROOT}/split_${timestamp}"
+            mkdir -p "$split_dir"
+            
+            # Разбиваем файл на части по 49MB
+            cd "$split_dir"
+            split -b 49M "$final_backup_file" "$(basename "$final_backup_file")."
+            
+            # Получаем список частей
+            parts=($(ls -1 "$(basename "$final_backup_file")".* 2>/dev/null | sort))
+            total_parts=${#parts[@]}
+            
+            if [ "$total_parts" -gt 0 ]; then
+                log_message "File split into $total_parts parts"
+                
+                # Отправляем информационное сообщение
+                split_info="${backup_info}
+
+📦 *File split into $total_parts parts*
+⚠️ Download all parts to restore backup"
+                
+                if send_telegram_message "$split_info"; then
+                    log_message "Split information sent to Telegram"
+                fi
+                
+                # Отправляем каждую часть
+                part_num=1
+                for part_file in "${parts[@]}"; do
+                    part_size=$(du -sh "$part_file" | cut -f1)
+                    part_info="📎 *Part ${part_num}/${total_parts}* | Size: ${part_size}"
+                    
+                    log_message "Sending part ${part_num}/${total_parts}: ${part_file} (${part_size})"
+                    
+                    if send_telegram_file "$part_file" "" "$part_info"; then
+                        log_message "Part ${part_num}/${total_parts} sent successfully"
+                    else
+                        log_message "ERROR: Failed to send part ${part_num}/${total_parts}"
+                    fi
+                    
+                    part_num=$((part_num + 1))
+                    
+                    # Небольшая задержка между отправками (чтобы не нарушить rate limits)
+                    sleep 2
+                done
+                
+                # Отправляем завершающее сообщение
+                completion_msg="✅ *All $total_parts parts sent successfully*
+
+To restore, concatenate parts:
+\`\`\`
+cat $(basename "$final_backup_file").* > $(basename "$final_backup_file")
+\`\`\`"
+                
+                if send_telegram_message "$completion_msg"; then
+                    log_message "Completion message sent to Telegram"
+                fi
+                
+                log_message "All parts sent to Telegram successfully"
             else
-                curl -s -X POST "https://api.telegram.org/bot$telegram_bot_token/sendMessage" \
-                    -F "chat_id=$telegram_chat_id" \
-                    -F "text=$backup_info" \
-                    -F "parse_mode=Markdown" >/dev/null
+                log_message "ERROR: Failed to split file"
+                
+                # Отправляем уведомление об ошибке
+                error_msg="${backup_info}
+
+⚠️ *File too large and failed to split*
+Please download from server manually"
+                
+                send_telegram_message "$error_msg"
             fi
             
-            if [ $? -eq 0 ]; then
-                log_message "Backup notification sent successfully to Telegram"
-            else
-                log_message "ERROR: Failed to send notification to Telegram"
-            fi
+            # Очищаем временные файлы
+            rm -rf "$split_dir" 2>/dev/null || true
         fi
         
         log_message "Backup sent to Telegram successfully"
@@ -2166,7 +2810,7 @@ if [ "$TELEGRAM_ENABLED" = "true" ];
     fi
 fi
 
-# Шаг 7: Очистка старых бэкапов
+# Шаг 9: Очистка старых бэкапов
 retention_days=$(jq -r '.retention.days // 7' "$CONFIG_FILE")
 min_backups=$(jq -r '.retention.min_backups // 3' "$CONFIG_FILE")
 
@@ -3604,22 +4248,30 @@ restore_database_in_existing_installation() {
     if docker compose up -d "${target_app_name}-db" 2>"$db_startup_log"; then
         echo -e "\033[1;32m✅ Database service started\033[0m"
         
-        # Ждем готовности базы данных с улучшенным логированием
-        echo -e "\033[38;5;244m   Waiting for database to be ready...\033[0m"
+        # Ждем готовности базы данных через healthcheck
+        echo -e "\033[38;5;244m   Waiting for database healthcheck...\033[0m"
         local attempts=0
-        local max_attempts=30
+        local max_attempts=60
         
         while [ $attempts -lt $max_attempts ]; do
-            if docker exec "${target_app_name}-db" pg_isready -U postgres >/dev/null 2>&1; then
-                echo -e "\033[1;32m✅ Database is ready (attempt $((attempts + 1)))\033[0m"
+            local health_status=$(docker inspect --format='{{.State.Health.Status}}' "${target_app_name}-db" 2>/dev/null)
+            
+            if [ "$health_status" == "healthy" ]; then
+                echo -e "\033[1;32m✅ Database is healthy (attempt $((attempts + 1)), ${attempts}s)\033[0m"
                 break
             fi
             
-            sleep 2
+            # Показываем текущий статус каждые 10 попыток
+            if [ $((attempts % 10)) -eq 0 ] && [ $attempts -gt 0 ]; then
+                echo -e "\033[38;5;244m   Still waiting... Current status: ${health_status:-starting} (${attempts}s elapsed)\033[0m"
+            fi
+            
+            sleep 1
             attempts=$((attempts + 1))
             
             if [ $attempts -eq $max_attempts ]; then
-                echo -e "\033[1;31m❌ Database failed to start after $max_attempts attempts!\033[0m"
+                echo -e "\033[1;31m❌ Database healthcheck timeout after $max_attempts seconds!\033[0m"
+                echo -e "\033[38;5;244m   Final status: ${health_status:-unknown}\033[0m"
                 echo -e "\033[38;5;244m   Check logs: docker compose logs ${target_app_name}-db\033[0m"
                 if [ -f "$db_startup_log" ]; then
                     echo -e "\033[38;5;244m   Startup errors:\033[0m"
@@ -3688,6 +4340,10 @@ restore_database_in_existing_installation() {
     echo -e "\033[38;5;244m   Importing backup data ($(du -sh "$database_file" | cut -f1))...\033[0m"
     local restore_log="/tmp/restore_db_$$.log"
     local restore_errors="/tmp/restore_errors_$$.log"
+    local restore_errors_file="${target_app_dir}/logs/restore_errors_$(date +%Y%m%d_%H%M%S).log"
+    
+    # Создаем директорию для логов
+    mkdir -p "${target_app_dir}/logs"
     
     # Создаем временный файл с улучшенными настройками восстановления
     local enhanced_sql="/tmp/enhanced_restore_$$.sql"
@@ -3727,14 +4383,30 @@ EOF
         echo -e "\033[1;31m❌ Database restore failed!\033[0m"
         log_restore_operation "Database Import" "ERROR" "Database restore failed"
         
-        # Показываем детали ошибки если доступны
+        # Сохраняем полные логи ошибок в файл
         if [ -f "$restore_errors" ] && [ -s "$restore_errors" ]; then
-            echo -e "\033[38;5;244m   Error details:\033[0m"
-            head -5 "$restore_errors" | sed 's/^/     /'
-        fi
-        if [ -f "$restore_errors" ] && [ -s "$restore_errors" ]; then
-            echo -e "\033[38;5;244m   Restore errors:\033[0m"
+            {
+                echo "==================================="
+                echo "Database Restore Error Log"
+                echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
+                echo "Database: $postgres_db"
+                echo "User: $postgres_user"
+                echo "==================================="
+                echo ""
+                cat "$restore_errors"
+                echo ""
+                echo "==================================="
+            } > "$restore_errors_file"
+            
+            echo -e "\033[38;5;244m   Full error log saved to: $restore_errors_file\033[0m"
+            echo -e "\033[38;5;244m   Error preview:\033[0m"
             head -10 "$restore_errors" | sed 's/^/     /'
+        fi
+        
+        # Показываем детали ошибки если доступны
+        if [ -f "$restore_log" ] && [ -s "$restore_log" ]; then
+            echo -e "\033[38;5;244m   Last operations:\033[0m"
+            tail -5 "$restore_log" | sed 's/^/     /'
         fi
         echo -e "\033[38;5;244m   Check database logs: docker compose logs ${target_app_name}-db\033[0m"
         
