@@ -3,7 +3,7 @@
 # This script installs and manages Remnawave Panel
 # VERSION=3.7.3
 
-SCRIPT_VERSION="3.7.6"
+SCRIPT_VERSION="3.7.7"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
