@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.4.1
+# Version: 3.4.2;
 set -e
-SCRIPT_VERSION="3.4.1"
+SCRIPT_VERSION="3.4.2"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -243,11 +243,18 @@ install_docker() {
 }
 
 install_remnanode_script() {
-    colorized_echo blue "Installing remnanode script"
+    colorized_echo blue "Installing remnanode script v$SCRIPT_VERSION"
     TARGET_PATH="/usr/local/bin/$APP_NAME"
     curl -sSL $SCRIPT_URL -o $TARGET_PATH
     chmod 755 $TARGET_PATH
-    colorized_echo green "Remnanode script installed successfully at $TARGET_PATH"
+    
+    # Получаем версию установленного скрипта
+    local installed_version=$(grep "^SCRIPT_VERSION=" "$TARGET_PATH" 2>/dev/null | head -1 | cut -d'"' -f2)
+    if [ -n "$installed_version" ]; then
+        colorized_echo green "Remnanode script v$installed_version installed successfully at $TARGET_PATH"
+    else
+        colorized_echo green "Remnanode script installed successfully at $TARGET_PATH"
+    fi
 }
 
 # Улучшенная функция проверки доступности портов
@@ -665,9 +672,23 @@ follow_remnanode_logs() {
 }
 
 update_remnanode_script() {
-    colorized_echo blue "Updating remnanode script"
+    # Получаем текущую версию перед обновлением
+    local old_version="unknown"
+    if [ -f "/usr/local/bin/$APP_NAME" ]; then
+        old_version=$(grep "^SCRIPT_VERSION=" "/usr/local/bin/$APP_NAME" 2>/dev/null | head -1 | cut -d'"' -f2)
+        [ -z "$old_version" ] && old_version="unknown"
+    fi
+    
+    colorized_echo blue "Updating remnanode script (current: v$old_version)"
     curl -sSL $SCRIPT_URL | install -m 755 /dev/stdin /usr/local/bin/$APP_NAME
-    colorized_echo green "Remnanode script updated successfully"
+    
+    # Получаем новую версию после обновления
+    local new_version=$(grep "^SCRIPT_VERSION=" "/usr/local/bin/$APP_NAME" 2>/dev/null | head -1 | cut -d'"' -f2)
+    if [ -n "$new_version" ]; then
+        colorized_echo green "Remnanode script updated successfully: v$old_version → v$new_version"
+    else
+        colorized_echo green "Remnanode script updated successfully"
+    fi
 }
 
 update_remnanode() {
@@ -805,6 +826,8 @@ install_script_command() {
     colorized_echo blue "Installing RemnaNode script globally"
     install_remnanode_script
     colorized_echo green "✅ Script installed successfully!"
+    colorized_echo white "   Version: $SCRIPT_VERSION"
+    colorized_echo white "   Location: /usr/local/bin/$APP_NAME"
     colorized_echo white "You can now run '$APP_NAME' from anywhere"
 }
 
