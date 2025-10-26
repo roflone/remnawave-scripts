@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.4.0
+# Version: 3.4.1
 set -e
-SCRIPT_VERSION="3.4.0"
+SCRIPT_VERSION="3.4.1"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1344,29 +1344,38 @@ update_command() {
     # Проверяем и обновляем скрипт ПЕРВЫМ ДЕЛОМ
     echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking script version..."
     local current_script_version="$SCRIPT_VERSION"
-    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    # Получаем содержимое скрипта с GitHub
+    local remote_script_content=$(curl -s "$SCRIPT_URL" 2>/dev/null)
+    local remote_script_version=""
+    
+    if [ -n "$remote_script_content" ]; then
+        # Ищем SCRIPT_VERSION в первых 10 строках файла
+        remote_script_version=$(echo "$remote_script_content" | head -20 | grep 'SCRIPT_VERSION=' | head -1 | cut -d'"' -f2)
+    fi
+    
     local script_was_updated=false
     
-    if [ -n "$remote_script_version" ]; then
-        if [ "$remote_script_version" != "$current_script_version" ]; then
-            echo -e "\033[1;33m🔄 Script update available:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
-            echo -e "\033[38;5;250m   Updating script first (required for migrations)...\033[0m"
-            
-            if update_remnanode_script; then
-                echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
-                echo -e "\033[1;33m⚠️  Script updated! Please run '\033[38;5;15msudo $APP_NAME update\033[1;33m' again to continue.\033[0m"
-                echo -e "\033[38;5;8m   This ensures all new features and migrations work correctly.\033[0m"
-                script_was_updated=true
-                exit 0
-            else
-                echo -e "\033[1;31m❌ Failed to update script\033[0m"
-                exit 1
-            fi
+    if [ -z "$remote_script_version" ]; then
+        echo -e "\033[1;33m⚠️  Unable to check remote script version\033[0m"
+        echo -e "\033[38;5;8m   Current version: v$current_script_version\033[0m"
+        echo -e "\033[38;5;8m   Continuing with Docker image check...\033[0m"
+    elif [ "$remote_script_version" != "$current_script_version" ]; then
+        echo -e "\033[1;33m🔄 Script update available:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+        echo -e "\033[38;5;250m   Updating script first (required for migrations)...\033[0m"
+        
+        if update_remnanode_script; then
+            echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+            echo -e "\033[1;33m⚠️  Script updated! Please run '\033[38;5;15msudo $APP_NAME update\033[1;33m' again to continue.\033[0m"
+            echo -e "\033[38;5;8m   This ensures all new features and migrations work correctly.\033[0m"
+            script_was_updated=true
+            exit 0
         else
-            echo -e "\033[1;32m✅ Script is up to date:\033[0m \033[38;5;15mv$current_script_version\033[0m"
+            echo -e "\033[1;31m❌ Failed to update script\033[0m"
+            exit 1
         fi
     else
-        echo -e "\033[1;33m⚠️  Unable to check script version, continuing...\033[0m"
+        echo -e "\033[1;32m✅ Script is up to date:\033[0m \033[38;5;15mv$current_script_version\033[0m"
     fi
     echo
     
