@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.3.0
+# Version: 3.3.1
 set -e
-SCRIPT_VERSION="3.3.0"
+SCRIPT_VERSION="3.3.1"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1295,6 +1295,24 @@ update_command() {
     echo -e "\033[1;37m🔄 Starting RemnaNode Update Check...\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
     
+    # Проверяем версию скрипта
+    echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking script version..."
+    local current_script_version="$SCRIPT_VERSION"
+    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
+    local script_needs_update=false
+    
+    if [ -n "$remote_script_version" ]; then
+        if [ "$remote_script_version" != "$current_script_version" ]; then
+            script_needs_update=true
+            echo -e "\033[1;33m🔄 Script update available:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+        else
+            echo -e "\033[1;32m✅ Script is up to date:\033[0m \033[38;5;15mv$current_script_version\033[0m"
+        fi
+    else
+        echo -e "\033[1;33m⚠️  Unable to check script version\033[0m"
+    fi
+    echo
+    
     # Определяем используемый тег из docker-compose.yml
     local current_tag="latest"
     if [ -f "$COMPOSE_FILE" ]; then
@@ -1307,7 +1325,7 @@ update_command() {
     echo -e "\033[38;5;250m🏷️  Current tag:\033[0m \033[38;5;15m$current_tag\033[0m"
     
     # Получаем локальную версию образа
-    echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking local image version..."
+    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking local image version..."
     local local_image_id=""
     local local_created=""
     
@@ -1324,7 +1342,7 @@ update_command() {
     fi
     
     # Проверяем обновления через docker pull
-    echo -e "\033[38;5;250m📝 Step 2:\033[0m Checking for updates with docker pull..."
+    echo -e "\033[38;5;250m📝 Step 3:\033[0m Checking for updates with docker pull..."
     
     # Сохраняем текущий образ ID для сравнения
     local old_image_id="$local_image_id"
@@ -1381,23 +1399,27 @@ update_command() {
         echo -e "\033[1;37m🚀 Performing Update...\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
         
-        # Обновляем скрипт
-        echo -e "\033[38;5;250m📝 Step 3:\033[0m Updating script..."
-        if update_remnanode_script; then
-            echo -e "\033[1;32m✅ Script updated\033[0m"
+        # Обновляем скрипт если нужно
+        if [ "$script_needs_update" = true ]; then
+            echo -e "\033[38;5;250m📝 Step 4:\033[0m Updating script..."
+            if update_remnanode_script; then
+                echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+            else
+                echo -e "\033[1;33m⚠️  Script update failed, continuing...\033[0m"
+            fi
         else
-            echo -e "\033[1;33m⚠️  Script update failed, continuing...\033[0m"
+            echo -e "\033[38;5;250m📝 Step 4:\033[0m Script already up to date, skipping..."
         fi
         
         # Проверяем и мигрируем переменные окружения
-        echo -e "\033[38;5;250m📝 Step 4:\033[0m Checking environment variables..."
+        echo -e "\033[38;5;250m📝 Step 5:\033[0m Checking environment variables..."
         migrate_env_variables
         
         # Проверяем, запущен ли контейнер
         local was_running=false
         if is_remnanode_up; then
             was_running=true
-            echo -e "\033[38;5;250m📝 Step 5:\033[0m Stopping running container..."
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Stopping running container..."
             if down_remnanode; then
                 echo -e "\033[1;32m✅ Container stopped\033[0m"
             else
@@ -1405,12 +1427,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 5:\033[0m Container not running, skipping stop..."
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Container not running, skipping stop..."
         fi
         
         # Загружаем образ только если еще не загружен
         if [[ "$update_reason" != *"downloaded"* ]]; then
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Pulling latest image..."
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Pulling latest image..."
             if update_remnanode; then
                 echo -e "\033[1;32m✅ Image updated\033[0m"
                 # Обновляем ID образа
@@ -1426,12 +1448,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Image already updated during check\033[0m"
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Image already updated during check\033[0m"
         fi
         
         # Запускаем контейнер только если он был запущен ранее
         if [ "$was_running" = true ]; then
-            echo -e "\033[38;5;250m📝 Step 7:\033[0m Starting updated container..."
+            echo -e "\033[38;5;250m📝 Step 8:\033[0m Starting updated container..."
             if up_remnanode; then
                 echo -e "\033[1;32m✅ Container started\033[0m"
             else
@@ -1439,7 +1461,7 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 7:\033[0m Container was not running, leaving it stopped..."
+            echo -e "\033[38;5;250m📝 Step 8:\033[0m Container was not running, leaving it stopped..."
         fi
         
         # Показываем финальную информацию
@@ -1455,6 +1477,12 @@ update_command() {
         echo -e "\033[38;5;250m   Current:  \033[38;5;15m$new_image_id\033[0m"
         echo -e "\033[38;5;250m   Created:  \033[38;5;15m$final_created\033[0m"
         
+        if [ "$script_needs_update" = true ]; then
+            echo -e "\033[38;5;250m   Script:   \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+        else
+            echo -e "\033[38;5;250m   Script:   \033[38;5;15mv$current_script_version\033[0m \033[1;32m(up to date)\033[0m"
+        fi
+        
         if [ "$was_running" = true ]; then
             echo -e "\033[38;5;250m   Status:   \033[1;32mRunning\033[0m"
         else
@@ -1469,21 +1497,13 @@ update_command() {
         echo -e "\033[38;5;250m   Reason: \033[38;5;15m$update_reason\033[0m"
         echo
         
-        # Проверяем все равно скрипт
-        echo -e "\033[38;5;250m📝 Checking script updates...\033[0m"
-        
-        # Получаем текущую версию скрипта
-        local current_script_version="$SCRIPT_VERSION"
-        
-        # Получаем последнюю версию скрипта с GitHub
-        local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
-        
-        if [ -n "$remote_script_version" ] && [ "$remote_script_version" != "$current_script_version" ]; then
-            echo -e "\033[1;33m🔄 Script update available: \033[38;5;15mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+        # Обновляем скрипт если нужно (проверка уже была выполнена в начале)
+        if [ "$script_needs_update" = true ]; then
+            echo -e "\033[38;5;250m📝 Updating script...\033[0m"
             read -p "Do you want to update the script? (y/n): " -r update_script
             if [[ $update_script =~ ^[Yy]$ ]]; then
                 if update_remnanode_script; then
-                    echo -e "\033[1;32m✅ Script updated to v$remote_script_version\033[0m"
+                    echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
                     echo -e "\033[38;5;8m   Please run the command again to use the new version\033[0m"
                 else
                     echo -e "\033[1;33m⚠️  Script update failed\033[0m"
@@ -1491,13 +1511,13 @@ update_command() {
             else
                 echo -e "\033[38;5;8m   Script update skipped\033[0m"
             fi
-        else
-            echo -e "\033[1;32m✅ Script is up to date\033[0m"
+            echo
         fi
         
-        echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
         echo -e "\033[1;37m📊 Current Status:\033[0m"
+        
+        echo -e "\033[38;5;250m   Script:    \033[38;5;15mv$current_script_version\033[0m \033[1;32m(up to date)\033[0m"
         
         if is_remnanode_up; then
             echo -e "\033[38;5;250m   Container: \033[1;32mRunning ✅\033[0m"
