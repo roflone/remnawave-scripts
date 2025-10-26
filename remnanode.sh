@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.2.2
+# Version: 3.3.0
 set -e
-SCRIPT_VERSION="3.2.2"
+SCRIPT_VERSION="3.3.0"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -517,23 +517,23 @@ install_remnanode() {
     mkdir -p "$DATA_DIR"
 
     # Prompt the user to input the SSL certificate
-    colorized_echo blue "Please paste the content of the SSL Public Key from Remnawave-Panel, press ENTER on a new line when finished: "
-    SSL_CERT=""
+    colorized_echo blue "Please paste the content of the SSL Public Key (SECRET_KEY) from Remnawave-Panel, press ENTER on a new line when finished: "
+    SECRET_KEY=""
     while IFS= read -r line; do
         if [[ -z $line ]]; then
             break
         fi
-        SSL_CERT="$SSL_CERT$line"
+        SECRET_KEY="$SECRET_KEY$line"
     done
 
     get_occupied_ports
     while true; do
-        read -p "Enter the APP_PORT (default 3000): " -r APP_PORT
-        APP_PORT=${APP_PORT:-3000}
+        read -p "Enter the NODE_PORT (default 3000): " -r NODE_PORT
+        NODE_PORT=${NODE_PORT:-3000}
         
-        if validate_port "$APP_PORT"; then
-            if is_port_occupied "$APP_PORT"; then
-                colorized_echo red "Port $APP_PORT is already in use. Please enter another port."
+        if validate_port "$NODE_PORT"; then
+            if is_port_occupied "$NODE_PORT"; then
+                colorized_echo red "Port $NODE_PORT is already in use. Please enter another port."
                 colorized_echo blue "Occupied ports: $(echo $OCCUPIED_PORTS | tr '\n' ' ')"
             else
                 break
@@ -553,11 +553,11 @@ install_remnanode() {
 
     colorized_echo blue "Generating .env file"
     cat > "$ENV_FILE" <<EOL
-### APP ###
-APP_PORT=$APP_PORT
+### NODE ###
+NODE_PORT=$NODE_PORT
 
 ### XRAY ###
-$SSL_CERT
+$SECRET_KEY
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
@@ -729,8 +729,8 @@ install_command() {
     
     echo -e "\033[1;37m🌐 Connection Information:\033[0m"
     printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "IP Address:" "$NODE_IP"
-    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$APP_PORT"
-    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$APP_PORT"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$NODE_PORT"
+    printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$NODE_PORT"
     echo
     
     echo -e "\033[1;37m📋 Next Steps:\033[0m"
@@ -743,7 +743,7 @@ install_command() {
         echo -e "   \033[38;5;250m3.\033[0m Install Xray-core: \033[38;5;15msudo $APP_NAME core-update\033[0m"
     fi
     
-    echo -e "   \033[38;5;250m4.\033[0m Secure with UFW: \033[38;5;15msudo ufw allow from \033[38;5;244mPANEL_IP\033[38;5;15m to any port $APP_PORT\033[0m"
+    echo -e "   \033[38;5;250m4.\033[0m Secure with UFW: \033[38;5;15msudo ufw allow from \033[38;5;244mPANEL_IP\033[38;5;15m to any port $NODE_PORT\033[0m"
     echo -e "      \033[38;5;8m(Enable UFW: \033[38;5;15msudo ufw enable\033[38;5;8m)\033[0m"
     echo
     
@@ -934,9 +934,13 @@ status_command() {
     
     # Дополнительная информация
     if [ -f "$ENV_FILE" ]; then
-        local app_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        if [ -n "$app_port" ]; then
-            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$app_port"
+        local node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        # Fallback to old variable for backward compatibility
+        if [ -z "$node_port" ]; then
+            node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
+        fi
+        if [ -n "$node_port" ]; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$node_port"
         fi
     fi
     
@@ -982,6 +986,71 @@ logs_command() {
     else
         follow_remnanode_logs
     fi
+}
+
+# Функция для миграции старых переменных окружения к новым
+migrate_env_variables() {
+    local env_file="$ENV_FILE"
+    
+    if [ ! -f "$env_file" ]; then
+        return 0
+    fi
+    
+    local needs_migration=false
+    local has_app_port=false
+    local has_ssl_cert=false
+    
+    # Проверяем наличие старых переменных
+    if grep -q "^APP_PORT=" "$env_file"; then
+        has_app_port=true
+        needs_migration=true
+    fi
+    
+    if grep -q "^SSL_CERT=" "$env_file"; then
+        has_ssl_cert=true
+        needs_migration=true
+    fi
+    
+    if [ "$needs_migration" = false ]; then
+        return 0
+    fi
+    
+    colorized_echo blue "🔄 Detected old environment variables (APP_PORT/SSL_CERT)"
+    colorized_echo blue "📝 Migrating to new format (NODE_PORT/SECRET_KEY)..."
+    
+    # Создаем backup
+    local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$env_file" "$backup_file"
+    colorized_echo green "✅ Backup created: $backup_file"
+    
+    # Выполняем миграцию
+    local temp_file=$(mktemp)
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^APP_PORT= ]]; then
+            # Заменяем APP_PORT на NODE_PORT
+            echo "$line" | sed 's/^APP_PORT=/NODE_PORT=/' >> "$temp_file"
+            colorized_echo green "  ✅ Migrated: APP_PORT → NODE_PORT"
+        elif [[ "$line" =~ ^SSL_CERT= ]]; then
+            # Заменяем SSL_CERT на SECRET_KEY
+            echo "$line" | sed 's/^SSL_CERT=/SECRET_KEY=/' >> "$temp_file"
+            colorized_echo green "  ✅ Migrated: SSL_CERT → SECRET_KEY"
+        elif [[ "$line" =~ ^###[[:space:]]*APP[[:space:]]*### ]]; then
+            # Заменяем заголовок секции
+            echo "### NODE ###" >> "$temp_file"
+        else
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$env_file"
+    
+    # Заменяем оригинальный файл
+    mv "$temp_file" "$env_file"
+    
+    colorized_echo green "🎉 Migration completed successfully!"
+    colorized_echo blue "📋 Old variables are deprecated and will be removed in future versions"
+    echo
+    
+    return 0
 }
 
 # update_command() {
@@ -1125,11 +1194,15 @@ update_command() {
             echo -e "\033[1;33m⚠️  Script update failed, continuing...\033[0m"
         fi
         
+        # Проверяем и мигрируем переменные окружения
+        echo -e "\033[38;5;250m📝 Step 4:\033[0m Checking environment variables..."
+        migrate_env_variables
+        
         # Проверяем, запущен ли контейнер
         local was_running=false
         if is_remnanode_up; then
             was_running=true
-            echo -e "\033[38;5;250m📝 Step 4:\033[0m Stopping running container..."
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Stopping running container..."
             if down_remnanode; then
                 echo -e "\033[1;32m✅ Container stopped\033[0m"
             else
@@ -1137,12 +1210,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 4:\033[0m Container not running, skipping stop..."
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Container not running, skipping stop..."
         fi
         
         # Загружаем образ только если еще не загружен
         if [[ "$update_reason" != *"downloaded"* ]]; then
-            echo -e "\033[38;5;250m📝 Step 5:\033[0m Pulling latest image..."
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Pulling latest image..."
             if update_remnanode; then
                 echo -e "\033[1;32m✅ Image updated\033[0m"
                 # Обновляем ID образа
@@ -1158,12 +1231,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 5:\033[0m Image already updated during check\033[0m"
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Image already updated during check\033[0m"
         fi
         
         # Запускаем контейнер только если он был запущен ранее
         if [ "$was_running" = true ]; then
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Starting updated container..."
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Starting updated container..."
             if up_remnanode; then
                 echo -e "\033[1;32m✅ Container started\033[0m"
             else
@@ -1171,7 +1244,7 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Container was not running, leaving it stopped..."
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Container was not running, leaving it stopped..."
         fi
         
         # Показываем финальную информацию
@@ -2099,7 +2172,11 @@ usage() {
     echo
 
     if is_remnanode_installed && [ -f "$ENV_FILE" ]; then
-        local node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+        local node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+        # Fallback to old variable for backward compatibility
+        if [ -z "$node_port" ]; then
+            node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+        fi
         if [ -n "$node_port" ]; then
             echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
             echo -e "\033[1;37m🌐 Node Access:\033[0m \033[38;5;117m$NODE_IP:$node_port\033[0m"
@@ -2151,7 +2228,11 @@ main_menu() {
         
         if is_remnanode_installed; then
             if [ -f "$ENV_FILE" ]; then
-                node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+                node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+                # Fallback to old variable for backward compatibility
+                if [ -z "$node_port" ]; then
+                    node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+                fi
             fi
             
             if is_remnanode_up; then

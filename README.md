@@ -333,6 +333,7 @@ A production-ready Bash script to install and manage **RemnaNode** - high-perfor
 * Multi-architecture support (x86_64, ARM64, ARM32, MIPS)
 * Development mode support with `--dev` flag
 * Comprehensive system requirements validation
+* **Automatic environment variable migration** with backup support (RemnaNode v2.2.2+)
 
 ---
 
@@ -397,6 +398,30 @@ remnanode logs
 ---
 
 ### 🔧 Production Configuration
+
+**Environment Variable Migration (RemnaNode v2.2.2+)**
+
+Starting with RemnaNode v2.2.2, environment variables have been renamed for better clarity:
+- `APP_PORT` → `NODE_PORT` 
+- `SSL_CERT` → `SECRET_KEY`
+
+**Automatic Migration:**
+```bash
+# Migration happens automatically during update
+remnanode update  # Automatically migrates old variables with backup
+
+# What happens during migration:
+# 1. Detects old environment variables
+# 2. Creates backup: /opt/remnanode/.env.backup.TIMESTAMP
+# 3. Migrates APP_PORT → NODE_PORT
+# 4. Migrates SSL_CERT → SECRET_KEY
+# 5. Restarts container with new configuration
+```
+
+**Backward Compatibility:**
+* Old variables (`APP_PORT`, `SSL_CERT`) are still supported for existing installations
+* Automatic fallback ensures seamless operation
+* No manual intervention required
 
 **Log Rotation Setup**
 ```bash
