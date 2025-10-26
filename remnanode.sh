@@ -517,13 +517,13 @@ install_remnanode() {
     mkdir -p "$DATA_DIR"
 
     # Prompt the user to input the SSL certificate
-    colorized_echo blue "Please paste the content of the SSL Public Key (SECRET_KEY) from Remnawave-Panel, press ENTER on a new line when finished: "
-    SECRET_KEY=""
+    colorized_echo blue "Please paste the content of the SECRET_KEY from Remnawave-Panel, press ENTER on a new line when finished: "
+    SECRET_KEY_VALUE=""
     while IFS= read -r line; do
         if [[ -z $line ]]; then
             break
         fi
-        SECRET_KEY="$SECRET_KEY$line"
+        SECRET_KEY_VALUE="$SECRET_KEY_VALUE$line"
     done
 
     get_occupied_ports
@@ -557,7 +557,7 @@ install_remnanode() {
 NODE_PORT=$NODE_PORT
 
 ### XRAY ###
-$SECRET_KEY
+SECRET_KEY=$SECRET_KEY_VALUE
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
@@ -932,16 +932,15 @@ status_command() {
     
     printf "   \033[38;5;15m%-12s\033[0m \033[1;32m✅ Running\033[0m\n" "Status:"
     
-    # Дополнительная информация
-    if [ -f "$ENV_FILE" ]; then
-        local node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        # Fallback to old variable for backward compatibility
-        if [ -z "$node_port" ]; then
-            node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null)
-        fi
-        if [ -n "$node_port" ]; then
-            printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$node_port"
-        fi
+    # Получаем порт через универсальную функцию
+    local node_port=$(get_env_variable "NODE_PORT")
+    # Fallback to old variable for backward compatibility
+    if [ -z "$node_port" ]; then
+        node_port=$(get_env_variable "APP_PORT")
+    fi
+    
+    if [ -n "$node_port" ]; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$node_port"
     fi
     
     # Проверяем Xray
@@ -988,11 +987,78 @@ logs_command() {
     fi
 }
 
+# Функция для получения переменной окружения из .env или docker-compose.yml
+get_env_variable() {
+    local var_name="$1"
+    local value=""
+    
+    # Сначала пробуем .env файл
+    if [ -f "$ENV_FILE" ]; then
+        value=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    fi
+    
+    # Если не нашли в .env, ищем в docker-compose.yml
+    if [ -z "$value" ] && [ -f "$COMPOSE_FILE" ]; then
+        # Проверяем секцию environment в docker-compose.yml
+        value=$(grep -A 20 "environment:" "$COMPOSE_FILE" 2>/dev/null | grep "${var_name}=" | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs)
+    fi
+    
+    echo "$value"
+}
+
+# Функция для проверки, используется ли .env или переменные в docker-compose.yml
+check_env_configuration() {
+    local uses_env_file=false
+    local uses_inline_env=false
+    
+    # Проверяем наличие .env файла
+    if [ -f "$ENV_FILE" ] && [ -s "$ENV_FILE" ]; then
+        uses_env_file=true
+    fi
+    
+    # Проверяем наличие env_file в docker-compose.yml
+    if [ -f "$COMPOSE_FILE" ]; then
+        if grep -q "env_file:" "$COMPOSE_FILE" 2>/dev/null; then
+            uses_env_file=true
+        fi
+        
+        # Проверяем наличие inline environment переменных
+        if grep -A 5 "environment:" "$COMPOSE_FILE" 2>/dev/null | grep -q "NODE_PORT\|APP_PORT\|SECRET_KEY\|SSL_CERT"; then
+            uses_inline_env=true
+        fi
+    fi
+    
+    if [ "$uses_env_file" = true ]; then
+        echo "env_file"
+    elif [ "$uses_inline_env" = true ]; then
+        echo "inline"
+    else
+        echo "unknown"
+    fi
+}
+
 # Функция для миграции старых переменных окружения к новым
 migrate_env_variables() {
+    local env_type=$(check_env_configuration)
+    
+    colorized_echo blue "🔍 Detected configuration type: $env_type"
+    
+    if [ "$env_type" = "env_file" ]; then
+        migrate_env_file
+    elif [ "$env_type" = "inline" ]; then
+        migrate_inline_env
+    else
+        colorized_echo yellow "⚠️  Unknown configuration type, skipping migration"
+        return 0
+    fi
+}
+
+# Функция для миграции .env файла
+migrate_env_file() {
     local env_file="$ENV_FILE"
     
     if [ ! -f "$env_file" ]; then
+        colorized_echo yellow "⚠️  .env file not found, skipping migration"
         return 0
     fi
     
@@ -1012,10 +1078,11 @@ migrate_env_variables() {
     fi
     
     if [ "$needs_migration" = false ]; then
+        colorized_echo green "✅ .env file is up to date"
         return 0
     fi
     
-    colorized_echo blue "🔄 Detected old environment variables (APP_PORT/SSL_CERT)"
+    colorized_echo blue "🔄 Detected old environment variables in .env (APP_PORT/SSL_CERT)"
     colorized_echo blue "📝 Migrating to new format (NODE_PORT/SECRET_KEY)..."
     
     # Создаем backup
@@ -1046,12 +1113,140 @@ migrate_env_variables() {
     # Заменяем оригинальный файл
     mv "$temp_file" "$env_file"
     
-    colorized_echo green "🎉 Migration completed successfully!"
+    colorized_echo green "🎉 .env migration completed successfully!"
     colorized_echo blue "📋 Old variables are deprecated and will be removed in future versions"
     echo
     
     return 0
 }
+
+# Функция для миграции inline переменных в docker-compose.yml
+migrate_inline_env() {
+    local compose_file="$COMPOSE_FILE"
+    
+    if [ ! -f "$compose_file" ]; then
+        colorized_echo yellow "⚠️  docker-compose.yml not found, skipping migration"
+        return 0
+    fi
+    
+    local needs_migration=false
+    
+    # Проверяем наличие старых переменных в docker-compose.yml
+    if grep -A 10 "environment:" "$compose_file" | grep -q "APP_PORT\|SSL_CERT"; then
+        needs_migration=true
+    fi
+    
+    if [ "$needs_migration" = false ]; then
+        colorized_echo green "✅ docker-compose.yml is up to date"
+        return 0
+    fi
+    
+    colorized_echo blue "🔄 Detected old environment variables in docker-compose.yml (APP_PORT/SSL_CERT)"
+    colorized_echo blue "📝 Migrating to new format (NODE_PORT/SECRET_KEY)..."
+    
+    # Создаем backup
+    local backup_file="${compose_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$compose_file" "$backup_file"
+    colorized_echo green "✅ Backup created: $backup_file"
+    
+    # Выполняем миграцию
+    local temp_file=$(mktemp)
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ APP_PORT ]]; then
+            # Заменяем APP_PORT на NODE_PORT
+            echo "$line" | sed 's/APP_PORT/NODE_PORT/g' >> "$temp_file"
+            colorized_echo green "  ✅ Migrated: APP_PORT → NODE_PORT"
+        elif [[ "$line" =~ SSL_CERT ]]; then
+            # Заменяем SSL_CERT на SECRET_KEY
+            echo "$line" | sed 's/SSL_CERT/SECRET_KEY/g' >> "$temp_file"
+            colorized_echo green "  ✅ Migrated: SSL_CERT → SECRET_KEY"
+        else
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$compose_file"
+    
+    # Заменяем оригинальный файл
+    mv "$temp_file" "$compose_file"
+    
+    # Предлагаем мигрировать на .env файл
+    echo
+    colorized_echo blue "💡 Recommendation: Consider migrating to .env file for better security"
+    colorized_echo blue "   Environment variables in docker-compose.yml are less secure"
+    echo
+    read -p "Do you want to migrate to .env file now? (y/n): " -r migrate_to_env
+    
+    if [[ $migrate_to_env =~ ^[Yy]$ ]]; then
+        migrate_to_env_file
+    else
+        colorized_echo yellow "⚠️  Keeping inline environment variables"
+    fi
+    
+    colorized_echo green "🎉 docker-compose.yml migration completed successfully!"
+    colorized_echo blue "📋 Old variables are deprecated and will be removed in future versions"
+    echo
+    
+    return 0
+}
+
+# Функция для миграции inline переменных в .env файл
+migrate_to_env_file() {
+    colorized_echo blue "🔄 Migrating inline environment variables to .env file..."
+    
+    # Извлекаем переменные из docker-compose.yml
+    local node_port=$(grep -A 10 "environment:" "$COMPOSE_FILE" 2>/dev/null | grep "NODE_PORT" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs)
+    local secret_key=$(grep -A 10 "environment:" "$COMPOSE_FILE" 2>/dev/null | grep "SECRET_KEY" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs)
+    
+    # Создаем .env файл
+    cat > "$ENV_FILE" <<EOL
+### NODE ###
+NODE_PORT=${node_port:-3000}
+
+### XRAY ###
+SECRET_KEY=$secret_key
+EOL
+    
+    colorized_echo green "✅ .env file created: $ENV_FILE"
+    
+    # Обновляем docker-compose.yml для использования env_file
+    local temp_file=$(mktemp)
+    local in_environment_section=false
+    local environment_indent=""
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*environment:[[:space:]]*$ ]]; then
+            in_environment_section=true
+            environment_indent=$(echo "$line" | sed 's/environment:.*//' | grep -o '^[[:space:]]*')
+            # Заменяем environment на env_file
+            echo "${environment_indent}env_file:" >> "$temp_file"
+            echo "${environment_indent}  - .env" >> "$temp_file"
+            continue
+        fi
+        
+        if [ "$in_environment_section" = true ]; then
+            # Пропускаем строки с переменными окружения
+            if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*(NODE_PORT|SECRET_KEY|APP_PORT|SSL_CERT) ]]; then
+                continue
+            elif [[ "$line" =~ ^[[:space:]]*[A-Z_]+=.* ]]; then
+                continue
+            else
+                in_environment_section=false
+            fi
+        fi
+        
+        if [ "$in_environment_section" = false ]; then
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$COMPOSE_FILE"
+    
+    # Заменяем оригинальный файл
+    mv "$temp_file" "$COMPOSE_FILE"
+    
+    colorized_echo green "✅ docker-compose.yml updated to use .env file"
+}
+
+# Старая функция для обратной совместимости (теперь просто вызывает новую)
+# migrate_env_variables() - уже определена выше
 
 # update_command() {
 #     check_running_as_root
@@ -2128,6 +2323,60 @@ edit_command() {
     fi
 }
 
+edit_env_command() {
+    detect_os
+    check_editor
+    
+    local env_type=$(check_env_configuration)
+    
+    if [ "$env_type" = "env_file" ]; then
+        if [ -f "$ENV_FILE" ]; then
+            $EDITOR "$ENV_FILE"
+        else
+            colorized_echo red "Environment file not found at $ENV_FILE"
+            exit 1
+        fi
+    elif [ "$env_type" = "inline" ]; then
+        colorized_echo yellow "⚠️  Environment variables are stored in docker-compose.yml"
+        colorized_echo blue "💡 Recommendation: Migrate to .env file for better security"
+        echo
+        read -p "Do you want to migrate to .env file now? (y/n): " -r migrate_choice
+        
+        if [[ $migrate_choice =~ ^[Yy]$ ]]; then
+            migrate_to_env_file
+            colorized_echo green "✅ Migration completed! Opening .env file for editing..."
+            sleep 1
+            $EDITOR "$ENV_FILE"
+        else
+            colorized_echo blue "Opening docker-compose.yml for editing..."
+            sleep 1
+            $EDITOR "$COMPOSE_FILE"
+        fi
+    else
+        colorized_echo red "❌ Could not determine environment configuration"
+        colorized_echo yellow "⚠️  Neither .env file nor inline environment variables found"
+        echo
+        read -p "Do you want to create a .env file? (y/n): " -r create_choice
+        
+        if [[ $create_choice =~ ^[Yy]$ ]]; then
+            colorized_echo blue "Creating .env file template..."
+            cat > "$ENV_FILE" <<EOL
+### NODE ###
+NODE_PORT=3000
+
+### XRAY ###
+SECRET_KEY=
+EOL
+            colorized_echo green "✅ .env file created: $ENV_FILE"
+            colorized_echo blue "Opening for editing..."
+            sleep 1
+            $EDITOR "$ENV_FILE"
+        else
+            exit 1
+        fi
+    fi
+}
+
 
 usage() {
     clear
@@ -2162,7 +2411,8 @@ usage() {
     echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "update" "🔄 Update RemnaNode"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "core-update" "⬆️  Update Xray-core"
-    printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit" "📝 Edit configuration"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit" "📝 Edit docker-compose.yml"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit-env" "🔐 Edit environment (.env)"
     echo
 
     echo -e "\033[1;37m📋 Information:\033[0m"
@@ -2171,11 +2421,11 @@ usage() {
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "menu" "🎛️  Interactive menu"
     echo
 
-    if is_remnanode_installed && [ -f "$ENV_FILE" ]; then
-        local node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+    if is_remnanode_installed; then
+        local node_port=$(get_env_variable "NODE_PORT")
         # Fallback to old variable for backward compatibility
         if [ -z "$node_port" ]; then
-            node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
+            node_port=$(get_env_variable "APP_PORT")
         fi
         if [ -n "$node_port" ]; then
             echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
@@ -2227,12 +2477,11 @@ main_menu() {
         local xray_version=""
         
         if is_remnanode_installed; then
-            if [ -f "$ENV_FILE" ]; then
-                node_port=$(grep "NODE_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
-                # Fallback to old variable for backward compatibility
-                if [ -z "$node_port" ]; then
-                    node_port=$(grep "APP_PORT=" "$ENV_FILE" | cut -d'=' -f2 2>/dev/null || echo "")
-                fi
+            # Получаем порт через универсальную функцию
+            node_port=$(get_env_variable "NODE_PORT")
+            # Fallback to old variable for backward compatibility
+            if [ -z "$node_port" ]; then
+                node_port=$(get_env_variable "APP_PORT")
             fi
             
             if is_remnanode_up; then
@@ -2317,8 +2566,9 @@ main_menu() {
         echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
         echo -e "   \033[38;5;15m10)\033[0m 🔄 Update RemnaNode"
         echo -e "   \033[38;5;15m11)\033[0m ⬆️  Update Xray-core"
-        echo -e "   \033[38;5;15m12)\033[0m 📝 Edit configuration"
-        echo -e "   \033[38;5;15m13)\033[0m 🗂️  Setup log rotation"
+        echo -e "   \033[38;5;15m12)\033[0m 📝 Edit docker-compose.yml"
+        echo -e "   \033[38;5;15m13)\033[0m 🔐 Edit environment (.env)"
+        echo -e "   \033[38;5;15m14)\033[0m 🗂️  Setup log rotation"
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
@@ -2336,14 +2586,14 @@ main_menu() {
                 if [ "$xray_version" = "Not installed" ]; then
                     echo -e "\033[1;34m💡 Tip: Install Xray-core with option 11 for better performance\033[0m"
                 else
-                    echo -e "\033[1;34m💡 Tip: Check logs (7-9) or configure log rotation (13)\033[0m"
+                    echo -e "\033[1;34m💡 Tip: Check logs (7-9) or configure log rotation (14)\033[0m"
                 fi
                 ;;
         esac
         
         echo -e "\033[38;5;8mRemnaNode CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-13]:\033[0m ")" choice
+        read -p "$(echo -e "\033[1;37mSelect option [0-14]:\033[0m ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -2358,7 +2608,8 @@ main_menu() {
             10) update_command; read -p "Press Enter to continue..." ;;
             11) update_core_command; read -p "Press Enter to continue..." ;;
             12) edit_command; read -p "Press Enter to continue..." ;;
-            13) setup_log_rotation; read -p "Press Enter to continue..." ;;
+            13) edit_env_command; read -p "Press Enter to continue..." ;;
+            14) setup_log_rotation; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "\033[1;31m❌ Invalid option!\033[0m"
@@ -2384,6 +2635,7 @@ case "${COMMAND:-menu}" in
     update) update_command ;;
     core-update) update_core_command ;;
     edit) edit_command ;;
+    edit-env) edit_env_command ;;
     setup-logs) setup_log_rotation ;;
     help|--help|-h) usage ;;
     version|--version|-v) show_version ;;
