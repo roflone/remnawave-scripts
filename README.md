@@ -85,6 +85,12 @@ A comprehensive enterprise-grade Bash script to install and manage the [Remnawav
 * Thread support for group chats
 * Comprehensive status reporting
 
+**🔄 Automatic Variable Migration (Remnawave v2.2.0+)**
+* Auto-detection of deprecated environment variables
+* Safe migration with automatic backup creation
+* OAuth and Branding settings moved to UI
+* Seamless upgrade experience with zero downtime
+
 ---
 
 ### 📦 Quick Start
@@ -220,6 +226,59 @@ sudo remnawave up
 
 ---
 
+### 🔄 Automatic Variable Migration (Remnawave v2.2.0+)
+
+**Starting with Remnawave v2.2.0**, many environment variables have been moved to the UI panel for better management and security.
+
+**Deprecated Variables (Auto-migrated):**
+```bash
+# OAuth Settings → Now in Panel UI
+TELEGRAM_OAUTH_ENABLED
+TELEGRAM_OAUTH_ADMIN_IDS
+OAUTH2_GITHUB_ENABLED
+OAUTH2_GITHUB_CLIENT_ID
+OAUTH2_GITHUB_CLIENT_SECRET
+OAUTH2_GITHUB_ALLOWED_EMAILS
+OAUTH2_POCKETID_ENABLED
+OAUTH2_POCKETID_CLIENT_ID
+OAUTH2_POCKETID_CLIENT_SECRET
+OAUTH2_POCKETID_ALLOWED_EMAILS
+OAUTH2_POCKETID_PLAIN_DOMAIN
+OAUTH2_YANDEX_ENABLED
+OAUTH2_YANDEX_CLIENT_ID
+OAUTH2_YANDEX_CLIENT_SECRET
+OAUTH2_YANDEX_ALLOWED_EMAILS
+
+# Branding Settings → Now in Panel UI
+BRANDING_LOGO_URL
+BRANDING_TITLE
+```
+
+**Automatic Migration Process:**
+```bash
+# Migration happens automatically during update
+remnawave update
+
+# What happens:
+# 1. Detects deprecated variables in .env
+# 2. Creates backup: /opt/remnawave/.env.backup.TIMESTAMP
+# 3. Removes deprecated variables from .env
+# 4. Shows migration summary
+# 5. Guides to configure settings in panel UI
+```
+
+**Configure in Panel UI:**
+- **Settings → Authentication → Login Methods** (OAuth settings)
+- **Settings → Branding** (Logo and title)
+
+**Benefits:**
+- ✅ No more panel restarts for configuration changes
+- ✅ Real-time preview of branding changes
+- ✅ Secure credential management in UI
+- ✅ Cleaner .env file
+
+---
+
 ### � Telegram Integration
 
 Configure during installation or via `.env`:
@@ -236,10 +295,6 @@ TELEGRAM_NOTIFY_USERS_THREAD_ID=thread_id  # Optional
 # Node notifications  
 TELEGRAM_NOTIFY_NODES_CHAT_ID=your_chat_id
 TELEGRAM_NOTIFY_NODES_THREAD_ID=thread_id  # Optional
-
-# OAuth integration
-TELEGRAM_OAUTH_ENABLED=true
-TELEGRAM_OAUTH_ADMIN_IDS=123456789,987654321
 ```
 
 **Features:**
@@ -333,7 +388,8 @@ A production-ready Bash script to install and manage **RemnaNode** - high-perfor
 * Multi-architecture support (x86_64, ARM64, ARM32, MIPS)
 * Development mode support with `--dev` flag
 * Comprehensive system requirements validation
-* **Automatic environment variable migration** with backup support (RemnaNode v2.2.2+)
+* **Universal configuration support**: `.env` files and inline docker-compose variables
+* **Automatic environment variable migration** with backup support
 
 ---
 
@@ -366,6 +422,7 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode
 | `logs` | View container logs | `remnanode logs` |
 | `core-update` | Update Xray-core binary | `remnanode core-update` |
 | `edit` | Edit docker-compose.yml | `remnanode edit` |
+| `edit-env` | Edit .env file | `remnanode edit-env` |
 | `setup-logs` | Configure log rotation | `remnanode setup-logs` |
 | `xray_log_out` | Monitor Xray output logs | `remnanode xray_log_out` |
 | `xray_log_err` | Monitor Xray error logs | `remnanode xray_log_err` |
@@ -399,29 +456,62 @@ remnanode logs
 
 ### 🔧 Production Configuration
 
-**Environment Variable Migration (RemnaNode v2.2.2+)**
+**Environment Variable Migration**
 
-Starting with RemnaNode v2.2.2, environment variables have been renamed for better clarity:
+Starting with **RemnaNode v2.2.2+**, environment variables have been renamed for better clarity:
 - `APP_PORT` → `NODE_PORT` 
 - `SSL_CERT` → `SECRET_KEY`
 
-**Automatic Migration:**
+**Universal Configuration Support:**
+
+The script now supports **both** `.env` files and inline environment variables in `docker-compose.yml`:
+
+```bash
+# Option 1: Using .env file (Recommended)
+# /opt/remnanode/.env
+NODE_PORT=3000
+SECRET_KEY=your_secret_key
+
+# Option 2: Inline in docker-compose.yml (Also supported)
+# docker-compose.yml
+services:
+  remnanode:
+    environment:
+      - NODE_PORT=3000
+      - SECRET_KEY=your_secret_key
+```
+
+**Automatic Migration Process:**
 ```bash
 # Migration happens automatically during update
-remnanode update  # Automatically migrates old variables with backup
+remnanode update
 
 # What happens during migration:
-# 1. Detects old environment variables
-# 2. Creates backup: /opt/remnanode/.env.backup.TIMESTAMP
-# 3. Migrates APP_PORT → NODE_PORT
-# 4. Migrates SSL_CERT → SECRET_KEY
-# 5. Restarts container with new configuration
+# 1. Auto-detects configuration type (.env or inline)
+# 2. Creates backup with timestamp
+# 3. Migrates old variables:
+#    - APP_PORT → NODE_PORT
+#    - SSL_CERT → SECRET_KEY
+# 4. For inline variables: Offers migration to .env (more secure)
+# 5. Applies changes with automatic restart
+```
+
+**New Smart Edit Command:**
+```bash
+# Automatically detects configuration and opens appropriate editor
+remnanode edit-env
+
+# Behavior:
+# - .env exists → Opens .env file
+# - Inline variables → Offers migration to .env
+# - No config → Creates new .env template
 ```
 
 **Backward Compatibility:**
-* Old variables (`APP_PORT`, `SSL_CERT`) are still supported for existing installations
-* Automatic fallback ensures seamless operation
-* No manual intervention required
+* ✅ Old variables (`APP_PORT`, `SSL_CERT`) work via fallback
+* ✅ Both .env and inline configurations supported
+* ✅ Seamless migration with zero downtime
+* ✅ No manual intervention required
 
 **Log Rotation Setup**
 ```bash
