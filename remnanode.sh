@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.4.3
+# Version: 3.5.0
 set -e
-SCRIPT_VERSION="3.4.3"
+SCRIPT_VERSION="3.5.0"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -716,6 +716,68 @@ is_remnanode_up() {
     fi
 }
 
+# Функция для получения версии RemnaNode из контейнера
+get_remnanode_version() {
+    local container_name="$APP_NAME"
+    
+    # Проверяем что контейнер запущен
+    if ! docker exec "$container_name" echo "test" >/dev/null 2>&1; then
+        echo "unknown"
+        return 1
+    fi
+    
+    # Пробуем получить версию из package.json с помощью awk
+    local version=$(docker exec "$container_name" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null)
+    
+    if [ -z "$version" ]; then
+        # Альтернативный способ с sed
+        version=$(docker exec "$container_name" sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json 2>/dev/null | head -1)
+    fi
+    
+    if [ -z "$version" ]; then
+        echo "unknown"
+        return 1
+    fi
+    
+    echo "$version"
+    return 0
+}
+
+# Функция для получения версии Xray из контейнера
+get_container_xray_version() {
+    local container_name="$APP_NAME"
+    
+    # Проверяем что контейнер запущен
+    if ! docker exec "$container_name" echo "test" >/dev/null 2>&1; then
+        echo "unknown"
+        return 1
+    fi
+    
+    # Получаем версию xray из контейнера
+    local version_output=$(docker exec "$container_name" xray version 2>/dev/null | head -1)
+    
+    if [ -z "$version_output" ]; then
+        # Пробуем через полный путь
+        version_output=$(docker exec "$container_name" /usr/local/bin/xray version 2>/dev/null | head -1)
+    fi
+    
+    if [ -z "$version_output" ]; then
+        echo "unknown"
+        return 1
+    fi
+    
+    # Парсим версию: "Xray 25.10.15 (Xray, Penetrates Everything.) ..."
+    local version=$(echo "$version_output" | awk '{print $2}')
+    
+    if [ -z "$version" ]; then
+        echo "unknown"
+        return 1
+    fi
+    
+    echo "$version"
+    return 0
+}
+
 install_command() {
     check_running_as_root
     if is_remnanode_installed; then
@@ -964,6 +1026,12 @@ status_command() {
     
     if [ -n "$node_port" ]; then
         printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Port:" "$node_port"
+    fi
+    
+    # Получаем версию RemnaNode
+    local node_version=$(get_remnanode_version 2>/dev/null || echo "unknown")
+    if [ "$node_version" != "unknown" ]; then
+        printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250mv%s\033[0m\n" "RemnaNode:" "$node_version"
     fi
     
     # Проверяем Xray
@@ -1604,15 +1672,25 @@ identify_the_operating_system_and_architecture() {
 }
 
 get_current_xray_core_version() {
+    # Сначала проверяем локально установленный xray (если был установлен вручную)
     if [ -f "$XRAY_FILE" ]; then
         version_output=$("$XRAY_FILE" -version 2>/dev/null)
         if [ $? -eq 0 ]; then
             version=$(echo "$version_output" | head -n1 | awk '{print $2}')
             echo "$version"
-            return
+            return 0
         fi
     fi
+    
+    # Если локального нет, проверяем версию из контейнера
+    local container_version=$(get_container_xray_version 2>/dev/null)
+    if [ "$container_version" != "unknown" ] && [ -n "$container_version" ]; then
+        echo "$container_version (built-in)"
+        return 0
+    fi
+    
     echo "Not installed"
+    return 1
 }
 
 get_xray_core() {
@@ -2565,10 +2643,22 @@ main_menu() {
                     printf "   \033[38;5;15m%-12s\033[0m \033[38;5;117m%s:%s\033[0m\n" "Full URL:" "$NODE_IP" "$node_port"
                 fi
                 
-                # Проверяем Xray-core
+                # Проверяем Xray-core и версию RemnaNode
                 xray_version=$(get_current_xray_core_version 2>/dev/null || echo "Not installed")
+                local node_version=$(get_remnanode_version 2>/dev/null || echo "unknown")
+                
                 echo
                 echo -e "\033[1;37m⚙️  Components Status:\033[0m"
+                
+                # Версия RemnaNode
+                printf "   \033[38;5;15m%-12s\033[0m " "RemnaNode:"
+                if [ "$node_version" != "unknown" ]; then
+                    echo -e "\033[1;32m✅ v$node_version\033[0m"
+                else
+                    echo -e "\033[38;5;244m❓ version unknown\033[0m"
+                fi
+                
+                # Версия Xray Core
                 printf "   \033[38;5;15m%-12s\033[0m " "Xray Core:"
                 if [ "$xray_version" != "Not installed" ]; then
                     echo -e "\033[1;32m✅ $xray_version\033[0m"
