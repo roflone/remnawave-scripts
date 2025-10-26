@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.8.0
+# VERSION=3.9.0
 
-SCRIPT_VERSION="3.8.1"
+SCRIPT_VERSION="3.9.0"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -135,6 +135,131 @@ validate_panel_version_compatibility() {
 }
 
 # ===== END PANEL VERSION FUNCTIONS =====
+
+# ===== ENV MIGRATION FUNCTIONS =====
+
+migrate_deprecated_env_variables() {
+    if [ ! -f "$ENV_FILE" ]; then
+        return 0  # No .env file to migrate
+    fi
+    
+    # Список устаревших переменных из Remnawave v2.2.0
+    local deprecated_vars=(
+        "TELEGRAM_OAUTH_ENABLED"
+        "TELEGRAM_OAUTH_ADMIN_IDS"
+        "OAUTH2_GITHUB_ENABLED"
+        "OAUTH2_GITHUB_CLIENT_ID"
+        "OAUTH2_GITHUB_CLIENT_SECRET"
+        "OAUTH2_GITHUB_ALLOWED_EMAILS"
+        "OAUTH2_POCKETID_ENABLED"
+        "OAUTH2_POCKETID_CLIENT_ID"
+        "OAUTH2_POCKETID_CLIENT_SECRET"
+        "OAUTH2_POCKETID_ALLOWED_EMAILS"
+        "OAUTH2_POCKETID_PLAIN_DOMAIN"
+        "OAUTH2_YANDEX_ENABLED"
+        "OAUTH2_YANDEX_CLIENT_ID"
+        "OAUTH2_YANDEX_CLIENT_SECRET"
+        "OAUTH2_YANDEX_ALLOWED_EMAILS"
+        "BRANDING_LOGO_URL"
+        "BRANDING_TITLE"
+    )
+    
+    # Проверяем наличие хотя бы одной устаревшей переменной
+    local found_deprecated=false
+    for var in "${deprecated_vars[@]}"; do
+        if grep -q "^${var}=" "$ENV_FILE" 2>/dev/null; then
+            found_deprecated=true
+            break
+        fi
+    done
+    
+    if [ "$found_deprecated" = false ]; then
+        return 0  # Нет устаревших переменных
+    fi
+    
+    echo
+    echo -e "\033[1;36m🔄 Detected deprecated environment variables\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    echo
+    echo -e "\033[38;5;250mRemnawave v2.2.0+ manages these settings via UI:\033[0m"
+    for var in "${deprecated_vars[@]}"; do
+        if grep -q "^${var}=" "$ENV_FILE" 2>/dev/null; then
+            echo -e "\033[38;5;244m  • $var\033[0m"
+        fi
+    done
+    echo
+    
+    # Создаем резервную копию
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${ENV_FILE}.backup.${timestamp}"
+    
+    if cp "$ENV_FILE" "$backup_file" 2>/dev/null; then
+        echo -e "\033[1;32m✅ Backup created: $(basename "$backup_file")\033[0m"
+    else
+        echo -e "\033[1;31m❌ Failed to create backup\033[0m"
+        return 1
+    fi
+    
+    # Удаляем устаревшие переменные
+    local temp_file="${ENV_FILE}.tmp"
+    cp "$ENV_FILE" "$temp_file"
+    
+    for var in "${deprecated_vars[@]}"; do
+        if grep -q "^${var}=" "$temp_file" 2>/dev/null; then
+            sed -i.bak "/^${var}=/d" "$temp_file" 2>/dev/null || \
+            sed -i '' "/^${var}=/d" "$temp_file" 2>/dev/null
+            echo -e "\033[38;5;244m  ✓ Removed: $var\033[0m"
+        fi
+    done
+    
+    # Удаляем временный .bak файл если создался
+    rm -f "${temp_file}.bak" 2>/dev/null
+    
+    # Заменяем оригинальный файл
+    if mv "$temp_file" "$ENV_FILE" 2>/dev/null; then
+        echo
+        echo -e "\033[1;32m🎉 Migration completed successfully!\033[0m"
+        echo -e "\033[38;5;250m   Configure these settings in panel UI:\033[0m"
+        echo -e "\033[38;5;244m   Settings → Authentication → Login Methods\033[0m"
+        echo -e "\033[38;5;244m   Settings → Branding\033[0m"
+        echo
+        return 0
+    else
+        echo -e "\033[1;31m❌ Failed to update .env file\033[0m"
+        # Восстанавливаем из бэкапа
+        if [ -f "$backup_file" ]; then
+            cp "$backup_file" "$ENV_FILE"
+            echo -e "\033[38;5;250m   Restored from backup\033[0m"
+        fi
+        return 1
+    fi
+}
+
+check_deprecated_env_variables() {
+    if [ ! -f "$ENV_FILE" ]; then
+        return 1  # No .env file
+    fi
+    
+    local deprecated_vars=(
+        "TELEGRAM_OAUTH_ENABLED"
+        "TELEGRAM_OAUTH_ADMIN_IDS"
+        "OAUTH2_GITHUB_ENABLED"
+        "OAUTH2_POCKETID_ENABLED"
+        "OAUTH2_YANDEX_ENABLED"
+        "BRANDING_LOGO_URL"
+        "BRANDING_TITLE"
+    )
+    
+    for var in "${deprecated_vars[@]}"; do
+        if grep -q "^${var}=" "$ENV_FILE" 2>/dev/null; then
+            return 0  # Found deprecated variable
+        fi
+    done
+    
+    return 1  # No deprecated variables found
+}
+
+# ===== END ENV MIGRATION FUNCTIONS =====
 
 check_backup_script_version() {
     if [ ! -f "$BACKUP_SCRIPT_FILE" ]; then
@@ -5965,35 +6090,6 @@ install_remnawave() {
         fi
     fi
 
-    # Ask about Telegram OAuth authorization
-    read -p "Do you want to enable Telegram OAuth login for admin panel? (y/n): " -r enable_telegram_oauth
-    TELEGRAM_OAUTH_ENABLED=false
-    TELEGRAM_OAUTH_ADMIN_IDS=""
-
-    if [[ "$enable_telegram_oauth" =~ ^[Yy]$ ]]; then
-        TELEGRAM_OAUTH_ENABLED=true
-        while true; do
-            read -p "Enter Telegram Admin IDs (comma-separated, digits only, e.g. 123456789,987654321): " -r input_ids
-            input_ids=$(echo "$input_ids" | tr -d ' ')
-            if [[ "$input_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
-                TELEGRAM_OAUTH_ADMIN_IDS="[$input_ids]"
-                break
-            else
-                colorized_echo red "Invalid format! Please enter comma-separated numeric IDs only (no spaces)."
-            fi
-        done
-
-        if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
-            colorized_echo yellow "You have not provided a Telegram Bot Token yet. Enter Bot Token for OAuth to work (leave empty to skip): " -r TELEGRAM_BOT_TOKEN
-        fi
-
-        if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
-            colorized_echo red "Bot token is required for Telegram OAuth. OAuth will be disabled."
-            TELEGRAM_OAUTH_ENABLED=false
-            TELEGRAM_OAUTH_ADMIN_IDS=""
-        fi
-    fi
-
     # Determine image tag based on --dev flag
     BACKEND_IMAGE_TAG="latest"
     if [ "$USE_DEV_BRANCH" == "true" ]; then
@@ -6006,52 +6102,51 @@ install_remnawave() {
 APP_PORT=$APP_PORT
 METRICS_PORT=$METRICS_PORT
 
-### REDIS ###
-REDIS_HOST=remnawave-redis
-REDIS_PORT=6379
-
 ### API ###
 # Possible values: max (start instances on all cores), number (start instances on number of cores), -1 (start instances on all cores - 1)
-# !!! Do not set this value more that physical cores count in your machine !!!
+# !!! Do not set this value more than physical cores count in your machine !!!
+# Review documentation: https://remna.st/docs/install/environment-variables#scaling-api
 API_INSTANCES=1
 
 ### DATABASE ###
 # FORMAT: postgresql://{user}:{password}@{host}:{port}/{database}
 DATABASE_URL="postgresql://postgres:postgres@remnawave-db:5432/postgres"
 
+### REDIS ###
+REDIS_HOST=remnawave-redis
+REDIS_PORT=6379
+
 ### JWT ###
 ### CHANGE DEFAULT VALUES ###
 JWT_AUTH_SECRET=$JWT_AUTH_SECRET
 JWT_API_TOKENS_SECRET=$JWT_API_TOKENS_SECRET
 
-
 SHORT_UUID_LENGTH=25
 
-### TELEGRAM ###
+### TELEGRAM NOTIFICATIONS ###
 IS_TELEGRAM_NOTIFICATIONS_ENABLED=$IS_TELEGRAM_NOTIFICATIONS_ENABLED
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 TELEGRAM_NOTIFY_USERS_CHAT_ID=$TELEGRAM_NOTIFY_USERS_CHAT_ID
 TELEGRAM_NOTIFY_NODES_CHAT_ID=$TELEGRAM_NOTIFY_NODES_CHAT_ID
 TELEGRAM_NOTIFY_CRM_CHAT_ID=$TELEGRAM_NOTIFY_CRM_CHAT_ID
-TELEGRAM_NOTIFY_NODES_THREAD_ID=$TELEGRAM_NOTIFY_NODES_THREAD_ID
+
+# Optional
+# Only set if you want to use topics
 TELEGRAM_NOTIFY_USERS_THREAD_ID=$TELEGRAM_NOTIFY_USERS_THREAD_ID
+TELEGRAM_NOTIFY_NODES_THREAD_ID=$TELEGRAM_NOTIFY_NODES_THREAD_ID
 TELEGRAM_NOTIFY_CRM_THREAD_ID=$TELEGRAM_NOTIFY_CRM_THREAD_ID
 
-
-BANDWIDTH_USAGE_NOTIFICATIONS_ENABLED=true
-BANDWIDTH_USAGE_NOTIFICATIONS_THRESHOLD=[80,95]
-
-### TELEGRAM OAUTH ###
-TELEGRAM_OAUTH_ENABLED=$TELEGRAM_OAUTH_ENABLED
-TELEGRAM_OAUTH_ADMIN_IDS=$TELEGRAM_OAUTH_ADMIN_IDS
-
 ### FRONT_END ###
-# Domain for panel access. Can be set to * to accept any domain
+# Used by CORS, you can leave it as * or place your domain there
 FRONT_END_DOMAIN=$FRONT_END_DOMAIN
 
 ### SUBSCRIPTION PUBLIC DOMAIN ###
-### RAW DOMAIN, WITHOUT HTTP/HTTPS, DO NOT PLACE / to end of domain ###
+### DOMAIN, WITHOUT HTTP/HTTPS, DO NOT ADD / AT THE END ###
+### Used in "profile-web-page-url" response header and in UI/API ###
+### Review documentation: https://remna.st/docs/install/environment-variables#domains
 SUB_PUBLIC_DOMAIN=$SUB_PUBLIC_DOMAIN
+
+### If CUSTOM_SUB_PREFIX is set in @remnawave/subscription-page, append the same path to SUB_PUBLIC_DOMAIN. Example: SUB_PUBLIC_DOMAIN=sub-page.example.com/sub
 
 ### SWAGGER ###
 SWAGGER_PATH=/docs
@@ -6059,21 +6154,40 @@ SCALAR_PATH=/scalar
 IS_DOCS_ENABLED=false
 
 ### PROMETHEUS ###
-### Metrics are available at /api/metrics
+### Metrics are available at http://127.0.0.1:METRICS_PORT/metrics
 METRICS_USER=$METRICS_USER
 METRICS_PASS=$METRICS_PASS
 
 ### WEBHOOK ###
 WEBHOOK_ENABLED=false
 ### Only https:// is allowed
-#WEBHOOK_URL=https://webhook.site/1234567890
+WEBHOOK_URL=https://webhook.site/1234567890
 ### This secret is used to sign the webhook payload, must be exact 64 characters. Only a-z, 0-9, A-Z are allowed.
-#WEBHOOK_SECRET_HEADER=vsmu67Kmg6R8FjIOF1WUY8LWBHie4scdEqrfsKmyf4IAf8dY3nFS0wwYHkhh6ZvQ
+WEBHOOK_SECRET_HEADER=vsmu67Kmg6R8FjIOF1WUY8LWBHie4scdEqrfsKmyf4IAf8dY3nFS0wwYHkhh6ZvQ
+
+### HWID DEVICE DETECTION AND LIMITATION ###
+# Don't enable this if you don't know what you are doing.
+# Review documentation before enabling this feature.
+# https://remna.st/docs/features/hwid-device-limit/
+HWID_DEVICE_LIMIT_ENABLED=false
+HWID_FALLBACK_DEVICE_LIMIT=10
+HWID_MAX_DEVICES_ANNOUNCE="You have reached the maximum number of devices for your subscription."
+
+### Bandwidth usage reached notifications
+BANDWIDTH_USAGE_NOTIFICATIONS_ENABLED=false
+# Only in ASC order (example: [60, 80]), must be valid array of integer(min: 25, max: 95) numbers. No more than 5 values.
+BANDWIDTH_USAGE_NOTIFICATIONS_THRESHOLD=[60, 80]
+
+### Not connected users notification (webhook, telegram)
+NOT_CONNECTED_USERS_NOTIFICATIONS_ENABLED=false
+# Only in ASC order (example: [6, 12, 24]), must be valid array of integer(min: 1, max: 168) numbers. No more than 3 values.
+# Each value represents HOURS passed after user creation (user.createdAt)
+NOT_CONNECTED_USERS_NOTIFICATIONS_AFTER_HOURS=[6, 24, 48]
 
 ### CLOUDFLARE ###
 # USED ONLY FOR docker-compose-prod-with-cf.yml
 # NOT USED BY THE APP ITSELF
-#CLOUDFLARE_TOKEN=ey...
+CLOUDFLARE_TOKEN=ey...
 
 ### Database ###
 ### For Postgres Docker container ###
@@ -6081,10 +6195,6 @@ WEBHOOK_ENABLED=false
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=postgres
-#JWT_SECRET_KEY=1d9ca50cefda20fe710bca86ca829c919334055e07623d090987680391524b8e
-HWID_DEVICE_LIMIT_ENABLED=false
-HWID_FALLBACK_DEVICE_LIMIT=10
-HWID_MAX_DEVICES_ANNOUNCE="You have reached the maximum number of devices for your subscription."
 EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
@@ -7830,6 +7940,21 @@ status_command() {
         echo -e "\033[1;31m❌ Services are not running\033[0m"
         echo -e "\033[38;5;8m   Use 'sudo $APP_NAME up' to start services\033[0m"
     fi
+    
+    # Проверяем наличие устаревших переменных в .env
+    if check_deprecated_env_variables; then
+        echo
+        echo -e "\033[1;33m⚠️  Deprecated environment variables detected\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        echo -e "\033[38;5;250mRemnawave v2.2.0+ manages these via UI:\033[0m"
+        echo -e "\033[38;5;244m   • OAuth settings (Telegram, GitHub, etc.)\033[0m"
+        echo -e "\033[38;5;244m   • Branding configuration\033[0m"
+        echo
+        echo -e "\033[38;5;250m💡 Run '\033[38;5;15msudo $APP_NAME update\033[38;5;250m' to clean up automatically\033[0m"
+        echo -e "\033[38;5;250m   Or configure in panel: Settings → Authentication/Branding\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    fi
+    
     if [[ "${BASH_SOURCE[1]}" =~ "main_menu" ]] || [[ "$0" =~ "$APP_NAME" ]] && [[ "$1" != "--no-pause" ]]; then
         echo
         read -p "Press Enter to continue..."
@@ -8073,6 +8198,17 @@ update_command() {
         echo -e "\033[1;37m🎉 No updates available!\033[0m"
         echo -e "\033[38;5;250m🎯 All components are running the latest versions\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+        
+        # Даже если нет обновлений образов, проверяем .env на устаревшие переменные
+        if check_deprecated_env_variables; then
+            echo
+            echo -e "\033[1;33m⚠️  However, deprecated variables detected in .env\033[0m"
+            read -p "Would you like to clean them up now? (y/n): " -r clean_vars
+            if [[ $clean_vars =~ ^[Yy]$ ]]; then
+                migrate_deprecated_env_variables
+            fi
+        fi
+        
         exit 0
     fi
     
@@ -8091,9 +8227,13 @@ update_command() {
         echo -e "\033[38;5;250m📝 Step 4:\033[0m Services already stopped\033[0m"
     fi
     
+    # Мигрируем устаревшие переменные окружения перед запуском
+    echo -e "\033[38;5;250m📝 Step 5:\033[0m Checking environment configuration..."
+    migrate_deprecated_env_variables
+    
     # Запускаем сервисы с новыми образами
     if [ "$was_running" = true ]; then
-        echo -e "\033[38;5;250m📝 Step 5:\033[0m Starting updated services..."
+        echo -e "\033[38;5;250m📝 Step 6:\033[0m Starting updated services..."
         if up_remnawave; then
             echo -e "\033[1;32m✅ Services started successfully\033[0m"
             
