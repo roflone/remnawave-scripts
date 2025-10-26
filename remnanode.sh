@@ -2723,8 +2723,8 @@ main_menu() {
         echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
         echo -e "   \033[38;5;15m10)\033[0m 🔄 Update RemnaNode"
         echo -e "   \033[38;5;15m11)\033[0m ⬆️  Update Xray-core"
-        echo -e "   \033[38;5;15m12)\033[0m � Migrate environment variables"
-        echo -e "   \033[38;5;15m13)\033[0m �📝 Edit docker-compose.yml"
+        echo -e "   \033[38;5;15m12)\033[0m 🔄 Migrate environment variables"
+        echo -e "   \033[38;5;15m13)\033[0m 📝 Edit docker-compose.yml"
         echo -e "   \033[38;5;15m14)\033[0m 🔐 Edit environment (.env)"
         echo -e "   \033[38;5;15m15)\033[0m 🗂️  Setup log rotation"
         echo
