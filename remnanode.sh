@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.3.1
+# Version: 3.4.0
 set -e
-SCRIPT_VERSION="3.3.1"
+SCRIPT_VERSION="3.4.0"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1039,9 +1039,19 @@ check_env_configuration() {
 
 # Функция для миграции старых переменных окружения к новым
 migrate_env_variables() {
+    echo
+    colorized_echo blue "🔄 Starting Environment Variables Migration Check..."
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+    if ! is_remnanode_installed; then
+        colorized_echo yellow "⚠️  RemnaNode not installed, nothing to migrate"
+        return 0
+    fi
+    
     local env_type=$(check_env_configuration)
     
     colorized_echo blue "🔍 Detected configuration type: $env_type"
+    echo
     
     if [ "$env_type" = "env_file" ]; then
         migrate_env_file
@@ -1051,6 +1061,8 @@ migrate_env_variables() {
         colorized_echo yellow "⚠️  Unknown configuration type, skipping migration"
         return 0
     fi
+    
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
 }
 
 # Функция для миграции .env файла
@@ -1079,11 +1091,21 @@ migrate_env_file() {
     
     if [ "$needs_migration" = false ]; then
         colorized_echo green "✅ .env file is up to date"
+        colorized_echo blue "   No migration needed - all variables use new format:"
+        colorized_echo blue "   • NODE_PORT (instead of APP_PORT)"
+        colorized_echo blue "   • SECRET_KEY (instead of SSL_CERT)"
         return 0
     fi
     
-    colorized_echo blue "🔄 Detected old environment variables in .env (APP_PORT/SSL_CERT)"
-    colorized_echo blue "📝 Migrating to new format (NODE_PORT/SECRET_KEY)..."
+    colorized_echo blue "🔄 Detected old environment variables in .env:"
+    if [ "$has_app_port" = true ]; then
+        colorized_echo yellow "   • APP_PORT → will be migrated to NODE_PORT"
+    fi
+    if [ "$has_ssl_cert" = true ]; then
+        colorized_echo yellow "   • SSL_CERT → will be migrated to SECRET_KEY"
+    fi
+    echo
+    colorized_echo blue "📝 Starting migration..."
     
     # Создаем backup
     local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
@@ -1113,8 +1135,18 @@ migrate_env_file() {
     # Заменяем оригинальный файл
     mv "$temp_file" "$env_file"
     
+    echo
     colorized_echo green "🎉 .env migration completed successfully!"
-    colorized_echo blue "📋 Old variables are deprecated and will be removed in future versions"
+    colorized_echo blue "📋 Summary:"
+    if [ "$has_app_port" = true ]; then
+        colorized_echo green "   ✅ APP_PORT → NODE_PORT"
+    fi
+    if [ "$has_ssl_cert" = true ]; then
+        colorized_echo green "   ✅ SSL_CERT → SECRET_KEY"
+    fi
+    colorized_echo blue "💾 Backup: $backup_file"
+    echo
+    colorized_echo yellow "⚠️  Note: Old variables are deprecated and will be removed in future versions"
     echo
     
     return 0
@@ -1138,11 +1170,21 @@ migrate_inline_env() {
     
     if [ "$needs_migration" = false ]; then
         colorized_echo green "✅ docker-compose.yml is up to date"
+        colorized_echo blue "   No migration needed - all variables use new format:"
+        colorized_echo blue "   • NODE_PORT (instead of APP_PORT)"
+        colorized_echo blue "   • SECRET_KEY (instead of SSL_CERT)"
         return 0
     fi
     
-    colorized_echo blue "🔄 Detected old environment variables in docker-compose.yml (APP_PORT/SSL_CERT)"
-    colorized_echo blue "📝 Migrating to new format (NODE_PORT/SECRET_KEY)..."
+    colorized_echo blue "🔄 Detected old environment variables in docker-compose.yml:"
+    if grep -A 10 "environment:" "$compose_file" | grep -q "APP_PORT"; then
+        colorized_echo yellow "   • APP_PORT → will be migrated to NODE_PORT"
+    fi
+    if grep -A 10 "environment:" "$compose_file" | grep -q "SSL_CERT"; then
+        colorized_echo yellow "   • SSL_CERT → will be migrated to SECRET_KEY"
+    fi
+    echo
+    colorized_echo blue "📝 Starting migration..."
     
     # Создаем backup
     local backup_file="${compose_file}.backup.$(date +%Y%m%d_%H%M%S)"
@@ -1169,8 +1211,12 @@ migrate_inline_env() {
     # Заменяем оригинальный файл
     mv "$temp_file" "$compose_file"
     
-    # Предлагаем мигрировать на .env файл
     echo
+    colorized_echo green "🎉 docker-compose.yml migration completed successfully!"
+    colorized_echo blue "💾 Backup: $backup_file"
+    echo
+    
+    # Предлагаем мигрировать на .env файл
     colorized_echo blue "💡 Recommendation: Consider migrating to .env file for better security"
     colorized_echo blue "   Environment variables in docker-compose.yml are less secure"
     echo
@@ -1182,8 +1228,8 @@ migrate_inline_env() {
         colorized_echo yellow "⚠️  Keeping inline environment variables"
     fi
     
-    colorized_echo green "🎉 docker-compose.yml migration completed successfully!"
-    colorized_echo blue "📋 Old variables are deprecated and will be removed in future versions"
+    echo
+    colorized_echo yellow "⚠️  Note: Old variables are deprecated and will be removed in future versions"
     echo
     
     return 0
@@ -1295,21 +1341,32 @@ update_command() {
     echo -e "\033[1;37m🔄 Starting RemnaNode Update Check...\033[0m"
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
     
-    # Проверяем версию скрипта
+    # Проверяем и обновляем скрипт ПЕРВЫМ ДЕЛОМ
     echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking script version..."
     local current_script_version="$SCRIPT_VERSION"
     local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
-    local script_needs_update=false
+    local script_was_updated=false
     
     if [ -n "$remote_script_version" ]; then
         if [ "$remote_script_version" != "$current_script_version" ]; then
-            script_needs_update=true
             echo -e "\033[1;33m🔄 Script update available:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+            echo -e "\033[38;5;250m   Updating script first (required for migrations)...\033[0m"
+            
+            if update_remnanode_script; then
+                echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
+                echo -e "\033[1;33m⚠️  Script updated! Please run '\033[38;5;15msudo $APP_NAME update\033[1;33m' again to continue.\033[0m"
+                echo -e "\033[38;5;8m   This ensures all new features and migrations work correctly.\033[0m"
+                script_was_updated=true
+                exit 0
+            else
+                echo -e "\033[1;31m❌ Failed to update script\033[0m"
+                exit 1
+            fi
         else
             echo -e "\033[1;32m✅ Script is up to date:\033[0m \033[38;5;15mv$current_script_version\033[0m"
         fi
     else
-        echo -e "\033[1;33m⚠️  Unable to check script version\033[0m"
+        echo -e "\033[1;33m⚠️  Unable to check script version, continuing...\033[0m"
     fi
     echo
     
@@ -1399,27 +1456,15 @@ update_command() {
         echo -e "\033[1;37m🚀 Performing Update...\033[0m"
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
         
-        # Обновляем скрипт если нужно
-        if [ "$script_needs_update" = true ]; then
-            echo -e "\033[38;5;250m📝 Step 4:\033[0m Updating script..."
-            if update_remnanode_script; then
-                echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
-            else
-                echo -e "\033[1;33m⚠️  Script update failed, continuing...\033[0m"
-            fi
-        else
-            echo -e "\033[38;5;250m📝 Step 4:\033[0m Script already up to date, skipping..."
-        fi
-        
         # Проверяем и мигрируем переменные окружения
-        echo -e "\033[38;5;250m📝 Step 5:\033[0m Checking environment variables..."
+        echo -e "\033[38;5;250m📝 Step 4:\033[0m Checking environment variables..."
         migrate_env_variables
         
         # Проверяем, запущен ли контейнер
         local was_running=false
         if is_remnanode_up; then
             was_running=true
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Stopping running container..."
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Stopping running container..."
             if down_remnanode; then
                 echo -e "\033[1;32m✅ Container stopped\033[0m"
             else
@@ -1427,12 +1472,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 6:\033[0m Container not running, skipping stop..."
+            echo -e "\033[38;5;250m📝 Step 5:\033[0m Container not running, skipping stop..."
         fi
         
         # Загружаем образ только если еще не загружен
         if [[ "$update_reason" != *"downloaded"* ]]; then
-            echo -e "\033[38;5;250m📝 Step 7:\033[0m Pulling latest image..."
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Pulling latest image..."
             if update_remnanode; then
                 echo -e "\033[1;32m✅ Image updated\033[0m"
                 # Обновляем ID образа
@@ -1448,12 +1493,12 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 7:\033[0m Image already updated during check\033[0m"
+            echo -e "\033[38;5;250m📝 Step 6:\033[0m Image already updated during check\033[0m"
         fi
         
         # Запускаем контейнер только если он был запущен ранее
         if [ "$was_running" = true ]; then
-            echo -e "\033[38;5;250m📝 Step 8:\033[0m Starting updated container..."
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Starting updated container..."
             if up_remnanode; then
                 echo -e "\033[1;32m✅ Container started\033[0m"
             else
@@ -1461,7 +1506,7 @@ update_command() {
                 exit 1
             fi
         else
-            echo -e "\033[38;5;250m📝 Step 8:\033[0m Container was not running, leaving it stopped..."
+            echo -e "\033[38;5;250m📝 Step 7:\033[0m Container was not running, leaving it stopped..."
         fi
         
         # Показываем финальную информацию
@@ -1476,12 +1521,7 @@ update_command() {
         echo -e "\033[38;5;250m   Previous: \033[38;5;8m$old_image_id\033[0m"
         echo -e "\033[38;5;250m   Current:  \033[38;5;15m$new_image_id\033[0m"
         echo -e "\033[38;5;250m   Created:  \033[38;5;15m$final_created\033[0m"
-        
-        if [ "$script_needs_update" = true ]; then
-            echo -e "\033[38;5;250m   Script:   \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
-        else
-            echo -e "\033[38;5;250m   Script:   \033[38;5;15mv$current_script_version\033[0m \033[1;32m(up to date)\033[0m"
-        fi
+        echo -e "\033[38;5;250m   Script:   \033[38;5;15mv$current_script_version\033[0m"
         
         if [ "$was_running" = true ]; then
             echo -e "\033[38;5;250m   Status:   \033[1;32mRunning\033[0m"
@@ -1497,27 +1537,10 @@ update_command() {
         echo -e "\033[38;5;250m   Reason: \033[38;5;15m$update_reason\033[0m"
         echo
         
-        # Обновляем скрипт если нужно (проверка уже была выполнена в начале)
-        if [ "$script_needs_update" = true ]; then
-            echo -e "\033[38;5;250m📝 Updating script...\033[0m"
-            read -p "Do you want to update the script? (y/n): " -r update_script
-            if [[ $update_script =~ ^[Yy]$ ]]; then
-                if update_remnanode_script; then
-                    echo -e "\033[1;32m✅ Script updated:\033[0m \033[38;5;8mv$current_script_version\033[0m → \033[1;37mv$remote_script_version\033[0m"
-                    echo -e "\033[38;5;8m   Please run the command again to use the new version\033[0m"
-                else
-                    echo -e "\033[1;33m⚠️  Script update failed\033[0m"
-                fi
-            else
-                echo -e "\033[38;5;8m   Script update skipped\033[0m"
-            fi
-            echo
-        fi
-        
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 40))\033[0m"
         echo -e "\033[1;37m📊 Current Status:\033[0m"
         
-        echo -e "\033[38;5;250m   Script:    \033[38;5;15mv$current_script_version\033[0m \033[1;32m(up to date)\033[0m"
+        echo -e "\033[38;5;250m   Script:    \033[38;5;15mv$current_script_version\033[0m"
         
         if is_remnanode_up; then
             echo -e "\033[38;5;250m   Container: \033[1;32mRunning ✅\033[0m"
@@ -2431,6 +2454,7 @@ usage() {
     echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "update" "🔄 Update RemnaNode"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "core-update" "⬆️  Update Xray-core"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "migrate" "🔄 Migrate environment variables"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit" "📝 Edit docker-compose.yml"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit-env" "🔐 Edit environment (.env)"
     echo
@@ -2586,9 +2610,10 @@ main_menu() {
         echo -e "\033[1;37m⚙️  Updates & Configuration:\033[0m"
         echo -e "   \033[38;5;15m10)\033[0m 🔄 Update RemnaNode"
         echo -e "   \033[38;5;15m11)\033[0m ⬆️  Update Xray-core"
-        echo -e "   \033[38;5;15m12)\033[0m 📝 Edit docker-compose.yml"
-        echo -e "   \033[38;5;15m13)\033[0m 🔐 Edit environment (.env)"
-        echo -e "   \033[38;5;15m14)\033[0m 🗂️  Setup log rotation"
+        echo -e "   \033[38;5;15m12)\033[0m � Migrate environment variables"
+        echo -e "   \033[38;5;15m13)\033[0m �📝 Edit docker-compose.yml"
+        echo -e "   \033[38;5;15m14)\033[0m 🔐 Edit environment (.env)"
+        echo -e "   \033[38;5;15m15)\033[0m 🗂️  Setup log rotation"
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
@@ -2613,7 +2638,7 @@ main_menu() {
         
         echo -e "\033[38;5;8mRemnaNode CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-14]:\033[0m ")" choice
+        read -p "$(echo -e "\033[1;37mSelect option [0-15]:\033[0m ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -2627,9 +2652,10 @@ main_menu() {
             9) xray_log_err; read -p "Press Enter to continue..." ;;
             10) update_command; read -p "Press Enter to continue..." ;;
             11) update_core_command; read -p "Press Enter to continue..." ;;
-            12) edit_command; read -p "Press Enter to continue..." ;;
-            13) edit_env_command; read -p "Press Enter to continue..." ;;
-            14) setup_log_rotation; read -p "Press Enter to continue..." ;;
+            12) migrate_env_variables; read -p "Press Enter to continue..." ;;
+            13) edit_command; read -p "Press Enter to continue..." ;;
+            14) edit_env_command; read -p "Press Enter to continue..." ;;
+            15) setup_log_rotation; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "\033[1;31m❌ Invalid option!\033[0m"
@@ -2654,6 +2680,7 @@ case "${COMMAND:-menu}" in
     xray-log-err) xray_log_err ;;
     update) update_command ;;
     core-update) update_core_command ;;
+    migrate) migrate_env_variables ;;
     edit) edit_command ;;
     edit-env) edit_env_command ;;
     setup-logs) setup_log_rotation ;;
