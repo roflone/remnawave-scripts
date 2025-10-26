@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.4.2;
+# Version: 3.4.3
 set -e
-SCRIPT_VERSION="3.4.2"
+SCRIPT_VERSION="3.4.3"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -74,7 +74,7 @@ ENV_FILE="$APP_DIR/.env"
 XRAY_FILE="$DATA_DIR/xray"
 GEOIP_FILE="$DATA_DIR/geoip.dat"
 GEOSITE_FILE="$DATA_DIR/geosite.dat"
-SCRIPT_URL="https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh"  # Убедитесь, что URL актуален
+SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/remnanode.sh"
 
 # Color definitions
 RED='\033[0;31m'
@@ -1367,16 +1367,7 @@ update_command() {
     # Проверяем и обновляем скрипт ПЕРВЫМ ДЕЛОМ
     echo -e "\033[38;5;250m📝 Step 1:\033[0m Checking script version..."
     local current_script_version="$SCRIPT_VERSION"
-    
-    # Получаем содержимое скрипта с GitHub
-    local remote_script_content=$(curl -s "$SCRIPT_URL" 2>/dev/null)
-    local remote_script_version=""
-    
-    if [ -n "$remote_script_content" ]; then
-        # Ищем SCRIPT_VERSION в первых 10 строках файла
-        remote_script_version=$(echo "$remote_script_content" | head -20 | grep 'SCRIPT_VERSION=' | head -1 | cut -d'"' -f2)
-    fi
-    
+    local remote_script_version=$(curl -s "$SCRIPT_URL" 2>/dev/null | grep "^SCRIPT_VERSION=" | cut -d'"' -f2)
     local script_was_updated=false
     
     if [ -z "$remote_script_version" ]; then
