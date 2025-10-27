@@ -305,42 +305,6 @@ TELEGRAM_NOTIFY_NODES_THREAD_ID=thread_id  # Опционально
 
 ---
 
-### 🌍 Production развертывание
-
-**Настройка обратного прокси**
-```nginx
-# Пример Nginx
-server {
-    server_name panel.example.com;
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-
-server {
-    server_name sub.example.com;
-    location /sub {
-        proxy_pass http://127.0.0.1:3010;
-        proxy_set_header Host $host;
-    }
-}
-```
-
-**Переменные окружения**
-```bash
-# Домен доступа к панели
-FRONT_END_DOMAIN=panel.example.com
-
-# Домен подписки (без протокола)
-SUB_PUBLIC_DOMAIN=sub.example.com
-
-# Производительность базы данных
-API_INSTANCES=2  # Количество API экземпляров
-```
-
----
 
 ### 📂 Структура файлов
 
