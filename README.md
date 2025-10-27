@@ -631,21 +631,6 @@ selfsteal template download speedtest
 }
 ```
 
-**Caddy Configuration:**
-```caddyfile
-# Automatic generation during setup
-{
-    https_port 9443
-    default_bind 127.0.0.1
-    auto_https disable_redirects
-}
-
-https://your-domain.com {
-    root * /var/www/html
-    file_server
-}
-```
-
 ---
 
 ### 🔐 DNS Validation
@@ -905,15 +890,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](./LICENSE
 **🔗 GIG.ovh**  
 * **Website**: [https://gig.ovh](https://gig.ovh)
 * **FOCUS**: Next-Gen forum comminity with AI ChatBot, VIP Groups and other..
-
-**🔗 OpeNode.XYZ**
-* **Website**: [https://openode.xyz](https://openode.xyz)
-* **Focus**: Open-source networking solutions
-* **Community**: Developers and system administrators
-* **Topics**: Proxy panels, VPN solutions, networking tools
-
-**🔗 NeoNode.cc**  
-* **Website**: [https://neonode.cc](https://neonode.cc)
 
 
 ---
