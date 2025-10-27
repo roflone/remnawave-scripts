@@ -305,40 +305,6 @@ TELEGRAM_NOTIFY_NODES_THREAD_ID=thread_id  # Optional
 
 ---
 
-### 🌍 Production Deployment
-
-**Reverse Proxy Setup**
-```nginx
-# Nginx example
-server {
-    server_name panel.example.com;
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-
-server {
-    server_name sub.example.com;
-    location /sub {
-        proxy_pass http://127.0.0.1:3010;
-        proxy_set_header Host $host;
-    }
-}
-```
-
-**Environment Variables**
-```bash
-# Panel access domain
-FRONT_END_DOMAIN=panel.example.com
-
-# Subscription domain (without protocol)
-SUB_PUBLIC_DOMAIN=sub.example.com
-
-# Database performance
-API_INSTANCES=2  # Number of API instances
-```
 
 ---
 
@@ -400,7 +366,7 @@ A production-ready Bash script to install and manage **RemnaNode** - high-perfor
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
 
 # Install with custom name
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install --name node-prod
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install --name remnanode
 
 # Install development version
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install --dev --name node-dev
