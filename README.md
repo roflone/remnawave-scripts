@@ -22,8 +22,7 @@ A comprehensive collection of enterprise-grade Bash scripts for **Remnawave Pane
 
 ## 🧭 Navigation Menu
 
-<details>
-<summary><b>📚 Table of Contents</b></summary>
+
 
 ### Core Installers
 * [🚀 Remnawave Panel Installer](#-remnawave-panel-installer)
@@ -47,7 +46,7 @@ A comprehensive collection of enterprise-grade Bash scripts for **Remnawave Pane
 * [📜 License](#-license)
 * [👥 Community](#-community)
 
-</details>
+
 
 
 ---
