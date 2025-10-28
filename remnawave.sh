@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.2
+# VERSION=3.9.3
 
-SCRIPT_VERSION="3.9.2"
+SCRIPT_VERSION="3.9.3"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -5081,22 +5081,8 @@ restore_database_in_existing_installation() {
     
     log_restore_operation "Database Import" "STARTED" "Importing $(du -sh "$database_file" | cut -f1) of data"
     
-    # Подготавливаем SQL с оптимизациями и передаем через stdin
-    if {
-        cat <<EOF
--- Отключаем уведомления для ускорения
-SET client_min_messages = WARNING;
--- Улучшаем производительность
-SET synchronous_commit = off;
-SET wal_buffers = '16MB';
-SET checkpoint_completion_target = 0.9;
-
-EOF
-        cat "$database_file"
-        echo ""
-        echo "-- Обновляем статистику"
-        echo "ANALYZE;"
-    } | docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
+    # Восстанавливаем базу данных через stdin
+    if cat "$database_file" | docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
         psql -U "$postgres_user" -d "$postgres_db" --set ON_ERROR_STOP=on \
         >"$restore_log" 2>"$restore_errors"; then
         
