@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.1
+# VERSION=3.9.2
 
-SCRIPT_VERSION="3.9.1"
+SCRIPT_VERSION="3.9.2"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -5079,9 +5079,11 @@ restore_database_in_existing_installation() {
     # Создаем директорию для логов
     mkdir -p "${target_app_dir}/logs"
     
-    # Создаем временный файл с улучшенными настройками восстановления
-    local enhanced_sql="/tmp/enhanced_restore_$$.sql"
-    cat > "$enhanced_sql" <<EOF
+    log_restore_operation "Database Import" "STARTED" "Importing $(du -sh "$database_file" | cut -f1) of data"
+    
+    # Подготавливаем SQL с оптимизациями и передаем через stdin
+    if {
+        cat <<EOF
 -- Отключаем уведомления для ускорения
 SET client_min_messages = WARNING;
 -- Улучшаем производительность
@@ -5089,18 +5091,14 @@ SET synchronous_commit = off;
 SET wal_buffers = '16MB';
 SET checkpoint_completion_target = 0.9;
 
--- Включаем содержимое оригинального файла
-\\i $database_file
-
--- Обновляем статистику
-ANALYZE;
 EOF
-    
-    log_restore_operation "Database Import" "STARTED" "Importing $(du -sh "$database_file" | cut -f1) of data"
-    
-    if docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
+        cat "$database_file"
+        echo ""
+        echo "-- Обновляем статистику"
+        echo "ANALYZE;"
+    } | docker exec -i -e PGPASSWORD="$postgres_password" "$db_container" \
         psql -U "$postgres_user" -d "$postgres_db" --set ON_ERROR_STOP=on \
-        -f "/tmp/enhanced_restore_$$.sql" >"$restore_log" 2>"$restore_errors"; then
+        >"$restore_log" 2>"$restore_errors"; then
         
         # Проверяем что данные действительно восстановились
         local table_count=$(docker exec -e PGPASSWORD="$postgres_password" "$db_container" \
@@ -5151,12 +5149,12 @@ EOF
                 psql -U "$postgres_user" -d "$postgres_db" < "$current_schema_backup" >/dev/null 2>&1 || true
         fi
         
-        rm -f "$restore_log" "$restore_errors" "$enhanced_sql" "$current_schema_backup"
+        rm -f "$restore_log" "$restore_errors" "$current_schema_backup"
         return 1
     fi
     
     # Очищаем временные файлы
-    rm -f "$restore_log" "$restore_errors" "$enhanced_sql" "$current_schema_backup"
+    rm -f "$restore_log" "$restore_errors" "$current_schema_backup"
     
     # Очищаем временные файлы базы данных
     rm -f "$target_dir/database.sql" "$target_dir/db_backup.sql"
