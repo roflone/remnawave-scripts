@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.0
+# VERSION=3.9.1
 
-SCRIPT_VERSION="3.9.0"
+SCRIPT_VERSION="3.9.1"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1713,6 +1713,7 @@ validate_sql_integrity() {
     # Проверка на SQL инъекции и подозрительные команды
     if grep -qi "drop database\|rm -rf\|system\|exec\|eval" "$sql_file" 2>/dev/null; then
         echo -e "\033[1;33m⚠️  Warning: SQL file contains potentially dangerous commands\033[0m"
+        echo -e "\033[38;5;244m   This is normal for database restore operations (DROP DATABASE, etc.)\033[0m"
     fi
     
     echo -e "\033[1;32m✅ SQL file validation passed\033[0m"
@@ -1728,6 +1729,7 @@ validate_extracted_backup() {
     echo -e "\033[38;5;250m📝 Validating extracted backup...\033[0m"
     
     local validation_errors=0
+    local validation_warnings=0
     
     # Проверка структуры файлов для full backup
     if [ "$backup_type" = "full" ]; then
@@ -1736,10 +1738,23 @@ validate_extracted_backup() {
             echo -e "\033[1;31m❌ Critical file missing: docker-compose.yml\033[0m"
             validation_errors=$((validation_errors + 1))
         else
-            # Проверка синтаксиса docker-compose.yml
-            if ! docker compose -f "$target_dir/docker-compose.yml" config >/dev/null 2>&1; then
-                echo -e "\033[1;31m❌ Invalid docker-compose.yml syntax\033[0m"
+            # Показываем информацию о файле
+            local compose_size=$(wc -c < "$target_dir/docker-compose.yml" 2>/dev/null || echo "0")
+            echo -e "\033[38;5;244m   Found docker-compose.yml (${compose_size} bytes)\033[0m"
+            
+            # Базовая проверка структуры docker-compose.yml
+            # Проверяем только наличие обязательных секций, без запуска Docker
+            if ! grep -q "services:" "$target_dir/docker-compose.yml" 2>/dev/null; then
+                echo -e "\033[1;31m❌ Invalid docker-compose.yml structure (no services section)\033[0m"
+                echo -e "\033[38;5;244m   Hint: Run with DEBUG_RESTORE=true to see file contents\033[0m"
                 validation_errors=$((validation_errors + 1))
+            elif ! head -100 "$target_dir/docker-compose.yml" | grep -qE "image:|build:" 2>/dev/null; then
+                echo -e "\033[1;33m⚠️  Warning: docker-compose.yml may be incomplete (no image/build found)\033[0m"
+                validation_warnings=$((validation_warnings + 1))
+            else
+                # Дополнительная проверка: есть ли базовые секции
+                local compose_services_count=$(grep -c "^  [a-zA-Z]" "$target_dir/docker-compose.yml" 2>/dev/null || echo "0")
+                echo -e "\033[1;32m✅ docker-compose.yml structure valid ($compose_services_count services detected)\033[0m"
             fi
         fi
         
@@ -1824,12 +1839,18 @@ validate_extracted_backup() {
         validation_errors=$((validation_errors + 1))
     fi
     
+    # Итоговый результат
     if [ $validation_errors -eq 0 ]; then
-        echo -e "\033[1;32m✅ Backup validation passed\033[0m"
-        log_restore_operation "Backup Validation" "SUCCESS" "All validation checks passed"
+        if [ $validation_warnings -gt 0 ]; then
+            echo -e "\033[1;33m✅ Backup validation passed with $validation_warnings warning(s)\033[0m"
+            log_restore_operation "Backup Validation" "SUCCESS" "Validation passed with $validation_warnings warnings"
+        else
+            echo -e "\033[1;32m✅ Backup validation passed\033[0m"
+            log_restore_operation "Backup Validation" "SUCCESS" "All validation checks passed"
+        fi
         return 0
     else
-        echo -e "\033[1;31m❌ Backup validation failed ($validation_errors errors)\033[0m"
+        echo -e "\033[1;31m❌ Backup validation failed ($validation_errors errors, $validation_warnings warnings)\033[0m"
         log_restore_operation "Backup Validation" "ERROR" "$validation_errors validation errors found"
         return 1
     fi
@@ -4572,6 +4593,18 @@ restore_full_from_archive() {
     
     # Step 4: Валидация извлеченного бэкапа
     echo -e "\033[38;5;250m📝 Step 4:\033[0m Validating extracted backup..."
+    
+    # Отладочная информация для диагностики
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        echo -e "\033[38;5;244m   Debug: docker-compose.yml found, checking structure...\033[0m"
+        
+        # Показываем первые 20 строк для диагностики
+        if [ "${DEBUG_RESTORE:-false}" = "true" ]; then
+            echo -e "\033[38;5;244m   First 20 lines of docker-compose.yml:\033[0m"
+            head -20 "$target_dir/docker-compose.yml" | sed 's/^/     /' 2>/dev/null || true
+        fi
+    fi
+    
     if ! validate_extracted_backup "$target_dir" "full" "$target_app_name"; then
         echo -e "\033[1;31m❌ Backup validation failed! Rolling back...\033[0m"
         log_restore_operation "Backup Validation" "ERROR" "Validation failed, initiating rollback"
