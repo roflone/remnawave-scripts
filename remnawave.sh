@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.3
+# VERSION=3.9.4
 
-SCRIPT_VERSION="3.9.3"
+SCRIPT_VERSION="3.9.4"
 BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -4713,6 +4713,40 @@ restore_database_only() {
     local target_app_name="$4"
     
     log_restore_operation "Database Only Restore" "STARTED" "File: $backup_file, Type: $backup_type, Target: $target_dir"
+    
+    # ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ о JWT секретах
+    echo
+    echo -e "\033[1;33m⚠️  IMPORTANT: Database-Only Restore Detected!\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo
+    echo -e "\033[1;37m🔐 JWT Secrets Authentication Issue:\033[0m"
+    echo
+    echo -e "\033[38;5;250mIf you're restoring to a \033[1;37mNEW installation\033[38;5;250m with different JWT secrets,\033[0m"
+    echo -e "\033[38;5;250myou \033[1;31mWON'T be able to log in\033[38;5;250m (403 error) after restore.\033[0m"
+    echo
+    echo -e "\033[1;37m✅ Solution (choose ONE):\033[0m"
+    echo
+    echo -e "\033[38;5;250m   Option 1 - Reset Admin (RECOMMENDED):\033[0m"
+    echo -e "\033[38;5;244m   After restore, run: \033[38;5;15m$target_app_name console\033[0m"
+    echo -e "\033[38;5;244m   Then select: \033[38;5;15m\"Reset superadmin\"\033[0m"
+    echo
+    echo -e "\033[38;5;250m   Option 2 - Match Old JWT Secrets:\033[0m"
+    echo -e "\033[38;5;244m   Copy these from your OLD .env to NEW .env:\033[0m"
+    echo -e "\033[38;5;244m   • JWT_AUTH_SECRET\033[0m"
+    echo -e "\033[38;5;244m   • JWT_API_TOKENS_SECRET\033[0m"
+    echo
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+    echo
+    read -p "Do you understand and want to continue? (y/n): " -r jwt_warning_confirm
+    
+    if [[ ! $jwt_warning_confirm =~ ^[Yy]$ ]]; then
+        echo -e "\033[1;31m❌ Database restore cancelled by user\033[0m"
+        log_restore_operation "Database Only Restore" "CANCELLED" "User cancelled due to JWT warning"
+        return 1
+    fi
+    
+    echo -e "\033[1;32m✅ Proceeding with database-only restore...\033[0m"
+    echo
     
     # Step 1: Создание safety backup базы данных
     echo -e "\033[38;5;250m📝 Step 1:\033[0m Creating database safety backup..."
