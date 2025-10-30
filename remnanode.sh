@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.5.0
+# Version: 3.5.1
 set -e
-SCRIPT_VERSION="3.5.0"
+SCRIPT_VERSION="3.5.1"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -2354,6 +2354,16 @@ restore_to_container_default() {
     local service_indent=$(get_service_property_indentation "$COMPOSE_FILE")
     local escaped_service_indent=$(escape_for_sed "$service_indent")
     
+    # Get the indent type for volume items
+    local indent_type=""
+    if [[ "$service_indent" =~ $'\t' ]]; then
+        indent_type=$'\t'
+    else
+        indent_type="  "
+    fi
+    local volume_item_indent="${service_indent}${indent_type}"
+    local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
+    
     # Remove xray-related volume mounts using # as delimiter
     colorized_echo blue "Removing external Xray volume mounts..."
     sed -i "\#$XRAY_FILE#d" "$COMPOSE_FILE"
@@ -2362,15 +2372,35 @@ restore_to_container_default() {
     
     # Check if volumes section is now empty and comment it out
     if grep -q "^${escaped_service_indent}volumes:" "$COMPOSE_FILE"; then
-        # Count non-empty lines after volumes: line within the service
-        volume_count=$(sed -n "/^${escaped_service_indent}volumes:/,/^${service_indent}[a-zA-Z_]/p" "$COMPOSE_FILE" | \
-                      grep -v "^${escaped_service_indent}volumes:" | \
-                      grep -v "^$" | \
-                      grep -v "^${service_indent}[a-zA-Z_]" | \
-                      wc -l)
+        # Count remaining volume items (lines starting with volume_item_indent and -)
+        # We need to count lines between 'volumes:' and the next service-level property
+        local temp_file=$(mktemp)
+        local in_volumes=false
+        local volume_count=0
+        
+        while IFS= read -r line; do
+            # Check if we're entering the volumes section
+            if [[ "$line" =~ ^${service_indent}volumes:[[:space:]]*$ ]]; then
+                in_volumes=true
+                continue
+            fi
+            
+            # If we're in volumes section
+            if [ "$in_volumes" = true ]; then
+                # Check if this is a volume item
+                if [[ "$line" =~ ^${volume_item_indent}-[[:space:]] ]]; then
+                    ((volume_count++))
+                # Check if we've exited the volumes section (found another service property or service)
+                elif [[ "$line" =~ ^${service_indent}[a-zA-Z_] ]] || [[ "$line" =~ ^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_-]*:[[:space:]]*$ ]]; then
+                    break
+                fi
+            fi
+        done < "$COMPOSE_FILE"
+        
+        rm -f "$temp_file"
         
         if [ "$volume_count" -eq 0 ]; then
-            colorized_echo blue "Commenting out empty volumes section..."
+            colorized_echo blue "No volumes left, commenting out volumes section..."
             sed -i "s|^${escaped_service_indent}volumes:|${service_indent}# volumes:|g" "$COMPOSE_FILE"
         fi
     fi
