@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.5.1
+# Version: 3.5.2
 set -e
-SCRIPT_VERSION="3.5.1"
+SCRIPT_VERSION="3.5.2"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1671,18 +1671,33 @@ identify_the_operating_system_and_architecture() {
     fi
 }
 
+# Функция для проверки, примонтирован ли Xray файл в контейнер
+is_xray_mounted() {
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        return 1
+    fi
+    
+    # Проверяем, есть ли активная (не закомментированная) строка с монтированием xray
+    if grep -v "^[[:space:]]*#" "$COMPOSE_FILE" | grep -q "$XRAY_FILE"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 get_current_xray_core_version() {
-    # Сначала проверяем локально установленный xray (если был установлен вручную)
-    if [ -f "$XRAY_FILE" ]; then
+    # Сначала проверяем, примонтирован ли Xray в контейнер
+    if is_xray_mounted && [ -f "$XRAY_FILE" ]; then
+        # Xray примонтирован, получаем версию из локального файла
         version_output=$("$XRAY_FILE" -version 2>/dev/null)
         if [ $? -eq 0 ]; then
             version=$(echo "$version_output" | head -n1 | awk '{print $2}')
-            echo "$version"
+            echo "$version (external)"
             return 0
         fi
     fi
     
-    # Если локального нет, проверяем версию из контейнера
+    # Если Xray не примонтирован или файл не работает, проверяем встроенную версию в контейнере
     local container_version=$(get_container_xray_version 2>/dev/null)
     if [ "$container_version" != "unknown" ] && [ -n "$container_version" ]; then
         echo "$container_version (built-in)"
@@ -1720,7 +1735,14 @@ get_xray_core() {
         echo -e "\033[1;37m🌐 Current Status:\033[0m"
         printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Version:" "$current_version"
         printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
-        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+        
+        # Показываем путь установки только если Xray примонтирован
+        if is_xray_mounted; then
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Install Path:" "$XRAY_FILE"
+            printf "   \033[38;5;15m%-15s\033[0m \033[1;32m%s\033[0m\n" "Mount Status:" "✅ Mounted to container"
+        else
+            printf "   \033[38;5;15m%-15s\033[0m \033[38;5;244m%s\033[0m\n" "Mount Status:" "⚪ Using built-in version"
+        fi
         echo
         
         # Показываем режим выбора релизов
