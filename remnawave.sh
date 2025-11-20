@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.5
+# VERSION=3.9.6
 
-SCRIPT_VERSION="3.9.5"
-BACKUP_SCRIPT_VERSION="1.1.2"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.9.6"
+BACKUP_SCRIPT_VERSION="1.1.3"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -2270,10 +2270,10 @@ verify_restore_integrity() {
         integrity_score=$((integrity_score + 1))
         
         # Проверяем использование latest тега
-        if grep -q "remnawave:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
+        if grep -q "remnawave/backend:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
             echo -e "\033[1;33m⚠️  WARNING: docker-compose.yml uses 'latest' tag\033[0m"
             echo -e "\033[38;5;244m   This may cause compatibility issues if Docker pulls a newer version\033[0m"
-            echo -e "\033[38;5;244m   Recommended: Pin to specific version (e.g., remnawave:2.2.19)\033[0m"
+            echo -e "\033[38;5;244m   Recommended: Pin to specific version (e.g., remnawave/backend:2.2.19)\033[0m"
             issues+=("using latest tag - version not pinned")
         fi
         
@@ -2393,7 +2393,7 @@ schedule_create_backup_script() {
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
-BACKUP_SCRIPT_VERSION="1.1.2"
+BACKUP_SCRIPT_VERSION="1.1.3"
 BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
 
 # Читаем конфигурацию backup
@@ -2707,13 +2707,13 @@ if [ $copy_result -eq 0 ]; then
             log_message "Pinning panel version to $panel_version in docker-compose.yml"
             
             # Создаем временный файл с подмененной версией
-            sed "s|image: \"ghcr.io/remnawave/remnawave:latest\"|image: \"ghcr.io/remnawave/remnawave:$panel_version\"|g; s|image: ghcr.io/remnawave/remnawave:latest|image: ghcr.io/remnawave/remnawave:$panel_version|g" \
+            sed "s|image: \"remnawave/backend:latest\"|image: \"remnawave/backend:$panel_version\"|g; s|image: remnawave/backend:latest|image: remnawave/backend:$panel_version|g" \
                 "$temp_backup_dir/docker-compose.yml" > "$temp_backup_dir/docker-compose.yml.tmp"
             
             # Проверяем что подмена прошла успешно
             if [ -f "$temp_backup_dir/docker-compose.yml.tmp" ]; then
                 mv "$temp_backup_dir/docker-compose.yml.tmp" "$temp_backup_dir/docker-compose.yml"
-                log_message "Version pinned successfully: remnawave:latest -> remnawave:$panel_version"
+                log_message "Version pinned successfully: remnawave/backend:latest -> remnawave/backend:$panel_version"
             else
                 log_message "WARNING: Failed to pin version, keeping original docker-compose.yml"
             fi
@@ -4688,7 +4688,7 @@ restore_full_from_archive() {
     
     # Step 5.5: Проверка использования latest тега в docker-compose.yml
     if [ -f "$target_dir/docker-compose.yml" ]; then
-        if grep -q "remnawave:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
+        if grep -q "remnawave/backend:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
             echo
             echo -e "\033[1;33m⚠️  IMPORTANT: Version Compatibility Warning!\033[0m"
             echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
@@ -4704,7 +4704,7 @@ restore_full_from_archive() {
             echo -e "\033[1;37m✅ Recommendations:\033[0m"
             echo -e "\033[38;5;250m   1. Check backup metadata for original panel version\033[0m"
             echo -e "\033[38;5;250m   2. Manually edit docker-compose.yml to pin specific version\033[0m"
-            echo -e "\033[38;5;250m      Example: remnawave:latest → remnawave:2.2.19\033[0m"
+            echo -e "\033[38;5;250m      Example: remnawave/backend:latest → remnawave/backend:2.2.19\033[0m"
             echo -e "\033[38;5;250m   3. Or cancel and create new backup with pinned version\033[0m"
             echo
             echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
@@ -7076,8 +7076,8 @@ backup_command() {
                     # Создаем копию с подменой latest на конкретную версию
                     echo -e "\033[38;5;244m   ✓ $filename (pinning version to $current_panel_version)\033[0m"
                     
-                    # Подменяем remnawave:latest на remnawave:конкретная_версия
-                    sed "s|image: \"ghcr.io/remnawave/remnawave:latest\"|image: \"ghcr.io/remnawave/remnawave:$current_panel_version\"|g; s|image: ghcr.io/remnawave/remnawave:latest|image: ghcr.io/remnawave/remnawave:$current_panel_version|g" "$config_file" > "$backup_dir/$filename"
+                    # Подменяем remnawave/backend:latest на remnawave/backend:конкретная_версия
+                    sed "s|image: \"remnawave/backend:latest\"|image: \"remnawave/backend:$current_panel_version\"|g; s|image: remnawave/backend:latest|image: remnawave/backend:$current_panel_version|g" "$config_file" > "$backup_dir/$filename"
                 else
                     cp "$config_file" "$backup_dir/"
                     echo -e "\033[38;5;244m   ✓ $filename\033[0m"
