@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.4
+# VERSION=3.9.5
 
-SCRIPT_VERSION="3.9.4"
-BACKUP_SCRIPT_VERSION="1.1.1"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.9.5"
+BACKUP_SCRIPT_VERSION="1.1.2"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -2268,6 +2268,15 @@ verify_restore_integrity() {
     # Проверка файлов (2 балла)
     if [ -f "$target_dir/docker-compose.yml" ]; then
         integrity_score=$((integrity_score + 1))
+        
+        # Проверяем использование latest тега
+        if grep -q "remnawave:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
+            echo -e "\033[1;33m⚠️  WARNING: docker-compose.yml uses 'latest' tag\033[0m"
+            echo -e "\033[38;5;244m   This may cause compatibility issues if Docker pulls a newer version\033[0m"
+            echo -e "\033[38;5;244m   Recommended: Pin to specific version (e.g., remnawave:2.2.19)\033[0m"
+            issues+=("using latest tag - version not pinned")
+        fi
+        
         if docker compose -f "$target_dir/docker-compose.yml" config >/dev/null 2>&1; then
             integrity_score=$((integrity_score + 1))
         else
@@ -2384,7 +2393,7 @@ schedule_create_backup_script() {
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
-BACKUP_SCRIPT_VERSION="1.1.1"
+BACKUP_SCRIPT_VERSION="1.1.2"
 BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
 
 # Читаем конфигурацию backup
@@ -2688,6 +2697,30 @@ fi
 if [ $copy_result -eq 0 ]; then
     app_files_count=$(find "$temp_backup_dir" -type f | wc -l)
     log_message "Application files copied successfully ($app_files_count files)"
+    
+    # Подменяем latest на конкретную версию в docker-compose.yml
+    if [ -f "$temp_backup_dir/docker-compose.yml" ]; then
+        # Получаем текущую версию панели
+        local panel_version=$(docker exec "${APP_NAME}" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null || echo "unknown")
+        
+        if [ "$panel_version" != "unknown" ]; then
+            log_message "Pinning panel version to $panel_version in docker-compose.yml"
+            
+            # Создаем временный файл с подмененной версией
+            sed "s|image: \"ghcr.io/remnawave/remnawave:latest\"|image: \"ghcr.io/remnawave/remnawave:$panel_version\"|g; s|image: ghcr.io/remnawave/remnawave:latest|image: ghcr.io/remnawave/remnawave:$panel_version|g" \
+                "$temp_backup_dir/docker-compose.yml" > "$temp_backup_dir/docker-compose.yml.tmp"
+            
+            # Проверяем что подмена прошла успешно
+            if [ -f "$temp_backup_dir/docker-compose.yml.tmp" ]; then
+                mv "$temp_backup_dir/docker-compose.yml.tmp" "$temp_backup_dir/docker-compose.yml"
+                log_message "Version pinned successfully: remnawave:latest -> remnawave:$panel_version"
+            else
+                log_message "WARNING: Failed to pin version, keeping original docker-compose.yml"
+            fi
+        else
+            log_message "WARNING: Could not determine panel version, docker-compose.yml will use 'latest' tag"
+        fi
+    fi
 else
     log_message "ERROR: Failed to copy application files"
     rm -rf "$temp_backup_dir"
@@ -4651,6 +4684,43 @@ restore_full_from_archive() {
         
         # Очищаем временный файл
         rm -f "/tmp/restore_script_$$"
+    fi
+    
+    # Step 5.5: Проверка использования latest тега в docker-compose.yml
+    if [ -f "$target_dir/docker-compose.yml" ]; then
+        if grep -q "remnawave:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
+            echo
+            echo -e "\033[1;33m⚠️  IMPORTANT: Version Compatibility Warning!\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+            echo
+            echo -e "\033[38;5;250mYour backup uses \033[1;37m'latest'\033[38;5;250m tag in docker-compose.yml\033[0m"
+            echo -e "\033[38;5;250mThis means Docker will pull the \033[1;31mnewest available version\033[38;5;250m\033[0m"
+            echo
+            echo -e "\033[1;37m⚠️  Potential Issues:\033[0m"
+            echo -e "\033[38;5;250m   • Database schema mismatch if newer version is pulled\033[0m"
+            echo -e "\033[38;5;250m   • Breaking changes in newer panel versions\033[0m"
+            echo -e "\033[38;5;250m   • Restore may fail or cause data corruption\033[0m"
+            echo
+            echo -e "\033[1;37m✅ Recommendations:\033[0m"
+            echo -e "\033[38;5;250m   1. Check backup metadata for original panel version\033[0m"
+            echo -e "\033[38;5;250m   2. Manually edit docker-compose.yml to pin specific version\033[0m"
+            echo -e "\033[38;5;250m      Example: remnawave:latest → remnawave:2.2.19\033[0m"
+            echo -e "\033[38;5;250m   3. Or cancel and create new backup with pinned version\033[0m"
+            echo
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"
+            echo
+            read -p "Continue with 'latest' tag? [y/N]: " -r latest_confirm
+            
+            if [[ ! $latest_confirm =~ ^[Yy]$ ]]; then
+                echo -e "\033[1;33m⚠️  Restore cancelled by user due to version concerns\033[0m"
+                log_restore_operation "Version Check" "CANCELLED" "User cancelled due to latest tag usage"
+                return 1
+            fi
+            
+            log_restore_operation "Version Check" "WARNING" "User accepted restore with latest tag"
+            echo -e "\033[1;32m✅ Proceeding with latest tag (user accepted risk)...\033[0m"
+            echo
+        fi
     fi
     
     # Step 6: Запуск и восстановление БД (с расширенной обработкой ошибок)
@@ -6992,14 +7062,28 @@ backup_command() {
         
         local config_count=0
         
+        # Получаем текущую версию панели для подмены в docker-compose.yml
+        local current_panel_version=$(get_panel_version)
+        
         # Копируем основные конфигурационные файлы прямо в корень бэкапа
         echo -e "\033[38;5;244m   Copying main configuration files...\033[0m"
         for config_file in "$ENV_FILE" "$SUB_ENV_FILE" "$COMPOSE_FILE"; do
             if [ -f "$config_file" ]; then
                 local filename=$(basename "$config_file")
-                cp "$config_file" "$backup_dir/"
+                
+                # Специальная обработка для docker-compose.yml
+                if [ "$filename" = "docker-compose.yml" ] && [ "$current_panel_version" != "unknown" ]; then
+                    # Создаем копию с подменой latest на конкретную версию
+                    echo -e "\033[38;5;244m   ✓ $filename (pinning version to $current_panel_version)\033[0m"
+                    
+                    # Подменяем remnawave:latest на remnawave:конкретная_версия
+                    sed "s|image: \"ghcr.io/remnawave/remnawave:latest\"|image: \"ghcr.io/remnawave/remnawave:$current_panel_version\"|g; s|image: ghcr.io/remnawave/remnawave:latest|image: ghcr.io/remnawave/remnawave:$current_panel_version|g" "$config_file" > "$backup_dir/$filename"
+                else
+                    cp "$config_file" "$backup_dir/"
+                    echo -e "\033[38;5;244m   ✓ $filename\033[0m"
+                fi
+                
                 config_count=$((config_count + 1))
-                echo -e "\033[38;5;244m   ✓ $filename\033[0m"
             fi
         done
         
@@ -7064,16 +7148,20 @@ Remnawave Panel Backup Information
 Backup Date: $(date)
 Backup Type: Full System Backup
 Script Version: $SCRIPT_VERSION
-Panel Version: $panel_version
+Panel Version: $panel_version (pinned in docker-compose.yml)
 Hostname: $(hostname)
 
 Included Components:
 ✓ PostgreSQL Database (complete dump)
 ✓ Environment Files (.env, .env.subscription)
-✓ Docker Compose Configuration
+✓ Docker Compose Configuration (version pinned to $panel_version)
 ✓ Additional Config Files ($config_count files)
 ✓ Configuration Directories
 ✓ SSL Certificates (if present)
+
+⚠️  IMPORTANT: This backup uses PINNED version ($panel_version) instead of 'latest'
+   This ensures exact version compatibility during restore and prevents
+   potential issues from automatic version upgrades.
 
 Restoration:
 =============
@@ -7222,6 +7310,10 @@ EOF
     printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Panel:" "v$current_panel_version"
     
     if [ "$include_configs" = true ]; then
+        if [ "$current_panel_version" != "unknown" ]; then
+            printf "   \033[38;5;15m%-12s\033[0m \033[1;32m%s\033[0m\n" "Version:" "Pinned to v$current_panel_version (not 'latest')"
+        fi
+        
         if [ "$compress" = true ]; then
             printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Type:" "Full backup (database + configs, compressed)"
         else
