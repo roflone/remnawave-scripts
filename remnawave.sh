@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Remnawave Panel Installation Script
 # This script installs and manages Remnawave Panel
-# VERSION=3.9.6
+# VERSION=3.9.8
 
-SCRIPT_VERSION="3.9.7"
-BACKUP_SCRIPT_VERSION="1.1.4"  # Версия backup скрипта создаваемого Schedule функцией
+SCRIPT_VERSION="3.9.8"
+BACKUP_SCRIPT_VERSION="1.1.5"  # Версия backup скрипта создаваемого Schedule функцией
 
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
@@ -84,23 +84,33 @@ BACKUP_LOG_FILE="$APP_DIR/logs/backup.log"
 # ===== PANEL VERSION FUNCTIONS =====
 
 get_panel_version() {
-    local container_name="${APP_NAME}"
+    local container_name="${APP_NAME:-remnawave}"
     
     # Проверяем что контейнер запущен
     if ! docker exec "$container_name" echo "test" >/dev/null 2>&1; then
-        echo "unknown"
-        return 1
+        # Пробуем с явным именем контейнера
+        container_name="remnawave"
+        if ! docker exec "$container_name" echo "test" >/dev/null 2>&1; then
+            echo "unknown"
+            return 1
+        fi
     fi
     
-    # Пробуем получить версию из package.json
-    local version=$(docker exec "$container_name" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null)
+    # Способ 1: через cat и jq (наиболее надежный)
+    local version=$(docker exec "$container_name" cat package.json 2>/dev/null | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
     
     if [ -z "$version" ]; then
-        # Альтернативный способ
+        # Способ 2: через awk
+        version=$(docker exec "$container_name" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null)
+    fi
+    
+    if [ -z "$version" ]; then
+        # Способ 3: через sed
         version=$(docker exec "$container_name" sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json 2>/dev/null | head -1)
     fi
     
-    if [ -z "$version" ]; then
+    # Проверяем что версия не пустая и не null
+    if [ -z "$version" ] || [ "$version" = "null" ]; then
         echo "unknown"
         return 1
     fi
@@ -2393,7 +2403,7 @@ schedule_create_backup_script() {
 #!/bin/bash
 
 # Backup Script Version - used for compatibility checking
-BACKUP_SCRIPT_VERSION="1.1.3"
+BACKUP_SCRIPT_VERSION="1.1.4"
 BACKUP_SCRIPT_DATE="$(date '+%Y-%m-%d')"
 
 # Читаем конфигурацию backup
@@ -2701,9 +2711,9 @@ if [ $copy_result -eq 0 ]; then
     # Подменяем latest на конкретную версию в docker-compose.yml
     if [ -f "$temp_backup_dir/docker-compose.yml" ]; then
         # Получаем текущую версию панели
-        local panel_version=$(docker exec "${APP_NAME}" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null || echo "unknown")
+        panel_version=$(docker exec "${APP_NAME}" awk -F'"' '/"version"/{print $4; exit}' package.json 2>/dev/null || echo "unknown")
         
-        if [ "$panel_version" != "unknown" ]; then
+        if [ "$panel_version" != "unknown" ] && [ -n "$panel_version" ]; then
             log_message "Pinning panel version to $panel_version in docker-compose.yml"
             
             # Создаем временный файл с подмененной версией (обрабатываем все варианты: latest, пустое, без :)
@@ -7065,6 +7075,11 @@ backup_command() {
         # Получаем текущую версию панели для подмены в docker-compose.yml
         local current_panel_version=$(get_panel_version)
         
+        if [ "$current_panel_version" = "unknown" ] || [ -z "$current_panel_version" ]; then
+            echo -e "\033[1;33m   ⚠️  WARNING: Could not determine panel version from container\033[0m"
+            echo -e "\033[38;5;244m      docker-compose.yml will keep original image tag\033[0m"
+        fi
+        
         # Копируем основные конфигурационные файлы прямо в корень бэкапа
         echo -e "\033[38;5;244m   Copying main configuration files...\033[0m"
         for config_file in "$ENV_FILE" "$SUB_ENV_FILE" "$COMPOSE_FILE"; do
@@ -7072,7 +7087,7 @@ backup_command() {
                 local filename=$(basename "$config_file")
                 
                 # Специальная обработка для docker-compose.yml
-                if [ "$filename" = "docker-compose.yml" ] && [ "$current_panel_version" != "unknown" ]; then
+                if [ "$filename" = "docker-compose.yml" ] && [ "$current_panel_version" != "unknown" ] && [ -n "$current_panel_version" ]; then
                     # Создаем копию с подменой latest на конкретную версию
                     echo -e "\033[38;5;244m   ✓ $filename (pinning version to $current_panel_version)\033[0m"
                     
