@@ -2716,8 +2716,8 @@ if [ $copy_result -eq 0 ]; then
         if [ "$panel_version" != "unknown" ] && [ -n "$panel_version" ]; then
             log_message "Pinning panel version to $panel_version in docker-compose.yml"
             
-            # Создаем временный файл с подмененной версией (обрабатываем все варианты: latest, пустое, без :)
-            sed "s|image: \"remnawave/backend:latest\"|image: \"remnawave/backend:$panel_version\"|g; s|image: remnawave/backend:latest|image: remnawave/backend:$panel_version|g; s|image: \"remnawave/backend:\"|image: \"remnawave/backend:$panel_version\"|g; s|image: remnawave/backend:|image: remnawave/backend:$panel_version|g; s|image: remnawave/backend\$|image: remnawave/backend:$panel_version|g" \
+            # Создаем временный файл с подмененной версией
+            sed "s|image: remnawave/backend[:|$].*|image: remnawave/backend:$panel_version|g" \
                 "$temp_backup_dir/docker-compose.yml" > "$temp_backup_dir/docker-compose.yml.tmp"
             
             # Проверяем что подмена прошла успешно
@@ -7091,8 +7091,8 @@ backup_command() {
                     # Создаем копию с подменой latest на конкретную версию
                     echo -e "\033[38;5;244m   ✓ $filename (pinning version to $current_panel_version)\033[0m"
                     
-                    # Подменяем любой вариант remnawave/backend на версию (latest, пустое, или без :)
-                    sed "s|image: \"remnawave/backend:latest\"|image: \"remnawave/backend:$current_panel_version\"|g; s|image: remnawave/backend:latest|image: remnawave/backend:$current_panel_version|g; s|image: \"remnawave/backend:\"|image: \"remnawave/backend:$current_panel_version\"|g; s|image: remnawave/backend:|image: remnawave/backend:$current_panel_version|g; s|image: remnawave/backend\$|image: remnawave/backend:$current_panel_version|g" "$config_file" > "$backup_dir/$filename"
+                    # Подменяем любой вариант remnawave/backend на конкретную версию
+                    sed "s|image: remnawave/backend[:|$].*|image: remnawave/backend:$current_panel_version|g" "$config_file" > "$backup_dir/$filename"
                 else
                     cp "$config_file" "$backup_dir/"
                     echo -e "\033[38;5;244m   ✓ $filename\033[0m"
