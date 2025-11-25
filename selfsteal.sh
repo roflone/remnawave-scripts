@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Caddy for Reality Selfsteal Installation Script
-# This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.2.0
+# Selfsteal Installation Script (Caddy/Nginx)
+# This script installs and manages web server for Reality traffic masking
+# Supports: Caddy (default) and Nginx (--nginx flag)
+# ACME SSL certificates via acme.sh for Nginx
+# VERSION=2.4.0
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -11,20 +13,29 @@ fi
 set -euo pipefail
 
 # Script Configuration
-SCRIPT_VERSION="2.2.0"
+SCRIPT_VERSION="2.4.0"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
 
-# Docker Configuration
-CONTAINER_NAME="caddy-selfsteal"
-VOLUME_PREFIX="caddy"
-CADDY_VERSION="2.9.1"
+# ACME Configuration
+ACME_HOME="$HOME/.acme.sh"
+ACME_INSTALL_URL="https://get.acme.sh"
 
-# Paths Configuration
+# Web Server Selection (caddy or nginx)
+WEB_SERVER="caddy"
+WEB_SERVER_CONFIG_FILE=""
+
+# Docker Configuration (will be set based on web server)
+CONTAINER_NAME=""
+VOLUME_PREFIX=""
+CADDY_VERSION="2.10.2"
+NGINX_VERSION="1.29.3-alpine"
+
+# Paths Configuration (initialized by init_web_server_config)
 APP_NAME="selfsteal"
-APP_DIR="/opt/caddy"
-HTML_DIR="/opt/caddy/html"
+APP_DIR=""
+HTML_DIR=""
 LOG_FILE="/var/log/selfsteal.log"
 
 # Default Settings
@@ -109,24 +120,329 @@ create_dir_safe() {
     return 0
 }
 
+# ============================================
+# ACME SSL Certificate Functions
+# ============================================
+
+# Check if acme.sh is installed
+check_acme_installed() {
+    if [ -f "$ACME_HOME/acme.sh" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Install acme.sh
+install_acme() {
+    log_info "Installing acme.sh..."
+    
+    # Check for required dependencies
+    if ! command -v curl >/dev/null 2>&1; then
+        log_error "curl is required for acme.sh installation"
+        return 1
+    fi
+    
+    # Install acme.sh
+    curl -s "$ACME_INSTALL_URL" | sh -s -- --install-online --home "$ACME_HOME" 2>/dev/null
+    
+    if [ -f "$ACME_HOME/acme.sh" ]; then
+        log_success "acme.sh installed successfully"
+        
+        # Set default CA to Let's Encrypt
+        "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        
+        return 0
+    else
+        log_error "Failed to install acme.sh"
+        return 1
+    fi
+}
+
+# Issue SSL certificate for domain
+issue_ssl_certificate() {
+    local domain="$1"
+    local ssl_dir="$2"
+    local webroot="${3:-}"
+    
+    log_info "Requesting SSL certificate for $domain..."
+    
+    # Ensure acme.sh is installed
+    if ! check_acme_installed; then
+        if ! install_acme; then
+            return 1
+        fi
+    fi
+    
+    # Create SSL directory
+    create_dir_safe "$ssl_dir" || return 1
+    
+    # Stop any existing service on port 80 temporarily
+    local port80_in_use=false
+    if ss -tlnp 2>/dev/null | grep -q ":80 "; then
+        port80_in_use=true
+        log_warning "Port 80 is in use, attempting to use it anyway..."
+    fi
+    
+    # Try standalone mode first (faster, no webroot needed)
+    log_info "Attempting standalone mode for certificate..."
+    
+    if "$ACME_HOME/acme.sh" --issue \
+        --standalone \
+        -d "$domain" \
+        --keylength 2048 \
+        --server letsencrypt \
+        --force 2>&1; then
+        
+        log_success "Certificate issued successfully via standalone mode"
+        
+    elif [ -n "$webroot" ] && [ -d "$webroot" ]; then
+        # Fallback to webroot mode
+        log_info "Standalone failed, trying webroot mode..."
+        
+        if "$ACME_HOME/acme.sh" --issue \
+            --webroot "$webroot" \
+            -d "$domain" \
+            --keylength 2048 \
+            --server letsencrypt \
+            --force 2>&1; then
+            
+            log_success "Certificate issued successfully via webroot mode"
+        else
+            log_error "Failed to issue certificate"
+            return 1
+        fi
+    else
+        log_error "Failed to issue certificate via standalone mode"
+        return 1
+    fi
+    
+    # Install certificate to target directory
+    log_info "Installing certificate to $ssl_dir..."
+    
+    if "$ACME_HOME/acme.sh" --install-cert -d "$domain" \
+        --key-file "$ssl_dir/private.key" \
+        --fullchain-file "$ssl_dir/fullchain.crt" \
+        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" 2>&1; then
+        
+        log_success "Certificate installed successfully"
+        
+        # Set proper permissions
+        chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
+        chmod 644 "$ssl_dir/fullchain.crt" 2>/dev/null || true
+        
+        return 0
+    else
+        log_error "Failed to install certificate"
+        return 1
+    fi
+}
+
+# Renew SSL certificates
+renew_ssl_certificates() {
+    log_info "Checking for certificate renewal..."
+    
+    if ! check_acme_installed; then
+        log_warning "acme.sh not installed, skipping renewal"
+        return 1
+    fi
+    
+    if "$ACME_HOME/acme.sh" --cron --home "$ACME_HOME" 2>&1; then
+        log_success "Certificate renewal check completed"
+        return 0
+    else
+        log_warning "Certificate renewal encountered issues"
+        return 1
+    fi
+}
+
+# Setup auto-renewal cron job
+setup_ssl_auto_renewal() {
+    log_info "Setting up auto-renewal for SSL certificates..."
+    
+    if ! check_acme_installed; then
+        log_warning "acme.sh not installed, skipping auto-renewal setup"
+        return 1
+    fi
+    
+    # acme.sh automatically sets up cron job during installation
+    # Just verify it exists
+    if crontab -l 2>/dev/null | grep -q "acme.sh"; then
+        log_success "Auto-renewal cron job is already configured"
+    else
+        # Manual cron setup if needed
+        log_info "Configuring cron job for auto-renewal..."
+        (crontab -l 2>/dev/null; echo "0 0 * * * \"$ACME_HOME/acme.sh\" --cron --home \"$ACME_HOME\" > /dev/null 2>&1") | crontab -
+        log_success "Auto-renewal cron job configured"
+    fi
+    
+    return 0
+}
+
+# Check certificate expiration
+check_ssl_certificate_status() {
+    local ssl_dir="$1"
+    local cert_file="$ssl_dir/fullchain.crt"
+    
+    if [ ! -f "$cert_file" ]; then
+        echo "not_found"
+        return 1
+    fi
+    
+    # Get expiration date
+    local expiry_date
+    expiry_date=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | cut -d= -f2)
+    
+    if [ -z "$expiry_date" ]; then
+        echo "invalid"
+        return 1
+    fi
+    
+    local expiry_epoch
+    expiry_epoch=$(date -d "$expiry_date" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$expiry_date" +%s 2>/dev/null)
+    local now_epoch
+    now_epoch=$(date +%s)
+    local days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
+    
+    if [ "$days_left" -lt 0 ]; then
+        echo "expired"
+    elif [ "$days_left" -lt 7 ]; then
+        echo "expiring_soon:$days_left"
+    elif [ "$days_left" -lt 30 ]; then
+        echo "warning:$days_left"
+    else
+        echo "valid:$days_left"
+    fi
+    
+    return 0
+}
+
+# Display SSL certificate info
+show_ssl_certificate_info() {
+    local ssl_dir="$1"
+    local cert_file="$ssl_dir/fullchain.crt"
+    
+    if [ ! -f "$cert_file" ]; then
+        log_warning "Certificate file not found: $cert_file"
+        return 1
+    fi
+    
+    echo -e "${WHITE}🔐 SSL Certificate Information${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+    
+    # Get certificate details
+    local subject
+    subject=$(openssl x509 -subject -noout -in "$cert_file" 2>/dev/null | sed 's/subject=//')
+    local issuer
+    issuer=$(openssl x509 -issuer -noout -in "$cert_file" 2>/dev/null | sed 's/issuer=//')
+    local expiry
+    expiry=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | sed 's/notAfter=//')
+    local start
+    start=$(openssl x509 -startdate -noout -in "$cert_file" 2>/dev/null | sed 's/notBefore=//')
+    
+    printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Subject:" "$subject"
+    printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Issuer:" "$issuer"
+    printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Valid From:" "$start"
+    printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Valid Until:" "$expiry"
+    
+    # Check status
+    local status
+    status=$(check_ssl_certificate_status "$ssl_dir")
+    
+    case "$status" in
+        valid:*)
+            local days="${status#valid:}"
+            echo -e "   ${WHITE}Status:${NC}         ${GREEN}✅ Valid ($days days remaining)${NC}"
+            ;;
+        warning:*)
+            local days="${status#warning:}"
+            echo -e "   ${WHITE}Status:${NC}         ${YELLOW}⚠️  Renewal recommended ($days days remaining)${NC}"
+            ;;
+        expiring_soon:*)
+            local days="${status#expiring_soon:}"
+            echo -e "   ${WHITE}Status:${NC}         ${RED}🔴 Expiring soon! ($days days remaining)${NC}"
+            ;;
+        expired)
+            echo -e "   ${WHITE}Status:${NC}         ${RED}❌ EXPIRED${NC}"
+            ;;
+        *)
+            echo -e "   ${WHITE}Status:${NC}         ${YELLOW}⚠️  Unknown${NC}"
+            ;;
+    esac
+    
+    echo
+}
+
 
 # Parse command line arguments
 COMMAND=""
-if [ $# -gt 0 ]; then
+ARGS=()
+
+while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h)
             show_help
             exit 0
             ;;
         --version|-v)
-            echo "Caddy Selfsteal Management Script v$SCRIPT_VERSION"
+            echo "Selfsteal Management Script v$SCRIPT_VERSION"
             exit 0
             ;;
+        --nginx)
+            WEB_SERVER="nginx"
+            shift
+            ;;
+        --caddy)
+            WEB_SERVER="caddy"
+            shift
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            echo "Use --help for usage information."
+            exit 1
+            ;;
         *)
-            COMMAND="$1"
+            if [ -z "$COMMAND" ]; then
+                COMMAND="$1"
+            else
+                ARGS+=("$1")
+            fi
+            shift
             ;;
     esac
-fi
+done
+
+# Initialize web server configuration based on selection
+init_web_server_config() {
+    case "$WEB_SERVER" in
+        nginx)
+            CONTAINER_NAME="nginx-selfsteal"
+            VOLUME_PREFIX="nginx"
+            APP_DIR="/opt/nginx-selfsteal"
+            HTML_DIR="/opt/nginx-selfsteal/html"
+            WEB_SERVER_CONFIG_FILE="nginx.conf"
+            ;;
+        caddy|*)
+            CONTAINER_NAME="caddy-selfsteal"
+            VOLUME_PREFIX="caddy"
+            APP_DIR="/opt/caddy"
+            HTML_DIR="/opt/caddy/html"
+            WEB_SERVER_CONFIG_FILE="Caddyfile"
+            ;;
+    esac
+}
+
+# Detect existing installation
+detect_existing_installation() {
+    if [ -d "/opt/nginx-selfsteal" ] && [ -f "/opt/nginx-selfsteal/docker-compose.yml" ]; then
+        WEB_SERVER="nginx"
+    elif [ -d "/opt/caddy" ] && [ -f "/opt/caddy/docker-compose.yml" ]; then
+        WEB_SERVER="caddy"
+    fi
+    init_web_server_config
+}
+
+# Initialize config
+init_web_server_config
 # Fetch IP address with fallback
 get_server_ip() {
     local ip
@@ -414,151 +730,15 @@ validate_domain_dns() {
     fi
 }
 
-# Install function
-install_command() {
-    check_running_as_root
+# Create Caddy configuration files
+create_caddy_config() {
+    local domain="$1"
+    local port="$2"
     
-    clear
-    echo -e "${WHITE}🚀 Caddy for Reality Selfsteal Installation${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
-    echo
-
-    # Check if already installed
-    if [ -d "$APP_DIR" ]; then
-        echo -e "${YELLOW}⚠️  Caddy installation already exists at $APP_DIR${NC}"
-        echo
-        read -p "Do you want to reinstall? [y/N]: " -r confirm
-        if [[ ! $confirm =~ ^[Yy]$ ]]; then
-            echo -e "${GRAY}Installation cancelled${NC}"
-            return 0
-        fi
-        echo
-        echo -e "${YELLOW}🗑️  Removing existing installation...${NC}"
-        stop_services
-        rm -rf "$APP_DIR"
-        echo -e "${GREEN}✅ Existing installation removed${NC}"
-        echo
-    fi
-
-    # Check system requirements
-    if ! check_system_requirements; then
-        return 1
-    fi
-
-    # Collect configuration
-    echo -e "${WHITE}📝 Configuration Setup${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
-    echo
-
-    # Domain configuration
-    echo -e "${WHITE}🌐 Domain Configuration${NC}"
-    echo -e "${GRAY}This domain should match your Xray Reality configuration (realitySettings.serverNames)${NC}"
-    echo
-    
-    local domain=""
-    local skip_dns_check=false
-    
-    while [ -z "$domain" ]; do
-        read -p "Enter your domain (e.g., reality.example.com): " domain
-        if [ -z "$domain" ]; then
-            echo -e "${RED}❌ Domain cannot be empty!${NC}"
-            continue
-        fi
-        
-        echo
-        echo -e "${WHITE}🔍 DNS Validation Options:${NC}"
-        echo -e "   ${WHITE}1)${NC} ${GRAY}Validate DNS configuration (recommended)${NC}"
-        echo -e "   ${WHITE}2)${NC} ${GRAY}Skip DNS validation (for testing/development)${NC}"
-        echo
-        
-        read -p "Select option [1-2]: " dns_choice
-        
-        case "$dns_choice" in
-            1)
-                echo
-                if ! validate_domain_dns "$domain" "$NODE_IP"; then
-                    echo
-                    read -p "Try a different domain? [Y/n]: " -r try_again
-                    if [[ ! $try_again =~ ^[Nn]$ ]]; then
-                        domain=""
-                        continue
-                    else
-                        return 1
-                    fi
-                fi
-                ;;
-            2)
-                echo -e "${YELLOW}⚠️  Skipping DNS validation...${NC}"
-                skip_dns_check=true
-                ;;
-            *)
-                echo -e "${RED}❌ Invalid option!${NC}"
-                domain=""
-                continue
-                ;;
-        esac
-    done
-
-    # Port configuration
-    echo
-    echo -e "${WHITE}🔌 Port Configuration${NC}"
-    echo -e "${GRAY}This port should match your Xray Reality configuration (realitySettings.dest)${NC}"
-    echo
-    
-    local port="9443"
-    read -p "Enter Caddy HTTPS port (default: 9443): " input_port
-    if [ -n "$input_port" ]; then
-        port="$input_port"
-    fi
-
-    # Validate port
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        echo -e "${RED}❌ Invalid port number!${NC}"
-        return 1
-    fi
-
-    # Summary
-    echo
-    echo -e "${WHITE}📋 Installation Summary${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installation Path:" "$APP_DIR"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTML Path:" "$HTML_DIR"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Server IP:" "$NODE_IP"
-    
-    if [ "$skip_dns_check" = true ]; then
-        printf "   ${WHITE}%-20s${NC} ${YELLOW}%s${NC}\n" "DNS Validation:" "SKIPPED"
-    else
-        printf "   ${WHITE}%-20s${NC} ${GREEN}%s${NC}\n" "DNS Validation:" "PASSED"
-    fi
-    
-    echo
-
-    read -p "Proceed with installation? [Y/n]: " -r confirm
-    if [[ $confirm =~ ^[Nn]$ ]]; then
-        echo -e "${GRAY}Installation cancelled${NC}"
-        return 0
-    fi
-
-    # Create directories
-    echo
-    echo -e "${WHITE}📁 Creating Directory Structure${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
-    
-    create_dir_safe "$APP_DIR" || return 1
-    create_dir_safe "$HTML_DIR" || return 1
-    create_dir_safe "$APP_DIR/logs" || return 1
-    
-    log_success "Directories created"
-
     # Create .env file
-    echo
-    echo -e "${WHITE}⚙️  Creating Configuration Files${NC}"
-    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
-
     cat > "$APP_DIR/.env" << EOF
 # Caddy for Reality Selfsteal Configuration
+# Web Server: Caddy
 # Domain Configuration
 SELF_STEAL_DOMAIN=$domain
 SELF_STEAL_PORT=$port
@@ -567,18 +747,18 @@ SELF_STEAL_PORT=$port
 # Server IP: $NODE_IP
 EOF
 
-    echo -e "${GREEN}✅ .env file created${NC}"
+    log_success ".env file created"
 
     # Create docker-compose.yml
     cat > "$APP_DIR/docker-compose.yml" << EOF
 services:
   caddy:
-    image: caddy:2.9.1
-    container_name: $CONTAINER_NAME
+    image: caddy:${CADDY_VERSION}
+    container_name: ${CONTAINER_NAME}
     restart: unless-stopped
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - $HTML_DIR:/var/www/html
+      - ${HTML_DIR}:/var/www/html
       - ./logs:/var/log/caddy
       - ${VOLUME_PREFIX}_data:/data
       - ${VOLUME_PREFIX}_config:/config
@@ -596,7 +776,7 @@ volumes:
   ${VOLUME_PREFIX}_config:
 EOF
 
-    echo -e "${GREEN}✅ docker-compose.yml created${NC}"
+    log_success "docker-compose.yml created"
 
     # Create Caddyfile
     cat > "$APP_DIR/Caddyfile" << 'EOF'
@@ -664,7 +844,479 @@ https://{$SELF_STEAL_DOMAIN} {
 }
 EOF
 
-    echo -e "${GREEN}✅ Caddyfile created${NC}"    # Install random template instead of default HTML
+    log_success "Caddyfile created"
+}
+
+# Create Nginx configuration files
+create_nginx_config() {
+    local domain="$1"
+    local port="$2"
+    
+    # Create .env file
+    cat > "$APP_DIR/.env" << EOF
+# Nginx for Reality Selfsteal Configuration
+# Web Server: Nginx
+# Domain Configuration
+SELF_STEAL_DOMAIN=$domain
+SELF_STEAL_PORT=$port
+
+# Generated on $(date)
+# Server IP: $NODE_IP
+# SSL: ACME (Let's Encrypt)
+EOF
+
+    log_success ".env file created"
+    
+    # Create SSL directory
+    create_dir_safe "$APP_DIR/ssl" || return 1
+    
+    # Create HTML directory for webroot (needed for ACME)
+    create_dir_safe "$HTML_DIR" || return 1
+    create_dir_safe "$HTML_DIR/.well-known/acme-challenge" || return 1
+    
+    # Obtain SSL certificate via ACME
+    echo
+    echo -e "${WHITE}🔐 SSL Certificate Configuration${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+    echo
+    
+    log_info "Obtaining SSL certificate from Let's Encrypt..."
+    log_info "This requires port 80 to be available for verification"
+    echo
+    
+    # Check port 80 availability
+    if ss -tlnp 2>/dev/null | grep -q ":80 "; then
+        log_warning "Port 80 is currently in use"
+        local port80_process=$(ss -tlnp 2>/dev/null | grep ":80 " | head -1)
+        echo -e "${GRAY}   Process: $port80_process${NC}"
+        echo
+        echo -e "${YELLOW}Please stop the service using port 80 temporarily${NC}"
+        echo -e "${GRAY}After installation, port 80 will be used by Nginx${NC}"
+        echo
+        read -p "Continue when port 80 is free? [Y/n]: " -r continue_port
+        if [[ $continue_port =~ ^[Nn]$ ]]; then
+            return 1
+        fi
+    fi
+    
+    # Issue certificate
+    if issue_ssl_certificate "$domain" "$APP_DIR/ssl" "$HTML_DIR"; then
+        log_success "SSL certificate obtained successfully"
+        
+        # Setup auto-renewal
+        setup_ssl_auto_renewal
+    else
+        log_error "Failed to obtain SSL certificate"
+        echo
+        echo -e "${YELLOW}Possible reasons:${NC}"
+        echo -e "${GRAY}   • Domain DNS not properly configured${NC}"
+        echo -e "${GRAY}   • Port 80 is blocked by firewall${NC}"
+        echo -e "${GRAY}   • Let's Encrypt rate limit exceeded${NC}"
+        echo
+        read -p "Continue with self-signed certificate (not recommended)? [y/N]: " -r use_selfsigned
+        if [[ $use_selfsigned =~ ^[Yy]$ ]]; then
+            log_warning "Generating self-signed certificate as fallback..."
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout "$APP_DIR/ssl/private.key" \
+                -out "$APP_DIR/ssl/fullchain.crt" \
+                -subj "/C=US/ST=State/L=City/O=Organization/CN=$domain" 2>/dev/null || {
+                log_error "Failed to generate self-signed certificate"
+                return 1
+            }
+            log_warning "Using self-signed certificate (browser warnings expected)"
+        else
+            return 1
+        fi
+    fi
+
+    # Create docker-compose.yml
+    cat > "$APP_DIR/docker-compose.yml" << EOF
+services:
+  nginx:
+    image: nginx:${NGINX_VERSION}
+    container_name: ${CONTAINER_NAME}
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ${HTML_DIR}:/var/www/html:ro
+      - ./logs:/var/log/nginx
+      - ./ssl:/etc/nginx/ssl:ro
+    env_file:
+      - .env
+    network_mode: "host"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+EOF
+
+    log_success "docker-compose.yml created"
+    
+    # Create conf.d directory
+    create_dir_safe "$APP_DIR/conf.d" || return 1
+
+    # Create main nginx.conf
+    cat > "$APP_DIR/nginx.conf" << 'EOF'
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    log_format proxy_protocol '$proxy_protocol_addr - $remote_user [$time_local] "$request" '
+                              '$status $body_bytes_sent "$http_referer" '
+                              '"$http_user_agent"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    server_tokens off;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript 
+               application/rss+xml application/atom+xml image/svg+xml;
+
+    include /etc/nginx/conf.d/*.conf;
+}
+EOF
+
+    log_success "nginx.conf created"
+
+    # Create site configuration with proxy_protocol support and ACME SSL
+    cat > "$APP_DIR/conf.d/selfsteal.conf" << EOF
+# HTTP server - redirect and ACME challenge
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name $domain;
+    
+    # ACME challenge for Let's Encrypt certificate renewal
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
+    }
+    
+    # Redirect all other traffic to HTTPS
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# HTTPS server for public access
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $domain;
+
+    # SSL Configuration with ACME certificates
+    ssl_certificate /etc/nginx/ssl/fullchain.crt;
+    ssl_certificate_key /etc/nginx/ssl/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+    
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 8.8.8.8 1.1.1.1 valid=300s;
+    resolver_timeout 5s;
+
+    # Logging
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log warn;
+
+    # Root directory
+    root /var/www/html;
+    index index.html index.htm;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    # Cache static files
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# HTTPS server with proxy_protocol support (for Reality)
+server {
+    listen 127.0.0.1:$port ssl proxy_protocol;
+    server_name $domain;
+
+    # SSL Configuration with ACME certificates
+    ssl_certificate /etc/nginx/ssl/fullchain.crt;
+    ssl_certificate_key /etc/nginx/ssl/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Get real IP from proxy protocol
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
+
+    # Logging
+    access_log /var/log/nginx/access.log proxy_protocol;
+    error_log /var/log/nginx/error.log warn;
+
+    # Root directory
+    root /var/www/html;
+    index index.html index.htm;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    # Cache static files
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# Fallback server for direct port access (returns 204)
+server {
+    listen 127.0.0.1:$port ssl default_server;
+    server_name _;
+
+    ssl_certificate /etc/nginx/ssl/fullchain.crt;
+    ssl_certificate_key /etc/nginx/ssl/private.key;
+
+    return 204;
+}
+EOF
+
+    log_success "Nginx site configuration created with ACME SSL"
+}
+
+# Install function
+install_command() {
+    check_running_as_root
+    
+    clear
+    local server_display_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_display_name="Nginx"
+    else
+        server_display_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}🚀 $server_display_name for Reality Selfsteal Installation${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
+    echo -e "${CYAN}📦 Web Server: $server_display_name${NC}"
+    echo
+
+    # Check if already installed (any server)
+    local existing_install=""
+    if [ -d "/opt/caddy" ] && [ -f "/opt/caddy/docker-compose.yml" ]; then
+        existing_install="caddy"
+    fi
+    if [ -d "/opt/nginx-selfsteal" ] && [ -f "/opt/nginx-selfsteal/docker-compose.yml" ]; then
+        existing_install="nginx"
+    fi
+    
+    if [ -n "$existing_install" ]; then
+        local existing_name
+        if [ "$existing_install" = "nginx" ]; then
+            existing_name="Nginx"
+        else
+            existing_name="Caddy"
+        fi
+        
+        echo -e "${YELLOW}⚠️  Existing $existing_name installation detected${NC}"
+        echo
+        echo -e "${WHITE}Options:${NC}"
+        echo -e "   ${WHITE}1)${NC} ${GRAY}Reinstall with $server_display_name (removes existing)${NC}"
+        echo -e "   ${WHITE}2)${NC} ${GRAY}Cancel installation${NC}"
+        echo
+        read -p "Select option [1-2]: " reinstall_choice
+        
+        case "$reinstall_choice" in
+            1)
+                echo
+                log_warning "Removing existing $existing_name installation..."
+                if [ "$existing_install" = "nginx" ]; then
+                    cd /opt/nginx-selfsteal 2>/dev/null && docker compose down 2>/dev/null || true
+                    rm -rf /opt/nginx-selfsteal
+                else
+                    cd /opt/caddy 2>/dev/null && docker compose down 2>/dev/null || true
+                    rm -rf /opt/caddy
+                fi
+                log_success "Existing installation removed"
+                echo
+                ;;
+            *)
+                echo -e "${GRAY}Installation cancelled${NC}"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Check system requirements
+    if ! check_system_requirements; then
+        return 1
+    fi
+
+    # Collect configuration
+    echo -e "${WHITE}📝 Configuration Setup${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
+    echo
+
+    # Domain configuration
+    echo -e "${WHITE}🌐 Domain Configuration${NC}"
+    echo -e "${GRAY}This domain should match your Xray Reality configuration (realitySettings.serverNames)${NC}"
+    echo
+    
+    local domain=""
+    local skip_dns_check=false
+    
+    while [ -z "$domain" ]; do
+        read -p "Enter your domain (e.g., reality.example.com): " domain
+        if [ -z "$domain" ]; then
+            log_error "Domain cannot be empty!"
+            continue
+        fi
+        
+        echo
+        echo -e "${WHITE}🔍 DNS Validation Options:${NC}"
+        echo -e "   ${WHITE}1)${NC} ${GRAY}Validate DNS configuration (recommended)${NC}"
+        echo -e "   ${WHITE}2)${NC} ${GRAY}Skip DNS validation (for testing/development)${NC}"
+        echo
+        
+        read -p "Select option [1-2]: " dns_choice
+        
+        case "$dns_choice" in
+            1)
+                echo
+                if ! validate_domain_dns "$domain" "$NODE_IP"; then
+                    echo
+                    read -p "Try a different domain? [Y/n]: " -r try_again
+                    if [[ ! $try_again =~ ^[Nn]$ ]]; then
+                        domain=""
+                        continue
+                    else
+                        return 1
+                    fi
+                fi
+                ;;
+            2)
+                log_warning "Skipping DNS validation..."
+                skip_dns_check=true
+                ;;
+            *)
+                log_error "Invalid option!"
+                domain=""
+                continue
+                ;;
+        esac
+    done
+
+    # Port configuration
+    echo
+    echo -e "${WHITE}🔌 Port Configuration${NC}"
+    echo -e "${GRAY}This port should match your Xray Reality configuration (realitySettings.dest)${NC}"
+    echo
+    
+    local port="$DEFAULT_PORT"
+    read -p "Enter HTTPS port (default: $DEFAULT_PORT): " input_port
+    if [ -n "$input_port" ]; then
+        port="$input_port"
+    fi
+
+    # Validate port
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        log_error "Invalid port number!"
+        return 1
+    fi
+
+    # Summary
+    echo
+    echo -e "${WHITE}📋 Installation Summary${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Web Server:" "$server_display_name"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installation Path:" "$APP_DIR"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTML Path:" "$HTML_DIR"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Server IP:" "$NODE_IP"
+    
+    if [ "$skip_dns_check" = true ]; then
+        printf "   ${WHITE}%-20s${NC} ${YELLOW}%s${NC}\n" "DNS Validation:" "SKIPPED"
+    else
+        printf "   ${WHITE}%-20s${NC} ${GREEN}%s${NC}\n" "DNS Validation:" "PASSED"
+    fi
+    
+    echo
+
+    read -p "Proceed with installation? [Y/n]: " -r confirm
+    if [[ $confirm =~ ^[Nn]$ ]]; then
+        echo -e "${GRAY}Installation cancelled${NC}"
+        return 0
+    fi
+
+    # Create directories
+    echo
+    echo -e "${WHITE}📁 Creating Directory Structure${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+    
+    create_dir_safe "$APP_DIR" || return 1
+    create_dir_safe "$HTML_DIR" || return 1
+    create_dir_safe "$APP_DIR/logs" || return 1
+    
+    log_success "Directories created"
+
+    # Create configuration files based on selected web server
+    echo
+    echo -e "${WHITE}⚙️  Creating Configuration Files${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        create_nginx_config "$domain" "$port"
+    else
+        create_caddy_config "$domain" "$port"
+    fi
+
+    # Install random template instead of default HTML
     echo
     echo -e "${WHITE}🎨 Installing Random Template${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
@@ -683,10 +1335,10 @@ EOF
     echo
     
     if download_template "$selected_template"; then
-        echo -e "${GREEN}✅ Random template installed successfully${NC}"
+        log_success "Random template installed successfully"
         installed_template="$selected_name template"
     else
-        echo -e "${YELLOW}⚠️  Failed to download template, creating fallback${NC}"
+        log_warning "Failed to download template, creating fallback"
         create_default_html
         installed_template="Default template (fallback)"
     fi
@@ -696,29 +1348,41 @@ EOF
 
     # Start services
     echo
-    echo -e "${WHITE}🚀 Starting Caddy Services${NC}"
+    echo -e "${WHITE}🚀 Starting $server_display_name Services${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     
     cd "$APP_DIR"
-    echo -e "${WHITE}🔍 Validating Caddyfile...${NC}"
-
-    if [ ! -f "$APP_DIR/Caddyfile" ]; then
-        echo -e "${RED}❌ Caddyfile not found at $APP_DIR/Caddyfile${NC}"
-        return 1
-    fi
-
-    if validate_caddyfile; then
-        echo -e "${GREEN}✅ Caddyfile is valid${NC}"
+    
+    # Validate configuration based on web server type
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        log_info "Validating Nginx configuration..."
+        if validate_nginx_config; then
+            log_success "Nginx configuration is valid"
+        else
+            log_error "Invalid Nginx configuration"
+            echo -e "${YELLOW}💡 Check configuration in: $APP_DIR/conf.d/${NC}"
+            return 1
+        fi
     else
-        echo -e "${RED}❌ Invalid Caddyfile configuration${NC}"
-        echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
-        return 1
+        log_info "Validating Caddyfile..."
+        if [ ! -f "$APP_DIR/Caddyfile" ]; then
+            log_error "Caddyfile not found at $APP_DIR/Caddyfile"
+            return 1
+        fi
+
+        if validate_caddyfile; then
+            log_success "Caddyfile is valid"
+        else
+            log_error "Invalid Caddyfile configuration"
+            echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
+            return 1
+        fi
     fi
 
     if docker compose up -d; then
-        echo -e "${GREEN}✅ Caddy services started successfully${NC}"
+        log_success "$server_display_name services started successfully"
     else
-        echo -e "${RED}❌ Failed to start Caddy services${NC}"
+        log_error "Failed to start $server_display_name services"
         return 1
     fi
 
@@ -728,13 +1392,14 @@ EOF
     echo -e "${WHITE}🎉 Installation Completed Successfully!${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
-      printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Web Server:" "$server_display_name"
+    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installation Path:" "$APP_DIR"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTML Content:" "$HTML_DIR"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installed Template:" "$installed_template"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Management Command:" "$APP_NAME"
-      echo
+    echo
     echo -e "${WHITE}📋 Next Steps:${NC}"
     echo -e "${GRAY}   • Configure your Xray Reality with:${NC}"
     echo -e "${GRAY}     - serverNames: [\"$domain\"]${NC}"
@@ -744,6 +1409,22 @@ EOF
     echo -e "${GRAY}   • Check status: sudo $APP_NAME status${NC}"
     echo -e "${GRAY}   • View logs: sudo $APP_NAME logs${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
+}
+
+# Validate Nginx configuration
+validate_nginx_config() {
+    log_info "Validating Nginx configuration..."
+    
+    if docker run --rm \
+        -v "$APP_DIR/nginx.conf:/etc/nginx/nginx.conf:ro" \
+        -v "$APP_DIR/conf.d:/etc/nginx/conf.d:ro" \
+        -v "$APP_DIR/ssl:/etc/nginx/ssl:ro" \
+        nginx:${NGINX_VERSION} \
+        nginx -t 2>&1; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 validate_caddyfile() {
@@ -1444,12 +2125,22 @@ down_command() {
 restart_command() {
     check_running_as_root
     
-    read -p "Validate Caddyfile before restart? [Y/n]: " -r validate_choice
-    if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
-        validate_caddyfile || return 1
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+        read -p "Validate Nginx config before restart? [Y/n]: " -r validate_choice
+        if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+            validate_nginx_config || return 1
+        fi
+    else
+        server_name="Caddy"
+        read -p "Validate Caddyfile before restart? [Y/n]: " -r validate_choice
+        if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+            validate_caddyfile || return 1
+        fi
     fi
     
-    log_info "Restarting Caddy Services"
+    log_info "Restarting $server_name Services"
     down_command
     sleep 2
     up_command
@@ -1457,11 +2148,18 @@ restart_command() {
 
 status_command() {
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Caddy not installed"
+        log_error "$WEB_SERVER not installed"
         return 1
     fi
 
-    echo -e "${WHITE}📊 Caddy Service Status${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+
+    echo -e "${WHITE}📊 $server_name Service Status${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     echo
 
@@ -1524,20 +2222,34 @@ status_command() {
         domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
         port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" | cut -d'=' -f2)
         
+        printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Web Server:" "$server_name"
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTML Path:" "$HTML_DIR"
     fi
     printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Script Version:" "v$SCRIPT_VERSION"
+    
+    # Show SSL certificate info for Nginx
+    if [ "$WEB_SERVER" = "nginx" ] && [ -f "$APP_DIR/ssl/fullchain.crt" ]; then
+        echo
+        show_ssl_certificate_info "$APP_DIR/ssl"
+    fi
 }
 
 logs_command() {
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        log_error "Caddy is not installed"
+        log_error "$WEB_SERVER is not installed"
         return 1
     fi
     
-    echo -e "${WHITE}📝 Caddy Logs${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}📝 $server_name Logs${NC}"
     echo -e "${GRAY}Press Ctrl+C to exit${NC}"
     echo
     
@@ -1547,15 +2259,162 @@ logs_command() {
 
 
 # Clean logs function
+# Renew SSL certificate command
+renew_ssl_command() {
+    check_running_as_root
+    
+    if [ ! -d "$APP_DIR" ]; then
+        log_error "$WEB_SERVER is not installed"
+        return 1
+    fi
+    
+    # Check if this is Nginx installation
+    if [ "$WEB_SERVER" != "nginx" ]; then
+        echo -e "${YELLOW}ℹ️  SSL renewal is only available for Nginx installations${NC}"
+        echo -e "${GRAY}   Caddy manages SSL certificates automatically via ACME${NC}"
+        return 0
+    fi
+    
+    echo -e "${WHITE}🔐 SSL Certificate Renewal${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
+    echo
+    
+    # Show current certificate info
+    if [ -f "$APP_DIR/ssl/fullchain.crt" ]; then
+        show_ssl_certificate_info "$APP_DIR/ssl"
+        echo
+    fi
+    
+    # Check if acme.sh is installed
+    if ! check_acme_installed; then
+        log_error "acme.sh is not installed"
+        echo -e "${GRAY}   Certificate was likely generated as self-signed${NC}"
+        echo
+        
+        # Offer to get a proper certificate
+        read -p "Would you like to obtain a Let's Encrypt certificate now? [Y/n]: " -r get_cert
+        if [[ ! $get_cert =~ ^[Nn]$ ]]; then
+            # Get domain from config
+            local domain
+            domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+            
+            if [ -z "$domain" ]; then
+                log_error "Could not determine domain from configuration"
+                return 1
+            fi
+            
+            # Install acme.sh and get certificate
+            if install_acme; then
+                log_info "Stopping Nginx for certificate issuance..."
+                cd "$APP_DIR" && docker compose stop
+                
+                if issue_ssl_certificate "$domain" "$APP_DIR/ssl" "$HTML_DIR"; then
+                    log_success "Certificate obtained successfully"
+                    setup_ssl_auto_renewal
+                    
+                    log_info "Starting Nginx..."
+                    cd "$APP_DIR" && docker compose up -d
+                    
+                    echo
+                    log_success "SSL certificate has been updated!"
+                else
+                    log_error "Failed to obtain certificate"
+                    
+                    log_info "Restarting Nginx with existing certificate..."
+                    cd "$APP_DIR" && docker compose up -d
+                    return 1
+                fi
+            fi
+        fi
+        return 0
+    fi
+    
+    # Get domain from config
+    local domain
+    domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+    
+    if [ -z "$domain" ]; then
+        log_error "Could not determine domain from configuration"
+        return 1
+    fi
+    
+    # Check certificate status
+    local status
+    status=$(check_ssl_certificate_status "$APP_DIR/ssl")
+    
+    echo -e "${WHITE}Options:${NC}"
+    echo -e "   ${WHITE}1)${NC} ${GRAY}Check and renew if needed (automatic)${NC}"
+    echo -e "   ${WHITE}2)${NC} ${GRAY}Force renewal${NC}"
+    echo -e "   ${WHITE}3)${NC} ${GRAY}Cancel${NC}"
+    echo
+    
+    read -p "Select option [1-3]: " -r renew_choice
+    
+    case "$renew_choice" in
+        1)
+            echo
+            log_info "Checking certificate renewal..."
+            
+            if renew_ssl_certificates; then
+                # Reload Nginx to pick up any renewed certificates
+                log_info "Reloading Nginx configuration..."
+                docker exec "$CONTAINER_NAME" nginx -s reload 2>/dev/null || true
+                
+                echo
+                log_success "Certificate renewal check completed"
+                
+                # Show updated status
+                echo
+                show_ssl_certificate_info "$APP_DIR/ssl"
+            fi
+            ;;
+        2)
+            echo
+            log_warning "Forcing certificate renewal..."
+            log_info "Stopping Nginx for certificate renewal..."
+            
+            cd "$APP_DIR" && docker compose stop
+            
+            if "$ACME_HOME/acme.sh" --renew -d "$domain" --force 2>&1; then
+                # Re-install certificate
+                "$ACME_HOME/acme.sh" --install-cert -d "$domain" \
+                    --key-file "$APP_DIR/ssl/private.key" \
+                    --fullchain-file "$APP_DIR/ssl/fullchain.crt" \
+                    --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" 2>&1
+                
+                log_success "Certificate renewed successfully"
+            else
+                log_warning "Renewal encountered issues (may not be due for renewal yet)"
+            fi
+            
+            log_info "Starting Nginx..."
+            cd "$APP_DIR" && docker compose up -d
+            
+            echo
+            show_ssl_certificate_info "$APP_DIR/ssl"
+            ;;
+        *)
+            echo -e "${GRAY}Renewal cancelled${NC}"
+            ;;
+    esac
+}
+
 clean_logs_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Caddy is not installed"
+        log_error "$WEB_SERVER is not installed"
         return 1
     fi
     
-    echo -e "${WHITE}🧹 Cleaning Logs${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}🧹 Cleaning $server_name Logs${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
     echo
     
@@ -1568,12 +2427,12 @@ clean_logs_command() {
     docker_logs_size=$((docker_logs_size / 1024))
     echo -e "${GRAY}   Docker logs: ${WHITE}${docker_logs_size}KB${NC}"
     
-    # Caddy access logs
-    local caddy_logs_path="$APP_DIR/logs"
-    if [ -d "$caddy_logs_path" ]; then
-        local caddy_logs_size
-        caddy_logs_size=$(du -sk "$caddy_logs_path" 2>/dev/null | cut -f1 || echo "0")
-        echo -e "${GRAY}   Caddy logs: ${WHITE}${caddy_logs_size}KB${NC}"
+    # Server access logs
+    local server_logs_path="$APP_DIR/logs"
+    if [ -d "$server_logs_path" ]; then
+        local server_logs_size
+        server_logs_size=$(du -sk "$server_logs_path" 2>/dev/null | cut -f1 || echo "0")
+        echo -e "${GRAY}   $server_name logs: ${WHITE}${server_logs_size}KB${NC}"
     fi
     
     echo
@@ -1584,20 +2443,20 @@ clean_logs_command() {
         
         # Clean Docker logs by recreating container
         if docker ps -q -f "name=$CONTAINER_NAME" >/dev/null 2>&1; then
-            echo -e "${GRAY}   Stopping Caddy...${NC}"
+            echo -e "${GRAY}   Stopping $server_name...${NC}"
             cd "$APP_DIR" && docker compose stop
             
             echo -e "${GRAY}   Removing container to clear logs...${NC}"
             docker rm "$CONTAINER_NAME" 2>/dev/null || true
             
-            echo -e "${GRAY}   Starting Caddy...${NC}"
+            echo -e "${GRAY}   Starting $server_name...${NC}"
             cd "$APP_DIR" && docker compose up -d
         fi
         
-        # Clean Caddy internal logs
-        if [ -d "$caddy_logs_path" ]; then
-            echo -e "${GRAY}   Cleaning Caddy access logs...${NC}"
-            rm -rf "${caddy_logs_path:?}"/* 2>/dev/null || true
+        # Clean server internal logs
+        if [ -d "$server_logs_path" ]; then
+            echo -e "${GRAY}   Cleaning $server_name access logs...${NC}"
+            rm -rf "${server_logs_path:?}"/* 2>/dev/null || true
         fi
         
         log_success "Logs cleaned successfully"
@@ -1611,11 +2470,18 @@ logs_size_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Caddy is not installed"
+        log_error "$WEB_SERVER is not installed"
         return 1
     fi
     
-    echo -e "${WHITE}📊 Log Sizes${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}📊 $server_name Log Sizes${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 25))${NC}"
     echo
     
@@ -1665,16 +2531,23 @@ stop_services() {
 uninstall_command() {
     check_running_as_root
     
-    echo -e "${WHITE}🗑️  Caddy Uninstallation${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}🗑️  $server_name Uninstallation${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     echo
     
     if [ ! -d "$APP_DIR" ]; then
-        log_warning "Caddy is not installed"
+        log_warning "$server_name is not installed"
         return 0
     fi
     
-    log_warning "This will completely remove Caddy and all data!"
+    log_warning "This will completely remove $server_name and all data!"
     echo
     read -p "Are you sure you want to continue? [y/N]: " -r confirm
     
@@ -1693,7 +2566,7 @@ uninstall_command() {
     log_info "Removing management script..."
     rm -f "/usr/local/bin/$APP_NAME"
     
-    log_success "Caddy uninstalled successfully"
+    log_success "$server_name uninstalled successfully"
     echo
     echo -e "${GRAY}Note: HTML content in $HTML_DIR was preserved${NC}"
 }
@@ -1702,63 +2575,124 @@ edit_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Caddy is not installed"
+        log_error "$WEB_SERVER is not installed"
         return 1
     fi
     
-    echo -e "${WHITE}📝 Edit Configuration Files${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}📝 Edit $server_name Configuration Files${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     echo
     
     echo -e "${WHITE}Select file to edit:${NC}"
     echo -e "   ${WHITE}1)${NC} ${GRAY}.env file (domain and port settings)${NC}"
-    echo -e "   ${WHITE}2)${NC} ${GRAY}Caddyfile (Caddy configuration)${NC}"
-    echo -e "   ${WHITE}3)${NC} ${GRAY}docker-compose.yml (Docker configuration)${NC}"
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        echo -e "   ${WHITE}2)${NC} ${GRAY}nginx.conf (main Nginx configuration)${NC}"
+        echo -e "   ${WHITE}3)${NC} ${GRAY}selfsteal.conf (site configuration)${NC}"
+        echo -e "   ${WHITE}4)${NC} ${GRAY}docker-compose.yml (Docker configuration)${NC}"
+    else
+        echo -e "   ${WHITE}2)${NC} ${GRAY}Caddyfile (Caddy configuration)${NC}"
+        echo -e "   ${WHITE}3)${NC} ${GRAY}docker-compose.yml (Docker configuration)${NC}"
+    fi
     echo -e "   ${WHITE}0)${NC} ${GRAY}Cancel${NC}"
     echo
     
-    read -p "Select option [0-3]: " choice
-    
-    case "$choice" in
-        1)
-            ${EDITOR:-nano} "$APP_DIR/.env"
-            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
-            ;;
-        2)
-            ${EDITOR:-nano} "$APP_DIR/Caddyfile"
-            read -p "Validate Caddyfile after editing? [Y/n]: " -r validate_choice
-            if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
-                validate_caddyfile
-            fi
-            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
-            ;;
-        3)
-            ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
-            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
-            ;;
-        0)
-            echo -e "${GRAY}Cancelled${NC}"
-            ;;
-        *)
-            log_error "Invalid option"
-            ;;
-    esac
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        read -p "Select option [0-4]: " choice
+        
+        case "$choice" in
+            1)
+                ${EDITOR:-nano} "$APP_DIR/.env"
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            2)
+                ${EDITOR:-nano} "$APP_DIR/nginx.conf"
+                read -p "Validate Nginx config after editing? [Y/n]: " -r validate_choice
+                if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+                    validate_nginx_config
+                fi
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            3)
+                ${EDITOR:-nano} "$APP_DIR/conf.d/selfsteal.conf"
+                read -p "Validate Nginx config after editing? [Y/n]: " -r validate_choice
+                if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+                    validate_nginx_config
+                fi
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            4)
+                ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            0)
+                echo -e "${GRAY}Cancelled${NC}"
+                ;;
+            *)
+                log_error "Invalid option"
+                ;;
+        esac
+    else
+        read -p "Select option [0-3]: " choice
+        
+        case "$choice" in
+            1)
+                ${EDITOR:-nano} "$APP_DIR/.env"
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            2)
+                ${EDITOR:-nano} "$APP_DIR/Caddyfile"
+                read -p "Validate Caddyfile after editing? [Y/n]: " -r validate_choice
+                if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
+                    validate_caddyfile
+                fi
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            3)
+                ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
+                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                ;;
+            0)
+                echo -e "${GRAY}Cancelled${NC}"
+                ;;
+            *)
+                log_error "Invalid option"
+                ;;
+        esac
+    fi
 }
 
 
 
 
 show_help() {
-    echo -e "${WHITE}Caddy for Reality Selfsteal Management Script v$SCRIPT_VERSION${NC}"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    echo -e "${WHITE}$server_name for Reality Selfsteal Management Script v$SCRIPT_VERSION${NC}"
     echo
     echo -e "${WHITE}Usage:${NC}"
-    echo -e "  ${CYAN}$APP_NAME${NC} [${GRAY}command${NC}]"
+    echo -e "  ${CYAN}$APP_NAME${NC} [${GRAY}command${NC}] [${GRAY}--nginx|--caddy${NC}]"
+    echo
+    echo -e "${WHITE}Server Options:${NC}"
+    printf "   ${CYAN}%-12s${NC} %s\n" "--nginx" "Use Nginx as web server"
+    printf "   ${CYAN}%-12s${NC} %s\n" "--caddy" "Use Caddy as web server (default)"
     echo
     echo -e "${WHITE}Commands:${NC}"
-    printf "   ${CYAN}%-12s${NC} %s\n" "install" "🚀 Install Caddy for Reality masking"
-    printf "   ${CYAN}%-12s${NC} %s\n" "up" "▶️  Start Caddy services"
-    printf "   ${CYAN}%-12s${NC} %s\n" "down" "⏹️  Stop Caddy services"
-    printf "   ${CYAN}%-12s${NC} %s\n" "restart" "🔄 Restart Caddy services"
+    printf "   ${CYAN}%-12s${NC} %s\n" "install" "🚀 Install $server_name for Reality masking"
+    printf "   ${CYAN}%-12s${NC} %s\n" "up" "▶️  Start $server_name services"
+    printf "   ${CYAN}%-12s${NC} %s\n" "down" "⏹️  Stop $server_name services"
+    printf "   ${CYAN}%-12s${NC} %s\n" "restart" "🔄 Restart $server_name services"
     printf "   ${CYAN}%-12s${NC} %s\n" "status" "📊 Show service status"
     printf "   ${CYAN}%-12s${NC} %s\n" "logs" "📝 Show service logs"
     printf "   ${CYAN}%-12s${NC} %s\n" "logs-size" "📊 Show log sizes"
@@ -1766,13 +2700,16 @@ show_help() {
     printf "   ${CYAN}%-12s${NC} %s\n" "edit" "✏️  Edit configuration files"
     printf "   ${CYAN}%-12s${NC} %s\n" "uninstall" "🗑️  Remove Caddy installation"
     printf "   ${CYAN}%-12s${NC} %s\n" "template" "🎨 Manage website templates"
+    printf "   ${CYAN}%-12s${NC} %s\n" "renew-ssl" "🔐 Renew SSL certificate (Nginx)"
     printf "   ${CYAN}%-12s${NC} %s\n" "menu" "📋 Show interactive menu"
     printf "   ${CYAN}%-12s${NC} %s\n" "update" "🔄 Check for script updates"
     echo
     echo -e "${WHITE}Examples:${NC}"
     echo -e "  ${GRAY}sudo $APP_NAME install${NC}"
+    echo -e "  ${GRAY}sudo $APP_NAME --nginx install${NC}"
     echo -e "  ${GRAY}sudo $APP_NAME status${NC}"
     echo -e "  ${GRAY}sudo $APP_NAME logs${NC}"
+    echo -e "  ${GRAY}sudo $APP_NAME renew-ssl${NC}"
     echo
     echo -e "${WHITE}For more information, visit:${NC}"
     echo -e "  ${BLUE}https://github.com/remnawave/${NC}"
@@ -2060,7 +2997,7 @@ EOF
     echo -e "${GRAY}• Use different website templates to avoid detection${NC}"
     echo -e "${GRAY}• Keep your domain's DNS properly configured${NC}"
     echo -e "${GRAY}• Monitor logs regularly for any issues${NC}"
-    echo -e "${GRAY}• Update both Caddy and Xray regularly${NC}"
+    echo -e "${GRAY}• Update both web server and Xray regularly${NC}"
     echo
 
 
@@ -2073,9 +3010,16 @@ EOF
 main_menu() {    # Auto-check for updates on first run
     # check_for_updates_silent
     
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
     while true; do
         clear
-        echo -e "${WHITE}🔗 Caddy for Reality Selfsteal${NC}"
+        echo -e "${WHITE}🔗 $server_name for Reality Selfsteal${NC}"
         echo -e "${GRAY}Management System v$SCRIPT_VERSION${NC}"
         echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
         echo
@@ -2142,6 +3086,7 @@ main_menu() {    # Auto-check for updates on first run
                 ;;
         esac
         
+        printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Server:" "$server_name"
         if [ -n "$domain" ]; then
             printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
         fi
@@ -2160,7 +3105,7 @@ main_menu() {    # Auto-check for updates on first run
         echo
 
         echo -e "${WHITE}🔧 Service Management:${NC}"
-        echo -e "   ${WHITE}1)${NC} 🚀 Install Caddy"
+        echo -e "   ${WHITE}1)${NC} 🚀 Install $server_name"
         echo -e "   ${WHITE}2)${NC} ▶️  Start services"
         echo -e "   ${WHITE}3)${NC} ⏹️  Stop services"
         echo -e "   ${WHITE}4)${NC} 🔄 Restart services"
@@ -2177,30 +3122,35 @@ main_menu() {    # Auto-check for updates on first run
         echo -e "   ${WHITE}9)${NC} 📊 Log sizes"
         echo -e "   ${WHITE}10)${NC} 🧹 Clean logs"
         echo -e "   ${WHITE}11)${NC} ✏️  Edit configuration"
+        
+        # Show SSL renewal option only for Nginx
+        if [ "$WEB_SERVER" = "nginx" ]; then
+            echo -e "   ${WHITE}12)${NC} 🔐 Renew SSL certificate"
+        fi
         echo
 
         echo -e "${WHITE}🗑️  Maintenance:${NC}"
-        echo -e "   ${WHITE}12)${NC} 🗑️  Uninstall Caddy"
-        echo -e "   ${WHITE}13)${NC} 🔄 Check for updates"
+        echo -e "   ${WHITE}13)${NC} 🗑️  Uninstall $server_name"
+        echo -e "   ${WHITE}14)${NC} 🔄 Check for updates"
         echo
         echo -e "   ${GRAY}0)${NC} ⬅️  Exit"
         echo
         case "$menu_status" in
             "Not installed")
-                echo -e "${BLUE}💡 Tip: Start with option 1 to install Caddy${NC}"
+                echo -e "${BLUE}💡 Tip: Start with option 1 to install $server_name${NC}"
                 ;;
             "Stopped"|"Not running")
                 echo -e "${BLUE}💡 Tip: Use option 2 to start services${NC}"
                 ;;
             "Error (Restarting)")
-                echo -e "${BLUE}💡 Tip: Check logs (7) to diagnose issues${NC}"
+                echo -e "${BLUE}💡 Tip: Check logs (8) to diagnose issues${NC}"
                 ;;
             "Running")
                 echo -e "${BLUE}💡 Tip: Use option 6 to customize website templates${NC}"
                 ;;
         esac
 
-        read -p "$(echo -e "${WHITE}Select option [0-13]:${NC} ")" choice
+        read -p "$(echo -e "${WHITE}Select option [0-14]:${NC} ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -2214,8 +3164,17 @@ main_menu() {    # Auto-check for updates on first run
             9) logs_size_command; read -p "Press Enter to continue..." ;;
             10) clean_logs_command; read -p "Press Enter to continue..." ;;
             11) edit_command; read -p "Press Enter to continue..." ;;
-            12) uninstall_command; read -p "Press Enter to continue..." ;;
-            13) update_command; read -p "Press Enter to continue..." ;;
+            12) 
+                if [ "$WEB_SERVER" = "nginx" ]; then
+                    renew_ssl_command
+                else
+                    echo -e "${YELLOW}ℹ️  SSL renewal is only available for Nginx installations${NC}"
+                    echo -e "${GRAY}   Caddy manages SSL certificates automatically${NC}"
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            13) uninstall_command; read -p "Press Enter to continue..." ;;
+            14) update_command; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "${RED}❌ Invalid option!${NC}"
@@ -2224,6 +3183,12 @@ main_menu() {    # Auto-check for updates on first run
         esac
     done
 }
+
+# Auto-detect existing installation if server wasn't specified via command line
+# This allows running commands on existing installation without --nginx/--caddy flag
+if [ "$COMMAND" != "install" ] && [ -z "$WEB_SERVER" ]; then
+    detect_existing_installation
+fi
 
 # Main execution
 case "$COMMAND" in
@@ -2238,14 +3203,21 @@ case "$COMMAND" in
     edit) edit_command ;;
     uninstall) uninstall_command ;;
     template) template_command ;;
+    renew-ssl) renew_ssl_command ;;
     guide) guide_command ;;
     menu) main_menu ;;
     update) update_command ;;
     check-update) update_command ;;
     help) show_help ;;
-    --version|-v) echo "Caddy Selfsteal Management Script v$SCRIPT_VERSION" ;;
+    --version|-v) echo "Selfsteal Management Script v$SCRIPT_VERSION" ;;
     --help|-h) show_help ;;
-    "") main_menu ;;
+    "") 
+        # For menu mode without explicit server, try to detect existing installation
+        if [ -z "$WEB_SERVER" ]; then
+            detect_existing_installation
+        fi
+        main_menu 
+        ;;
     *) 
         echo -e "${RED}❌ Unknown command: $COMMAND${NC}"
         echo "Use '$APP_NAME --help' for usage information."
