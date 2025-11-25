@@ -168,7 +168,6 @@ install_acme() {
 issue_ssl_certificate() {
     local domain="$1"
     local ssl_dir="$2"
-    local webroot="${3:-}"
     
     log_info "Requesting SSL certificate for $domain..."
     
@@ -179,46 +178,50 @@ issue_ssl_certificate() {
         fi
     fi
     
+    # Install socat if not available (required for standalone mode)
+    if ! command -v socat >/dev/null 2>&1; then
+        log_info "Installing socat (required for certificate validation)..."
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq && apt-get install -y -qq socat >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y -q socat >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q socat >/dev/null 2>&1
+        elif command -v apk >/dev/null 2>&1; then
+            apk add --quiet socat >/dev/null 2>&1
+        fi
+        
+        if command -v socat >/dev/null 2>&1; then
+            log_success "socat installed"
+        else
+            log_error "Failed to install socat"
+            return 1
+        fi
+    fi
+    
     # Create SSL directory
     create_dir_safe "$ssl_dir" || return 1
     
-    # Stop any existing service on port 80 temporarily
-    local port80_in_use=false
+    # Check if port 80 is available
     if ss -tlnp 2>/dev/null | grep -q ":80 "; then
-        port80_in_use=true
-        log_warning "Port 80 is in use, attempting to use it anyway..."
+        log_warning "Port 80 is in use. Please stop the service using it temporarily."
+        log_info "You can run: docker stop \$(docker ps -q) or systemctl stop nginx/apache2"
+        return 1
     fi
     
-    # Try standalone mode first (faster, no webroot needed)
-    log_info "Attempting standalone mode for certificate..."
+    # Issue certificate using standalone mode
+    log_info "Issuing certificate via standalone mode..."
     
     if "$ACME_HOME/acme.sh" --issue \
         --standalone \
         -d "$domain" \
         --keylength 2048 \
         --server letsencrypt \
-        --force 2>&1; then
+        --force >/dev/null 2>&1; then
         
-        log_success "Certificate issued successfully via standalone mode"
-        
-    elif [ -n "$webroot" ] && [ -d "$webroot" ]; then
-        # Fallback to webroot mode
-        log_info "Standalone failed, trying webroot mode..."
-        
-        if "$ACME_HOME/acme.sh" --issue \
-            --webroot "$webroot" \
-            -d "$domain" \
-            --keylength 2048 \
-            --server letsencrypt \
-            --force 2>&1; then
-            
-            log_success "Certificate issued successfully via webroot mode"
-        else
-            log_error "Failed to issue certificate"
-            return 1
-        fi
+        log_success "Certificate issued successfully"
     else
-        log_error "Failed to issue certificate via standalone mode"
+        log_error "Failed to issue certificate"
         return 1
     fi
     
@@ -228,7 +231,7 @@ issue_ssl_certificate() {
     if "$ACME_HOME/acme.sh" --install-cert -d "$domain" \
         --key-file "$ssl_dir/private.key" \
         --fullchain-file "$ssl_dir/fullchain.crt" \
-        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" 2>&1; then
+        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" >/dev/null 2>&1; then
         
         log_success "Certificate installed successfully"
         
