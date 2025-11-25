@@ -463,6 +463,29 @@ check_running_as_root() {
 }
 
 # Check system requirements
+# Install Docker using official script
+install_docker() {
+    log_info "Installing Docker..."
+    echo -e "${CYAN}📦 Installing Docker...${NC}"
+    
+    if curl -fsSL https://get.docker.com | sh; then
+        log_success "Docker installed successfully"
+        echo -e "${GREEN}✅ Docker installed successfully${NC}"
+        
+        # Start and enable Docker service
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl start docker 2>/dev/null || true
+            systemctl enable docker 2>/dev/null || true
+        fi
+        
+        return 0
+    else
+        log_error "Failed to install Docker"
+        echo -e "${RED}❌ Failed to install Docker${NC}"
+        return 1
+    fi
+}
+
 check_system_requirements() {
     echo -e "${WHITE}🔍 Checking System Requirements${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
@@ -472,18 +495,42 @@ check_system_requirements() {
 
     # Check Docker
     if ! command -v docker >/dev/null 2>&1; then
-        echo -e "${RED}❌ Docker is not installed${NC}"
-        echo -e "${GRAY}   Please install Docker first${NC}"
-        requirements_met=false
+        echo -e "${YELLOW}⚠️  Docker is not installed${NC}"
+        echo -e "${CYAN}   Installing Docker automatically...${NC}"
+        echo
+        
+        if install_docker; then
+            local docker_version=$(docker --version | cut -d' ' -f3 | tr -d ',')
+            echo -e "${GREEN}✅ Docker installed: $docker_version${NC}"
+        else
+            echo -e "${RED}❌ Failed to install Docker${NC}"
+            echo -e "${GRAY}   Please install Docker manually: curl -fsSL https://get.docker.com | sh${NC}"
+            requirements_met=false
+        fi
     else
         local docker_version=$(docker --version | cut -d' ' -f3 | tr -d ',')
         echo -e "${GREEN}✅ Docker installed: $docker_version${NC}"
     fi
 
-    # Check Docker Compose
+    # Check Docker Compose (Docker 20.10+ includes compose as plugin)
     if ! docker compose version >/dev/null 2>&1; then
-        echo -e "${RED}❌ Docker Compose V2 is not available${NC}"
-        requirements_met=false
+        echo -e "${YELLOW}⚠️  Docker Compose V2 is not available${NC}"
+        echo -e "${GRAY}   Note: Docker Compose V2 is included with modern Docker installations${NC}"
+        
+        # If Docker was just installed, it should have compose
+        if command -v docker >/dev/null 2>&1; then
+            echo -e "${GRAY}   Checking again after Docker installation...${NC}"
+            sleep 1
+            if docker compose version >/dev/null 2>&1; then
+                local compose_version=$(docker compose version --short 2>/dev/null || echo "unknown")
+                echo -e "${GREEN}✅ Docker Compose V2: $compose_version${NC}"
+            else
+                echo -e "${RED}❌ Docker Compose V2 is still not available${NC}"
+                requirements_met=false
+            fi
+        else
+            requirements_met=false
+        fi
     else
         local compose_version=$(docker compose version --short 2>/dev/null || echo "unknown")
         echo -e "${GREEN}✅ Docker Compose V2: $compose_version${NC}"
