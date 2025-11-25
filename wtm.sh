@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # WARP & Tor Network Setup Script
 # This script installs and manages Cloudflare WARP and Tor connections
-# VERSION=1.2.1
+# VERSION=1.2.2
 
 set -e
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.2.2"
 
 # Script URL for updates
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/wtm.sh"
@@ -1068,7 +1068,7 @@ show_main_menu() {
     echo -e "\033[1;37m📡 WARP Status:\033[0m"
     case $warp_status in
         "running")
-            echo -e "${status_color}✅ RUNNING\033[0m"
+            echo -e "${status_color_warp}✅ RUNNING\033[0m"
             local warp_memory=$(get_service_memory "$WARP_SERVICE")
             printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Memory:" "$warp_memory"
             
@@ -1085,11 +1085,11 @@ show_main_menu() {
             fi
             ;;
         "installed")
-            echo -e "${status_color}⚠️  INSTALLED BUT STOPPED\033[0m"
+            echo -e "${status_color_warp}⚠️  INSTALLED BUT STOPPED\033[0m"
             echo -e "\033[38;5;244m   Use WARP menu to start service\033[0m"
             ;;
         "not_installed")
-            echo -e "${status_color}📦 NOT INSTALLED\033[0m"
+            echo -e "${status_color_warp}📦 NOT INSTALLED\033[0m"
             echo -e "\033[38;5;244m   Use WARP menu to install\033[0m"
             ;;
     esac
@@ -1100,7 +1100,7 @@ show_main_menu() {
     echo -e "\033[1;37m🧅 Tor Status:\033[0m"
     case $tor_status in
         "running")
-            echo -e "${status_color}✅ RUNNING\033[0m"
+            echo -e "${status_color_tor}✅ RUNNING\033[0m"
             local tor_memory=$(get_service_memory "$TOR_SERVICE")
             printf "   \033[38;5;15m%-12s\033[0m \033[38;5;250m%s\033[0m\n" "Memory:" "$tor_memory"
             
@@ -1119,11 +1119,11 @@ show_main_menu() {
             fi
             ;;
         "installed")
-            echo -e "${status_color}⚠️  INSTALLED BUT STOPPED\033[0m"
+            echo -e "${status_color_tor}⚠️  INSTALLED BUT STOPPED\033[0m"
             echo -e "\033[38;5;244m   Use Tor menu to start service\033[0m"
             ;;
         "not_installed")
-            echo -e "${status_color}📦 NOT INSTALLED\033[0m"
+            echo -e "${status_color_tor}📦 NOT INSTALLED\033[0m"
             echo -e "\033[38;5;244m   Use Tor menu to install\033[0m"
             ;;
     esac
@@ -1745,6 +1745,12 @@ remove_tor() {
     uninstall_tor
 }
 
+# ===== XRAY EXAMPLES FUNCTION =====
+
+show_xray_examples() {
+    show_xray_config_page
+}
+
 # ===== WARP MEMORY DIAGNOSTIC FUNCTION =====
 
 get_warp_memory_detailed() {
@@ -1950,6 +1956,14 @@ main() {
                 ;;
             status)
                 show_status
+                ;;
+            logs)
+                # Поддержка разных форматов: wtm logs, wtm logs warp, wtm logs tor
+                if [ -n "$1" ]; then
+                    show_logs "$1"
+                else
+                    show_logs warp
+                fi
                 ;;
             logs-warp)
                 show_logs warp
