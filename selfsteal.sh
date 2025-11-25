@@ -164,7 +164,49 @@ install_acme() {
     return 1
 }
 
-# Issue SSL certificate for domain
+# Check if port is open in firewall
+check_firewall_port() {
+    local port="$1"
+    local firewall_issues=""
+    
+    # Check UFW
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        if ! ufw status | grep -qE "^$port(/tcp)?\s+ALLOW"; then
+            firewall_issues="ufw"
+            log_warning "UFW is active and port $port may be blocked"
+            log_info "To open: ufw allow $port/tcp"
+        fi
+    fi
+    
+    # Check firewalld
+    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+        if ! firewall-cmd --list-ports 2>/dev/null | grep -qE "$port/tcp"; then
+            [ -n "$firewall_issues" ] && firewall_issues="$firewall_issues, "
+            firewall_issues="${firewall_issues}firewalld"
+            log_warning "firewalld is active and port $port may be blocked"
+            log_info "To open: firewall-cmd --add-port=$port/tcp --permanent && firewall-cmd --reload"
+        fi
+    fi
+    
+    # Check iptables (basic check)
+    if command -v iptables >/dev/null 2>&1; then
+        if iptables -L INPUT -n 2>/dev/null | grep -q "DROP\|REJECT"; then
+            if ! iptables -L INPUT -n 2>/dev/null | grep -qE "dpt:$port\s+.*ACCEPT"; then
+                [ -n "$firewall_issues" ] && firewall_issues="$firewall_issues, "
+                firewall_issues="${firewall_issues}iptables"
+                log_warning "iptables may be blocking port $port"
+                log_info "To open: iptables -I INPUT -p tcp --dport $port -j ACCEPT"
+            fi
+        fi
+    fi
+    
+    if [ -n "$firewall_issues" ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Issue SSL certificate for domain using TLS-ALPN-01 on port 8443
 issue_ssl_certificate() {
     local domain="$1"
     local ssl_dir="$2"
@@ -178,7 +220,7 @@ issue_ssl_certificate() {
         fi
     fi
     
-    # Install socat if not available (required for standalone mode)
+    # Install socat if not available (required for standalone/alpn mode)
     if ! command -v socat >/dev/null 2>&1; then
         log_info "Installing socat (required for certificate validation)..."
         if command -v apt-get >/dev/null 2>&1; then
@@ -202,38 +244,39 @@ issue_ssl_certificate() {
     # Create SSL directory
     create_dir_safe "$ssl_dir" || return 1
     
-    # Check if port 80 is available
-    if ss -tlnp 2>/dev/null | grep -q ":80 "; then
-        log_warning "Port 80 is in use. Please stop the service using it temporarily."
-        log_info "You can run: docker stop \$(docker ps -q) or systemctl stop nginx/apache2"
+    # Check if port 8443 is available (used for TLS-ALPN challenge)
+    if ss -tlnp 2>/dev/null | grep -q ":8443 "; then
+        log_warning "Port 8443 is in use. Please stop the service using it temporarily."
         return 1
     fi
     
-    # Issue certificate using standalone mode
-    log_info "Issuing certificate via standalone mode..."
+    # Check firewall for port 8443
+    if ! check_firewall_port 8443; then
+        echo
+        echo -e "${YELLOW}⚠️  Firewall may be blocking port 8443${NC}"
+        echo -ne "${CYAN}Continue anyway? [y/N]: ${NC}"
+        read -r continue_anyway
+        if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+            log_info "Please open port 8443 in firewall and try again"
+            return 1
+        fi
+    fi
+    
+    # Issue and install certificate using TLS-ALPN-01 on port 8443
+    # This avoids needing port 80 open
+    log_info "Issuing certificate via TLS-ALPN on port 8443..."
     
     if "$ACME_HOME/acme.sh" --issue \
-        --standalone \
+        --alpn \
+        --tlsport 8443 \
         -d "$domain" \
-        --keylength 2048 \
+        --key-file "$ssl_dir/private.key" \
+        --fullchain-file "$ssl_dir/fullchain.crt" \
+        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
         --server letsencrypt \
         --force >/dev/null 2>&1; then
         
-        log_success "Certificate issued successfully"
-    else
-        log_error "Failed to issue certificate"
-        return 1
-    fi
-    
-    # Install certificate to target directory
-    log_info "Installing certificate to $ssl_dir..."
-    
-    if "$ACME_HOME/acme.sh" --install-cert -d "$domain" \
-        --key-file "$ssl_dir/private.key" \
-        --fullchain-file "$ssl_dir/fullchain.crt" \
-        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" >/dev/null 2>&1; then
-        
-        log_success "Certificate installed successfully"
+        log_success "Certificate issued and installed successfully"
         
         # Set proper permissions
         chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
@@ -241,7 +284,7 @@ issue_ssl_certificate() {
         
         return 0
     else
-        log_error "Failed to install certificate"
+        log_error "Failed to issue certificate"
         return 1
     fi
 }
