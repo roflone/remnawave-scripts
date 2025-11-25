@@ -25,6 +25,8 @@ SCRIPT_URL="$UPDATE_URL"
 # ACME Configuration
 ACME_HOME="$HOME/.acme.sh"
 ACME_INSTALL_URL="https://get.acme.sh"
+ACME_PORT=""  # Will be auto-detected or set via --acme-port
+ACME_FALLBACK_PORTS=(8443 9443 10443 18443 28443)
 
 # Web Server Selection (caddy or nginx)
 WEB_SERVER="caddy"
@@ -211,7 +213,27 @@ check_firewall_port() {
     return 0
 }
 
-# Issue SSL certificate for domain using TLS-ALPN on port 8443
+# Find available port for ACME TLS-ALPN challenge
+find_available_acme_port() {
+    # If port was explicitly set via --acme-port, use it
+    if [ -n "$ACME_PORT" ]; then
+        echo "$ACME_PORT"
+        return 0
+    fi
+    
+    # Try fallback ports
+    for port in "${ACME_FALLBACK_PORTS[@]}"; do
+        if ! ss -tlnp 2>/dev/null | grep -q ":$port "; then
+            echo "$port"
+            return 0
+        fi
+    done
+    
+    # No available port found
+    return 1
+}
+
+# Issue SSL certificate for domain using TLS-ALPN
 issue_ssl_certificate() {
     local domain="$1"
     local ssl_dir="$2"
@@ -249,29 +271,57 @@ issue_ssl_certificate() {
     # Create SSL directory
     create_dir_safe "$ssl_dir" || return 1
     
-    # Check if port 8443 is available
-    if ss -tlnp 2>/dev/null | grep -q ":8443 "; then
-        log_warning "Port 8443 is currently in use"
-        echo -e "${GRAY}Please temporarily stop the service on port 8443${NC}"
-        return 1
-    fi
+    # Find available port for ACME
+    local acme_port
+    acme_port=$(find_available_acme_port)
     
-    # Check firewall for port 8443
-    if ! check_firewall_port 8443; then
+    if [ -z "$acme_port" ]; then
+        log_error "No available port found for ACME TLS-ALPN challenge"
+        echo -e "${YELLOW}All fallback ports are in use: ${ACME_FALLBACK_PORTS[*]}${NC}"
+        echo -e "${GRAY}You can specify a custom port with: --acme-port <port>${NC}"
         echo
-        echo -e "${YELLOW}⚠️  Firewall may be blocking port 8443${NC}"
-        echo -ne "${CYAN}Continue anyway? [y/N]: ${NC}"
-        read -r continue_anyway
-        if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
-            log_info "Please open port 8443 in firewall and try again"
+        
+        # Show what's using the ports
+        echo -e "${WHITE}Port usage:${NC}"
+        for port in "${ACME_FALLBACK_PORTS[@]}"; do
+            local process_info
+            process_info=$(ss -tlnp 2>/dev/null | grep ":$port " | head -1)
+            if [ -n "$process_info" ]; then
+                echo -e "${RED}   Port $port: IN USE${NC}"
+                echo -e "${GRAY}   $process_info${NC}"
+            else
+                echo -e "${GREEN}   Port $port: Available${NC}"
+            fi
+        done
+        echo
+        
+        # Ask user for custom port
+        read -p "Enter custom port for ACME (or press Enter to cancel): " -r custom_port
+        if [ -n "$custom_port" ] && [[ "$custom_port" =~ ^[0-9]+$ ]]; then
+            if ss -tlnp 2>/dev/null | grep -q ":$custom_port "; then
+                log_error "Port $custom_port is also in use"
+                return 1
+            fi
+            acme_port="$custom_port"
+        else
             return 1
         fi
     fi
     
-    # Issue certificate using standalone + alpn on port 8443
-    # Command format from working example:
-    # acme.sh --issue --standalone -d 'DOMAIN' --key-file X --fullchain-file Y --alpn --tlsport 8443
-    log_info "Issuing certificate via TLS-ALPN on port 8443..."
+    # Check if the selected port needs firewall opening
+    if ! check_firewall_port "$acme_port"; then
+        echo
+        echo -e "${YELLOW}⚠️  Firewall may be blocking port $acme_port${NC}"
+        echo -ne "${CYAN}Continue anyway? [y/N]: ${NC}"
+        read -r continue_anyway
+        if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+            log_info "Please open port $acme_port in firewall and try again"
+            return 1
+        fi
+    fi
+    
+    # Issue certificate using standalone + alpn
+    log_info "Issuing certificate via TLS-ALPN on port $acme_port..."
     
     if "$ACME_HOME/acme.sh" --issue \
         --standalone \
@@ -279,12 +329,12 @@ issue_ssl_certificate() {
         --key-file "$ssl_dir/private.key" \
         --fullchain-file "$ssl_dir/fullchain.crt" \
         --alpn \
-        --tlsport 8443 \
+        --tlsport "$acme_port" \
         --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
         --server letsencrypt \
         --force >/dev/null 2>&1; then
         
-        log_success "Certificate issued and installed successfully"
+        log_success "Certificate issued and installed successfully (port $acme_port)"
         
         # Set proper permissions
         chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
@@ -292,7 +342,39 @@ issue_ssl_certificate() {
         
         return 0
     else
-        log_error "Failed to issue certificate"
+        log_error "Failed to issue certificate on port $acme_port"
+        
+        # Try next available port if we haven't exhausted all options
+        if [ -z "$ACME_PORT" ]; then
+            local tried_port="$acme_port"
+            for fallback_port in "${ACME_FALLBACK_PORTS[@]}"; do
+                if [ "$fallback_port" = "$tried_port" ]; then
+                    continue
+                fi
+                if ! ss -tlnp 2>/dev/null | grep -q ":$fallback_port "; then
+                    echo
+                    log_warning "Trying fallback port $fallback_port..."
+                    
+                    if "$ACME_HOME/acme.sh" --issue \
+                        --standalone \
+                        -d "$domain" \
+                        --key-file "$ssl_dir/private.key" \
+                        --fullchain-file "$ssl_dir/fullchain.crt" \
+                        --alpn \
+                        --tlsport "$fallback_port" \
+                        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
+                        --server letsencrypt \
+                        --force >/dev/null 2>&1; then
+                        
+                        log_success "Certificate issued successfully on fallback port $fallback_port"
+                        chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
+                        chmod 644 "$ssl_dir/fullchain.crt" 2>/dev/null || true
+                        return 0
+                    fi
+                fi
+            done
+        fi
+        
         return 1
     fi
 }
@@ -455,6 +537,23 @@ while [ $# -gt 0 ]; do
         --caddy)
             WEB_SERVER="caddy"
             WEB_SERVER_EXPLICIT=true
+            shift
+            ;;
+        --acme-port)
+            if [ -n "$2" ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+                ACME_PORT="$2"
+                shift 2
+            else
+                log_error "--acme-port requires a valid port number"
+                exit 1
+            fi
+            ;;
+        --acme-port=*)
+            ACME_PORT="${1#*=}"
+            if ! [[ "$ACME_PORT" =~ ^[0-9]+$ ]]; then
+                log_error "--acme-port requires a valid port number"
+                exit 1
+            fi
             shift
             ;;
         -*)
@@ -996,26 +1095,10 @@ EOF
     echo
     
     log_info "Obtaining SSL certificate from Let's Encrypt..."
-    log_info "Using TLS-ALPN challenge on port 8443"
     echo
     
-    # Check port 8443 availability for ACME challenge
-    if ss -tlnp 2>/dev/null | grep -q ":8443 "; then
-        log_warning "Port 8443 is currently in use"
-        local port8443_process=$(ss -tlnp 2>/dev/null | grep ":8443 " | head -1)
-        echo -e "${GRAY}   Process: $port8443_process${NC}"
-        echo
-        echo -e "${YELLOW}Please stop the service using port 8443 temporarily${NC}"
-        echo -e "${GRAY}Port 8443 is only needed during certificate issuance${NC}"
-        echo
-        read -p "Continue when port 8443 is free? [Y/n]: " -r continue_port
-        if [[ $continue_port =~ ^[Nn]$ ]]; then
-            return 1
-        fi
-    fi
-    
     # Issue certificate
-    if issue_ssl_certificate "$domain" "$APP_DIR/ssl" "$HTML_DIR"; then
+    if issue_ssl_certificate "$domain" "$APP_DIR/ssl"; then
         log_success "SSL certificate obtained successfully"
         
         # Setup auto-renewal
@@ -2856,8 +2939,9 @@ show_help() {
     echo -e "  ${CYAN}$APP_NAME${NC} [${GRAY}command${NC}] [${GRAY}--nginx|--caddy${NC}]"
     echo
     echo -e "${WHITE}Server Options:${NC}"
-    printf "   ${CYAN}%-12s${NC} %s\n" "--nginx" "Use Nginx as web server"
-    printf "   ${CYAN}%-12s${NC} %s\n" "--caddy" "Use Caddy as web server (default)"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--nginx" "Use Nginx as web server"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--caddy" "Use Caddy as web server (default)"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--acme-port <port>" "Custom port for ACME TLS-ALPN (Nginx only)"
     echo
     echo -e "${WHITE}Commands:${NC}"
     printf "   ${CYAN}%-12s${NC} %s\n" "install" "🚀 Install $server_name for Reality masking"

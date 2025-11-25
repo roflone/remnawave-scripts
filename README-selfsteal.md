@@ -1,5 +1,7 @@
 # Selfsteal - Caddy/Nginx for Reality
 
+> 🌐 **Проект [gig.ovh](https://gig.ovh)** | Автор: **[DigneZzZ](https://github.com/DigneZzZ)**
+
 Скрипт для автоматической установки и управления веб-сервером (Caddy или Nginx) для маскировки трафика Reality в связке с Xray. Порт 443 остается свободным для Xray.
 
 ![изображение](https://github.com/user-attachments/assets/fb82bb59-c6f5-48f4-a6a8-25540be6c03e)
@@ -26,7 +28,7 @@
 - **Домен**: Настроенный домен, указывающий на IP сервера.
 - **Порты**:
   - **Caddy**: Порт 80 (для редиректов), 9443 (для сайта)
-  - **Nginx**: Порт 8443 (временно для SSL), 9443 (для сайта)
+  - **Nginx**: Порт для ACME TLS-ALPN (по умолчанию 8443, с автофолбэком), 9443 (для сайта)
   - Порт 443 остаётся свободным для Xray
 
 ## Установка
@@ -43,6 +45,11 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx install
 ```
 
+**Nginx с кастомным портом ACME:**
+```bash
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --acme-port 15443 install
+```
+
 ### Ручная установка
 
 ```bash
@@ -53,6 +60,7 @@ sudo bash -c "curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-sc
 ```bash
 selfsteal install          # Caddy
 selfsteal --nginx install  # Nginx
+selfsteal --nginx --acme-port 15443 install  # Nginx с кастомным портом ACME
 ```
 
 ## Использование
@@ -82,17 +90,29 @@ selfsteal help         # Справка
 ```bash
 selfsteal --caddy install   # Caddy (по умолчанию)
 selfsteal --nginx install   # Nginx с ACME SSL
+selfsteal --nginx --acme-port 15443 install  # Nginx с кастомным портом для ACME
 ```
+
+### Опция --acme-port (только для Nginx)
+
+При установке Nginx для получения SSL-сертификата используется ACME TLS-ALPN challenge. По умолчанию скрипт пробует порты в следующем порядке: **8443 → 9443 → 10443 → 18443 → 28443**.
+
+Если все порты заняты или нужен конкретный порт:
+```bash
+selfsteal --nginx --acme-port 12345 install
+```
+
+> ⚠️ Порт ACME нужен только временно во время получения/обновления сертификата.
 
 ## Сравнение Caddy vs Nginx
 
 | Функция | Caddy | Nginx |
 |---------|-------|-------|
-| SSL сертификаты | Автоматически (внутренние) | ACME (Let's Encrypt) через порт 8443 |
+| SSL сертификаты | Автоматически (внутренние) | ACME (Let's Encrypt) с автофолбэком портов |
 | Конфигурация | Caddyfile | nginx.conf + conf.d/ |
 | Путь установки | `/opt/caddy` | `/opt/nginx-selfsteal` |
 | Обновление SSL | Автоматически | `selfsteal renew-ssl` |
-| Порт для SSL | 80 (ACME HTTP) | 8443 (ACME TLS-ALPN) |
+| Порт для SSL | 80 (ACME HTTP) | 8443/9443/10443/18443/28443 (ACME TLS-ALPN) или `--acme-port` |
 
 ## Шаблоны сайтов
 
@@ -303,6 +323,8 @@ MIT License. Подробности в файле [LICENSE](LICENSE).
 
 ## Контакты
 
+- **Проект**: [gig.ovh](https://gig.ovh)
+- **Автор**: [DigneZzZ](https://github.com/DigneZzZ)
 - **Репозиторий**: [github.com/DigneZzZ/remnawave-scripts](https://github.com/DigneZzZ/remnawave-scripts)
 - **Issues**: Открывайте issue на GitHub для вопросов и предложений.
 
