@@ -206,7 +206,7 @@ check_firewall_port() {
     return 0
 }
 
-# Issue SSL certificate for domain using TLS-ALPN-01 on port 8443
+# Issue SSL certificate for domain using TLS-ALPN on port 8443
 issue_ssl_certificate() {
     local domain="$1"
     local ssl_dir="$2"
@@ -220,7 +220,7 @@ issue_ssl_certificate() {
         fi
     fi
     
-    # Install socat if not available (required for standalone/alpn mode)
+    # Install socat if not available (required for standalone mode)
     if ! command -v socat >/dev/null 2>&1; then
         log_info "Installing socat (required for certificate validation)..."
         if command -v apt-get >/dev/null 2>&1; then
@@ -244,9 +244,10 @@ issue_ssl_certificate() {
     # Create SSL directory
     create_dir_safe "$ssl_dir" || return 1
     
-    # Check if port 8443 is available (used for TLS-ALPN challenge)
+    # Check if port 8443 is available
     if ss -tlnp 2>/dev/null | grep -q ":8443 "; then
-        log_warning "Port 8443 is in use. Please stop the service using it temporarily."
+        log_warning "Port 8443 is currently in use"
+        echo -e "${GRAY}Please temporarily stop the service on port 8443${NC}"
         return 1
     fi
     
@@ -262,16 +263,18 @@ issue_ssl_certificate() {
         fi
     fi
     
-    # Issue and install certificate using TLS-ALPN-01 on port 8443
-    # This avoids needing port 80 open
+    # Issue certificate using standalone + alpn on port 8443
+    # Command format from working example:
+    # acme.sh --issue --standalone -d 'DOMAIN' --key-file X --fullchain-file Y --alpn --tlsport 8443
     log_info "Issuing certificate via TLS-ALPN on port 8443..."
     
     if "$ACME_HOME/acme.sh" --issue \
-        --alpn \
-        --tlsport 8443 \
+        --standalone \
         -d "$domain" \
         --key-file "$ssl_dir/private.key" \
         --fullchain-file "$ssl_dir/fullchain.crt" \
+        --alpn \
+        --tlsport 8443 \
         --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
         --server letsencrypt \
         --force 2>&1; then
