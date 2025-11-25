@@ -3,7 +3,7 @@
 # This script installs and manages web server for Reality traffic masking
 # Supports: Caddy (default) and Nginx (--nginx flag)
 # ACME SSL certificates via acme.sh for Nginx
-# VERSION=2.4.0
+# VERSION=2.4.2
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -13,7 +13,7 @@ fi
 set -euo pipefail
 
 # Script Configuration
-SCRIPT_VERSION="2.4.0"
+SCRIPT_VERSION="2.4.2"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
