@@ -24,6 +24,7 @@ ACME_INSTALL_URL="https://get.acme.sh"
 
 # Web Server Selection (caddy or nginx)
 WEB_SERVER="caddy"
+WEB_SERVER_EXPLICIT=false
 WEB_SERVER_CONFIG_FILE=""
 
 # Docker Configuration (will be set based on web server)
@@ -277,7 +278,7 @@ issue_ssl_certificate() {
         --tlsport 8443 \
         --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
         --server letsencrypt \
-        --force 2>&1; then
+        --force >/dev/null 2>&1; then
         
         log_success "Certificate issued and installed successfully"
         
@@ -444,10 +445,12 @@ while [ $# -gt 0 ]; do
             ;;
         --nginx)
             WEB_SERVER="nginx"
+            WEB_SERVER_EXPLICIT=true
             shift
             ;;
         --caddy)
             WEB_SERVER="caddy"
+            WEB_SERVER_EXPLICIT=true
             shift
             ;;
         -*)
@@ -1135,8 +1138,9 @@ server {
 
 # HTTPS server for public access
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name $domain;
 
     # SSL Configuration with ACME certificates
@@ -1149,9 +1153,7 @@ server {
     ssl_session_timeout 1d;
     ssl_session_tickets off;
     
-    # OCSP Stapling
-    ssl_stapling on;
-    ssl_stapling_verify on;
+    # Resolver for upstream
     resolver 8.8.8.8 1.1.1.1 valid=300s;
     resolver_timeout 5s;
 
@@ -3294,7 +3296,7 @@ main_menu() {    # Auto-check for updates on first run
 
 # Auto-detect existing installation if server wasn't specified via command line
 # This allows running commands on existing installation without --nginx/--caddy flag
-if [ "$COMMAND" != "install" ] && [ -z "$WEB_SERVER" ]; then
+if [ "$COMMAND" != "install" ] && [ "$WEB_SERVER_EXPLICIT" = false ]; then
     detect_existing_installation
 fi
 
@@ -3321,7 +3323,7 @@ case "$COMMAND" in
     --help|-h) show_help ;;
     "") 
         # For menu mode without explicit server, try to detect existing installation
-        if [ -z "$WEB_SERVER" ]; then
+        if [ "$WEB_SERVER_EXPLICIT" = false ]; then
             detect_existing_installation
         fi
         main_menu 
