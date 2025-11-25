@@ -274,7 +274,7 @@ issue_ssl_certificate() {
         --fullchain-file "$ssl_dir/fullchain.crt" \
         --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
         --server letsencrypt \
-        --force >/dev/null 2>&1; then
+        --force 2>&1; then
         
         log_success "Certificate issued and installed successfully"
         
@@ -986,19 +986,19 @@ EOF
     echo
     
     log_info "Obtaining SSL certificate from Let's Encrypt..."
-    log_info "This requires port 80 to be available for verification"
+    log_info "Using TLS-ALPN challenge on port 8443"
     echo
     
-    # Check port 80 availability
-    if ss -tlnp 2>/dev/null | grep -q ":80 "; then
-        log_warning "Port 80 is currently in use"
-        local port80_process=$(ss -tlnp 2>/dev/null | grep ":80 " | head -1)
-        echo -e "${GRAY}   Process: $port80_process${NC}"
+    # Check port 8443 availability for ACME challenge
+    if ss -tlnp 2>/dev/null | grep -q ":8443 "; then
+        log_warning "Port 8443 is currently in use"
+        local port8443_process=$(ss -tlnp 2>/dev/null | grep ":8443 " | head -1)
+        echo -e "${GRAY}   Process: $port8443_process${NC}"
         echo
-        echo -e "${YELLOW}Please stop the service using port 80 temporarily${NC}"
-        echo -e "${GRAY}After installation, port 80 will be used by Nginx${NC}"
+        echo -e "${YELLOW}Please stop the service using port 8443 temporarily${NC}"
+        echo -e "${GRAY}Port 8443 is only needed during certificate issuance${NC}"
         echo
-        read -p "Continue when port 80 is free? [Y/n]: " -r continue_port
+        read -p "Continue when port 8443 is free? [Y/n]: " -r continue_port
         if [[ $continue_port =~ ^[Nn]$ ]]; then
             return 1
         fi
@@ -1015,7 +1015,7 @@ EOF
         echo
         echo -e "${YELLOW}Possible reasons:${NC}"
         echo -e "${GRAY}   • Domain DNS not properly configured${NC}"
-        echo -e "${GRAY}   • Port 80 is blocked by firewall${NC}"
+        echo -e "${GRAY}   • Port 8443 is blocked by firewall${NC}"
         echo -e "${GRAY}   • Let's Encrypt rate limit exceeded${NC}"
         echo
         read -p "Continue with self-signed certificate (not recommended)? [y/N]: " -r use_selfsigned
