@@ -142,20 +142,26 @@ install_acme() {
         return 1
     fi
     
-    # Install acme.sh
-    curl -s "$ACME_INSTALL_URL" | sh -s -- --install-online --home "$ACME_HOME" 2>/dev/null
+    # Generate random email for registration
+    local random_email="user$(shuf -i 10000-99999 -n 1)@$(hostname -f 2>/dev/null || echo 'localhost.local')"
     
-    if [ -f "$ACME_HOME/acme.sh" ]; then
-        log_success "acme.sh installed successfully"
+    # Install acme.sh using official method
+    if curl -sS "$ACME_INSTALL_URL" | sh -s email="$random_email" >/dev/null 2>&1; then
+        # Source bashrc to load acme.sh
+        [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
         
-        # Set default CA to Let's Encrypt
-        "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-        
-        return 0
-    else
-        log_error "Failed to install acme.sh"
-        return 1
+        if [ -f "$ACME_HOME/acme.sh" ]; then
+            log_success "acme.sh installed successfully"
+            
+            # Set default CA to Let's Encrypt
+            "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+            
+            return 0
+        fi
     fi
+    
+    log_error "Failed to install acme.sh"
+    return 1
 }
 
 # Issue SSL certificate for domain
@@ -466,22 +472,28 @@ check_running_as_root() {
 # Install Docker using official script
 install_docker() {
     log_info "Installing Docker..."
-    echo -e "${CYAN}📦 Installing Docker...${NC}"
+    echo -ne "${CYAN}📦 Installing Docker... ${NC}"
     
-    if curl -fsSL https://get.docker.com | sh; then
-        log_success "Docker installed successfully"
-        echo -e "${GREEN}✅ Docker installed successfully${NC}"
+    # Run installation silently, capture output for error reporting
+    local install_log=$(mktemp)
+    if curl -fsSL https://get.docker.com 2>/dev/null | sh >"$install_log" 2>&1; then
+        rm -f "$install_log"
         
         # Start and enable Docker service
         if command -v systemctl >/dev/null 2>&1; then
-            systemctl start docker 2>/dev/null || true
-            systemctl enable docker 2>/dev/null || true
+            systemctl start docker >/dev/null 2>&1 || true
+            systemctl enable docker >/dev/null 2>&1 || true
         fi
         
+        log_success "Docker installed successfully"
+        echo -e "${GREEN}Done!${NC}"
         return 0
     else
+        echo -e "${RED}Failed!${NC}"
         log_error "Failed to install Docker"
-        echo -e "${RED}❌ Failed to install Docker${NC}"
+        echo -e "${RED}❌ Installation failed. Error log:${NC}"
+        tail -20 "$install_log" 2>/dev/null
+        rm -f "$install_log"
         return 1
     fi
 }
