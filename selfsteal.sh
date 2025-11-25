@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.4.3
+# VERSION=2.4.4
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -17,7 +17,7 @@ fi
 set -euo pipefail
 
 # Script Configuration
-SCRIPT_VERSION="2.4.3"
+SCRIPT_VERSION="2.4.4"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -1011,7 +1011,6 @@ EOF
             roll_size 10MB
             roll_keep 5
             roll_keep_for 720h
-            roll_compression gzip
         }
         level ERROR
         format json 
@@ -1039,7 +1038,6 @@ https://{$SELF_STEAL_DOMAIN} {
             roll_size 10MB
             roll_keep 5
             roll_keep_for 720h
-            roll_compression gzip
         }
         level ERROR
     }
