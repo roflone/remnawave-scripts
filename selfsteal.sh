@@ -1,38 +1,113 @@
 #!/usr/bin/env bash
 # Caddy for Reality Selfsteal Installation Script
 # This script installs and manages Caddy for Reality traffic masking
-# VERSION=2.1.5
+# VERSION=2.2.0
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
 fi
 
-set -e
-SCRIPT_VERSION="2.1.5"
+set -euo pipefail
+
+# Script Configuration
+SCRIPT_VERSION="2.2.0"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
-SCRIPT_URL="$UPDATE_URL"  # Алиас для совместимости
+SCRIPT_URL="$UPDATE_URL"
+
+# Docker Configuration
 CONTAINER_NAME="caddy-selfsteal"
 VOLUME_PREFIX="caddy"
 CADDY_VERSION="2.9.1"
 
-# Configuration
+# Paths Configuration
 APP_NAME="selfsteal"
 APP_DIR="/opt/caddy"
-CADDY_CONFIG_DIR="$APP_DIR"
 HTML_DIR="/opt/caddy/html"
+LOG_FILE="/var/log/selfsteal.log"
+
+# Default Settings
+DEFAULT_PORT="9443"
+
+# Template Registry (id:folder:emoji:name)
+declare -A TEMPLATE_FOLDERS=(
+    ["1"]="10gag"
+    ["2"]="converter"
+    ["3"]="convertit"
+    ["4"]="downloader"
+    ["5"]="filecloud"
+    ["6"]="games-site"
+    ["7"]="modmanager"
+    ["8"]="speedtest"
+    ["9"]="YouTube"
+    ["10"]="503-1"
+    ["11"]="503-2"
+)
+
+declare -A TEMPLATE_NAMES=(
+    ["1"]="😂 10gag - Сайт мемов"
+    ["2"]="🎬 Converter - Видеостудия-конвертер"
+    ["3"]="📁 Convertit - Конвертер файлов"
+    ["4"]="⬇️ Downloader - Даунлоадер"
+    ["5"]="☁️ FileCloud - Облачное хранилище"
+    ["6"]="🎮 Games-site - Ретро игровой портал"
+    ["7"]="🛠️ ModManager - Мод-менеджер для игр"
+    ["8"]="🚀 SpeedTest - Спидтест"
+    ["9"]="📺 YouTube - Видеохостинг с капчей"
+    ["10"]="⚠️ 503 Error - Страница ошибки v1"
+    ["11"]="⚠️ 503 Error - Страница ошибки v2"
+)
 
 # Color definitions
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-GRAY='\033[0;37m'
-NC='\033[0m' # No Color
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly PURPLE='\033[0;35m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
+readonly GRAY='\033[0;37m'
+readonly NC='\033[0m' # No Color
+
+# Logging functions
+log_info() {
+    echo -e "${WHITE}ℹ️  $*${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_success() {
+    echo -e "${GREEN}✅ $*${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_warning() {
+    echo -e "${YELLOW}⚠️  $*${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_error() {
+    echo -e "${RED}❌ $*${NC}" >&2
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# Error handler
+cleanup_on_error() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        log_error "Script terminated with error code: $exit_code"
+    fi
+}
+trap cleanup_on_error EXIT
+
+# Safe directory creation
+create_dir_safe() {
+    local dir="$1"
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" || { log_error "Failed to create directory: $dir"; return 1; }
+    fi
+    return 0
+}
 
 
 # Parse command line arguments
@@ -52,16 +127,21 @@ if [ $# -gt 0 ]; then
             ;;
     esac
 fi
-# Fetch IP address
-NODE_IP=$(curl -s -4 ifconfig.io 2>/dev/null || echo "127.0.0.1")
-if [ -z "$NODE_IP" ] || [ "$NODE_IP" = "" ]; then
-    NODE_IP="127.0.0.1"
-fi
+# Fetch IP address with fallback
+get_server_ip() {
+    local ip
+    ip=$(curl -s -4 --connect-timeout 5 ifconfig.io 2>/dev/null) || \
+    ip=$(curl -s -4 --connect-timeout 5 icanhazip.com 2>/dev/null) || \
+    ip=$(curl -s -4 --connect-timeout 5 ipecho.net/plain 2>/dev/null) || \
+    ip="127.0.0.1"
+    echo "${ip:-127.0.0.1}"
+}
+NODE_IP=$(get_server_ip)
 
 # Check if running as root
 check_running_as_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}❌ This script must be run as root (use sudo)${NC}"
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        log_error "This script must be run as root (use sudo)"
         exit 1
     fi
 }
@@ -466,11 +546,11 @@ install_command() {
     echo -e "${WHITE}📁 Creating Directory Structure${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
     
-    mkdir -p "$APP_DIR"
-    mkdir -p "$HTML_DIR"
-    mkdir -p "$APP_DIR/logs"
+    create_dir_safe "$APP_DIR" || return 1
+    create_dir_safe "$HTML_DIR" || return 1
+    create_dir_safe "$APP_DIR/logs" || return 1
     
-    echo -e "${GREEN}✅ Directories created${NC}"
+    log_success "Directories created"
 
     # Create .env file
     echo
@@ -742,224 +822,174 @@ download_template() {
     local template_folder=""
     local template_name=""
     
-    # Определяем папку для скачивания в зависимости от выбранного шаблона
-    case "$template_type" in
-        "1"|"10gag")
-            template_folder="10gag"
-            template_name="10gag - Сайт мемов"
-            ;;
-        "2"|"converter")
-            template_folder="converter"
-            template_name="Converter - Видеостудия-конвертер"
-            ;;
-        "3"|"convertit")
-            template_folder="convertit"
-            template_name="Convertit - Конвертер файлов"
-            ;;
-        "4"|"downloader")
-            template_folder="downloader"
-            template_name="Downloader - Даунлоадер"
-            ;;
-        "5"|"filecloud")
-            template_folder="filecloud"
-            template_name="FileCloud - Облачное хранилище"
-            ;;
-        "6"|"games-site")
-            template_folder="games-site"
-            template_name="Games-site - Ретро игровой портал"
-            ;;
-        "7"|"modmanager")
-            template_folder="modmanager"
-            template_name="ModManager - Мод-менеджер для игр"
-            ;;
-        "8"|"speedtest")
-            template_folder="speedtest"
-            template_name="SpeedTest - Спидтест"
-            ;;
-        "9"|"youtube")
-            template_folder="YouTube"
-            template_name="YouTube - Видеохостинг с капчей"
-            ;;
-        "10"|"503")
-            template_folder="503-1"
-            template_name="503 Error - Страница ошибки 503 - вариант 1"
-            ;;
-        "11"|"503")
-            template_folder="503-2"
-            template_name="503 Error - Страница ошибки 503 - вариант 2"
-        ;;
-        *)
-            echo -e "${RED}❌ Unknown template type: $template_type${NC}"
-            return 1
-            ;;
-    esac
+    # Получаем данные из регистра
+    if [[ -n "${TEMPLATE_FOLDERS[$template_type]:-}" ]]; then
+        template_folder="${TEMPLATE_FOLDERS[$template_type]}"
+        template_name="${TEMPLATE_NAMES[$template_type]}"
+    else
+        log_error "Unknown template type: $template_type"
+        return 1
+    fi
     
     echo -e "${WHITE}🎨 Downloading Template: $template_name${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo
     
     # Создаем директорию
-    mkdir -p "$HTML_DIR"
-    rm -rf "$HTML_DIR"/*
-    cd "$HTML_DIR"
+    create_dir_safe "$HTML_DIR" || return 1
+    rm -rf "${HTML_DIR:?}"/* 2>/dev/null || true
+    cd "$HTML_DIR" || return 1
     
-    # Попробуем сначала через git (если доступен)
-    if command -v git >/dev/null 2>&1; then
-        echo -e "${WHITE}📦 Using Git for download...${NC}"
-        
-        # Создаем временную директорию
-        local temp_dir="/tmp/selfsteal-template-$$"
-        mkdir -p "$temp_dir"
-        
-        # Клонируем только нужную папку через sparse-checkout
-        if git clone --filter=blob:none --sparse "https://github.com/DigneZzZ/remnawave-scripts.git" "$temp_dir" 2>/dev/null; then
-            cd "$temp_dir"
-            git sparse-checkout set "sni-templates/$template_folder" 2>/dev/null
+    # Пробуем разные методы загрузки
+    if download_via_git "$template_folder"; then
+        setup_file_permissions
+        return 0
+    fi
+    
+    if download_via_api "$template_folder"; then
+        setup_file_permissions
+        return 0
+    fi
+    
+    if download_via_curl_fallback "$template_folder"; then
+        setup_file_permissions
+        return 0
+    fi
+    
+    log_error "Failed to download any files"
+    log_warning "Creating fallback template..."
+    create_fallback_html "$template_name"
+    return 1
+}
+
+# Download via git sparse-checkout
+download_via_git() {
+    local template_folder="$1"
+    
+    if ! command -v git >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    echo -e "${WHITE}📦 Using Git for download...${NC}"
+    
+    local temp_dir="/tmp/selfsteal-template-$$"
+    create_dir_safe "$temp_dir" || return 1
+    
+    if ! git clone --filter=blob:none --sparse "https://github.com/DigneZzZ/remnawave-scripts.git" "$temp_dir" 2>/dev/null; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    cd "$temp_dir" || { rm -rf "$temp_dir"; return 1; }
+    git sparse-checkout set "sni-templates/$template_folder" 2>/dev/null
+    
+    local source_path="$temp_dir/sni-templates/$template_folder"
+    if [ -d "$source_path" ] && cp -r "$source_path"/* "$HTML_DIR/" 2>/dev/null; then
+        local files_copied
+        files_copied=$(find "$HTML_DIR" -type f | wc -l)
+        log_success "Template files copied: $files_copied files"
+        rm -rf "$temp_dir"
+        show_download_summary "$files_copied" "${TEMPLATE_NAMES[$1]:-Template}"
+        return 0
+    fi
+    
+    rm -rf "$temp_dir"
+    return 1
+}
+
+# Download via GitHub API
+download_via_api() {
+    local template_folder="$1"
+    
+    if ! command -v wget >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    echo -e "${WHITE}📦 Using wget for recursive download...${NC}"
+    
+    local api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/git/trees/main?recursive=1"
+    local tree_data
+    tree_data=$(curl -s "$api_url" 2>/dev/null)
+    
+    if [ -z "$tree_data" ] || ! echo "$tree_data" | grep -q '"path"'; then
+        return 1
+    fi
+    
+    log_success "Repository structure retrieved"
+    echo -e "${WHITE}📥 Downloading files...${NC}"
+    
+    local template_files
+    template_files=$(echo "$tree_data" | grep -o '"path":[^,]*' | sed 's/"path":"//' | sed 's/"//' | grep "^sni-templates/$template_folder/")
+    
+    local files_downloaded=0
+    
+    if [ -n "$template_files" ]; then
+        while IFS= read -r file_path; do
+            [ -z "$file_path" ] && continue
             
-            # Копируем файлы
-            local source_path="$temp_dir/sni-templates/$template_folder"
-            if [ -d "$source_path" ]; then
-                if cp -r "$source_path"/* "$HTML_DIR/" 2>/dev/null; then
-                    local files_copied=$(find "$HTML_DIR" -type f | wc -l)
-                    echo -e "${GREEN}✅ Template files copied: $files_copied files${NC}"
-                    
-                    # Очистка
-                    rm -rf "$temp_dir"
-                    
-                    # Устанавливаем правильные права доступа
-                    setup_file_permissions
-                    
-                    show_download_summary "$files_copied" "$template_name"
-                    return 0
-                else
-                    echo -e "${YELLOW}⚠️  Git method failed, trying wget...${NC}"
-                fi
-            else
-                echo -e "${YELLOW}⚠️  Template not found in repository, trying wget...${NC}"
+            local relative_path="${file_path#sni-templates/$template_folder/}"
+            local file_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/$file_path"
+            
+            local file_dir
+            file_dir=$(dirname "$relative_path")
+            [ "$file_dir" != "." ] && create_dir_safe "$file_dir"
+            
+            if wget -q "$file_url" -O "$relative_path" 2>/dev/null; then
+                echo -e "${GREEN}   ✅ $relative_path${NC}"
+                ((files_downloaded++))
             fi
-            
-            # Очистка в случае неудачи
-            rm -rf "$temp_dir"
-        else
-            echo -e "${YELLOW}⚠️  Git clone failed, trying wget...${NC}"
+        done <<< "$template_files"
+        
+        if [ $files_downloaded -gt 0 ]; then
+            show_download_summary "$files_downloaded" "${TEMPLATE_NAMES[$1]:-Template}"
+            return 0
         fi
     fi
     
-    # Fallback: используем wget для рекурсивного скачивания
-    if command -v wget >/dev/null 2>&1; then
-        echo -e "${WHITE}📦 Using wget for recursive download...${NC}"
-        
-        local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates/$template_folder"
-        
-        # Получаем структуру папки через GitHub API
-        local api_url="https://api.github.com/repos/DigneZzZ/remnawave-scripts/git/trees/main?recursive=1"
-        local tree_data
-        tree_data=$(curl -s "$api_url" 2>/dev/null)
-        
-        if [ -n "$tree_data" ] && echo "$tree_data" | grep -q '"path"'; then
-            echo -e "${GREEN}✅ Repository structure retrieved${NC}"
-            echo -e "${WHITE}📥 Downloading files...${NC}"
-            
-            # Извлекаем пути файлов для нашего шаблона
-            local template_files
-            template_files=$(echo "$tree_data" | grep -o "\"path\":[^,]*" | sed 's/"path":"//' | sed 's/"//' | grep "^sni-templates/$template_folder/")
-            
-            local files_downloaded=0
-            local failed_downloads=0
-            
-            if [ -n "$template_files" ]; then
-                while IFS= read -r file_path; do
-                    if [ -n "$file_path" ]; then
-                        # Получаем относительный путь (убираем sni-templates/$template_folder/)
-                        local relative_path="${file_path#sni-templates/$template_folder/}"
-                        local file_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/$file_path"
-                        
-                        # Создаем директорию если нужно
-                        local file_dir=$(dirname "$relative_path")
-                        if [ "$file_dir" != "." ]; then
-                            mkdir -p "$file_dir"
-                        fi
-                        
-                        echo -e "${GRAY}   Downloading $relative_path...${NC}"
-                        
-                        if wget -q "$file_url" -O "$relative_path" 2>/dev/null; then
-                            echo -e "${GREEN}   ✅ $relative_path${NC}"
-                            ((files_downloaded++))
-                        else
-                            echo -e "${YELLOW}   ⚠️  $relative_path (failed)${NC}"
-                            ((failed_downloads++))
-                        fi
-                    fi
-                done <<< "$template_files"
-                
-                if [ $files_downloaded -gt 0 ]; then
-                    setup_file_permissions
-                    show_download_summary "$files_downloaded" "$template_name"
-                    return 0
-                fi
-            else
-                echo -e "${YELLOW}⚠️  No files found for template, trying curl fallback...${NC}"
-            fi
-        else
-            echo -e "${YELLOW}⚠️  Could not get repository structure, trying curl fallback...${NC}"
-        fi
-    fi
+    return 1
+}
+
+# Fallback download via curl
+download_via_curl_fallback() {
+    local template_folder="$1"
     
-    # Последний fallback: curl с предопределенным списком файлов
     echo -e "${WHITE}📦 Using curl fallback method...${NC}"
     
-    # Базовые файлы, которые должны быть в большинстве шаблонов
-    local common_files=("index.html" "favicon.ico" "favicon.svg" "site.webmanifest" "apple-touch-icon.png" "favicon-96x96.png" "web-app-manifest-192x192.png" "web-app-manifest-512x512.png")
+    local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates/$template_folder"
+    local common_files=("index.html" "favicon.ico" "favicon.svg" "site.webmanifest" "apple-touch-icon.png" "favicon-96x96.png")
     local asset_files=("assets/style.css" "assets/script.js" "assets/main.js")
     
-    local base_url="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/sni-templates/$template_folder"
     local files_downloaded=0
-    local failed_downloads=0
     
     echo -e "${WHITE}📥 Downloading common files...${NC}"
     
-    # Скачиваем основные файлы
     for file in "${common_files[@]}"; do
         local url="$base_url/$file"
-        echo -e "${GRAY}   Downloading $file...${NC}"
-        
         if curl -fsSL "$url" -o "$file" 2>/dev/null; then
             echo -e "${GREEN}   ✅ $file${NC}"
             ((files_downloaded++))
-        else
-            echo -e "${YELLOW}   ⚠️  $file (optional file not found)${NC}"
-            ((failed_downloads++))
         fi
     done
     
-    # Скачиваем файлы assets
-    mkdir -p assets
+    create_dir_safe "assets"
     echo -e "${WHITE}📁 Downloading assets...${NC}"
     
     for file in "${asset_files[@]}"; do
         local url="$base_url/$file"
-        local filename=$(basename "$file")
-        echo -e "${GRAY}   Downloading assets/$filename...${NC}"
-        
+        local filename
+        filename=$(basename "$file")
         if curl -fsSL "$url" -o "assets/$filename" 2>/dev/null; then
             echo -e "${GREEN}   ✅ assets/$filename${NC}"
             ((files_downloaded++))
-        else
-            echo -e "${YELLOW}   ⚠️  assets/$filename (optional file not found)${NC}"
-            ((failed_downloads++))
         fi
     done
     
     if [ $files_downloaded -gt 0 ]; then
-        setup_file_permissions
-        show_download_summary "$files_downloaded" "$template_name"
+        show_download_summary "$files_downloaded" "${TEMPLATE_NAMES[$1]:-Template}"
         return 0
-    else
-        echo -e "${RED}❌ Failed to download any files${NC}"
-        echo -e "${YELLOW}⚠️  Creating fallback template...${NC}"
-        create_fallback_html "$template_name"
-        return 1
     fi
+    
+    return 1
 }
 
 # Функция для установки правильных прав доступа
@@ -1198,49 +1228,80 @@ EOF
     echo -e "${GREEN}✅ Default HTML content created${NC}"
 }
 
-# Function to show template options
+# Function to show template options (dynamically generated from registry)
 show_template_options() {
     echo -e "${WHITE}🎨 Website Template Options${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 35))${NC}"
     echo
     echo -e "${WHITE}Select template type:${NC}"
-    echo -e "   ${WHITE}1)${NC} ${CYAN}😂 10gag - Сайт мемов${NC}"
-    echo -e "   ${WHITE}2)${NC} ${CYAN}🎬 Converter - Видеостудия-конвертер${NC}"
-    echo -e "   ${WHITE}3)${NC} ${CYAN}📁 Convertit - Конвертер файлов${NC}"
-    echo -e "   ${WHITE}4)${NC} ${CYAN}⬇️ Downloader - Даунлоадер${NC}"
-    echo -e "   ${WHITE}5)${NC} ${CYAN}☁️ FileCloud - Облачное хранилище${NC}"
-    echo -e "   ${WHITE}6)${NC} ${CYAN}🎮 Games-site - Ретро игровой портал${NC}"
-    echo -e "   ${WHITE}7)${NC} ${CYAN}🛠️ ModManager - Мод-менеджер для игр${NC}"
-    echo -e "   ${WHITE}8)${NC} ${CYAN}🚀 SpeedTest - Спидтест${NC}"
-    echo -e "   ${WHITE}9)${NC} ${CYAN}📺 YouTube - Видеохостинг с капчей${NC}"
-    echo -e "   ${WHITE}10)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503 v1${NC}"
-    echo -e "   ${WHITE}11)${NC} ${CYAN}⚠️ 503 Error - Страница ошибки 503 v2${NC}"
+    
+    # Dynamically list templates from registry
+    for i in $(seq 1 11); do
+        local name="${TEMPLATE_NAMES[$i]:-}"
+        if [ -n "$name" ]; then
+            printf "   ${WHITE}%-3s${NC} ${CYAN}%s${NC}\n" "$i)" "$name"
+        fi
+    done
+    
     echo
     echo -e "   ${WHITE}v)${NC} ${GRAY}📄 View Current Template${NC}"
     echo -e "   ${WHITE}k)${NC} ${GRAY}📝 Keep Current Template${NC}"
+    echo -e "   ${WHITE}r)${NC} ${GRAY}🎲 Random Template${NC}"
     echo
     echo -e "   ${GRAY}0)${NC} ${GRAY}⬅️  Cancel${NC}"
     echo
 }
 
+# Apply template with optional restart
+apply_template_and_restart() {
+    local template_id="$1"
+    local template_name="${TEMPLATE_NAMES[$template_id]:-Template}"
+    
+    echo
+    if download_template "$template_id"; then
+        log_success "$template_name downloaded successfully!"
+        echo
+        maybe_restart_caddy
+    else
+        log_error "Failed to download template: $template_name"
+    fi
+    read -p "Press Enter to continue..."
+}
+
+# Check if Caddy is running and offer restart
+maybe_restart_caddy() {
+    local running_services
+    running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+    
+    if [ "$running_services" -gt 0 ]; then
+        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
+        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+            cd "$APP_DIR" && docker compose restart
+            log_success "Caddy restarted"
+        fi
+    fi
+}
 
 # Template management command
 template_command() {
     check_running_as_root
+    
     if ! docker --version >/dev/null 2>&1; then
-        echo -e "${RED}❌ Docker is not available${NC}"
+        log_error "Docker is not available"
         return 1
     fi
 
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy is not installed. Run 'sudo $APP_NAME install' first.${NC}"
+        log_error "Caddy is not installed. Run 'sudo $APP_NAME install' first."
         return 1
     fi
-    
 
-    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+    local running_services
+    running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
+    
     if [ "$running_services" -gt 0 ]; then
-        echo -e "${YELLOW}⚠️  Caddy is currently running${NC}"
+        log_warning "Caddy is currently running"
         echo -e "${GRAY}   Template changes will be applied immediately${NC}"
         echo
         read -p "Continue with template download? [Y/n]: " -r continue_template
@@ -1249,222 +1310,21 @@ template_command() {
         fi
     fi
     
-    
     while true; do
         clear
         show_template_options
         
-        read -p "Select template option [0-11, v, k]: " choice
+        read -p "Select template option [0-11, v, k, r]: " choice
         
         case "$choice" in
-            1)
-                echo
-                if download_template "1"; then
-                    echo -e "${GREEN}🎉 10gag template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
+            [1-9]|10|11)
+                # Check if template exists in registry
+                if [[ -n "${TEMPLATE_NAMES[$choice]:-}" ]]; then
+                    apply_template_and_restart "$choice"
                 else
-                    echo -e "${RED}❌ Failed to download 10gag template${NC}"
+                    log_error "Invalid template number!"
+                    sleep 1
                 fi
-                read -p "Press Enter to continue..."
-                ;;
-            2)
-                echo
-                if download_template "2"; then
-                    echo -e "${GREEN}🎉 Converter template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download converter template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            3)
-                echo
-                if download_template "3"; then
-                    echo -e "${GREEN}🎉 Convertit template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download convertit template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            4)
-                echo
-                if download_template "4"; then
-                    echo -e "${GREEN}🎉 Downloader template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download downloader template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            5)
-                echo
-                if download_template "5"; then
-                    echo -e "${GREEN}🎉 FileCloud template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download filecloud template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            6)
-                echo
-                if download_template "6"; then
-                    echo -e "${GREEN}🎉 Games-site template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download games-site template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            7)
-                echo
-                if download_template "7"; then
-                    echo -e "${GREEN}🎉 ModManager template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download modmanager template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            8)
-                echo
-                if download_template "8"; then
-                    echo -e "${GREEN}🎉 SpeedTest template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download speedtest template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            9)
-                echo
-                if download_template "9"; then
-                    echo -e "${GREEN}🎉 YouTube template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download youtube template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            10)
-                echo
-                if download_template "10"; then
-                    echo -e "${GREEN}🎉 503 Error template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download 503 error template${NC}"
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            11)
-                echo
-                if download_template "11"; then
-                    echo -e "${GREEN}🎉 503 Error v2 template downloaded successfully!${NC}"
-                    echo
-                    local running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
-                    if [ "$running_services" -gt 0 ]; then
-                        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-                        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-                            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
-                            cd "$APP_DIR" && docker compose restart
-                            echo -e "${GREEN}✅ Caddy restarted${NC}"
-                        fi
-                    fi
-                else
-                    echo -e "${RED}❌ Failed to download 503 error v2 template${NC}"
-                fi
-                read -p "Press Enter to continue..."
                 ;;
             v|V)
                 echo
@@ -1475,11 +1335,17 @@ template_command() {
                 echo -e "${GRAY}Current template preserved${NC}"
                 read -p "Press Enter to continue..."
                 ;;
+            r|R)
+                # Random template
+                local random_id=$((RANDOM % 11 + 1))
+                echo -e "${CYAN}🎲 Randomly selected: ${TEMPLATE_NAMES[$random_id]}${NC}"
+                apply_template_and_restart "$random_id"
+                ;;
             0)
                 return 0
                 ;;
             *)
-                echo -e "${RED}❌ Invalid option!${NC}"
+                log_error "Invalid option!"
                 sleep 1
                 ;;
         esac
@@ -1490,53 +1356,49 @@ template_command() {
 
 
 install_management_script() {
-    echo -e "${WHITE}🔧 Installing Management Script${NC}"
+    log_info "Installing Management Script"
     
-    # Определить путь к скрипту
-    local script_path
+    local script_path=""
     local target_path="/usr/local/bin/$APP_NAME"
     
     # Проверим, не является ли источник тем же файлом, что и целевой
     if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "@" ]; then
-        # Получаем абсолютные пути для сравнения
-        local source_real_path=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
-        local target_real_path=$(realpath "$target_path" 2>/dev/null || readlink -f "$target_path" 2>/dev/null || echo "$target_path")
+        local source_real_path
+        local target_real_path
+        source_real_path=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+        target_real_path=$(realpath "$target_path" 2>/dev/null || readlink -f "$target_path" 2>/dev/null || echo "$target_path")
         
-        # Если это один и тот же файл, пропускаем копирование
         if [ "$source_real_path" = "$target_real_path" ]; then
-            echo -e "${GREEN}✅ Management script already installed: $target_path${NC}"
+            log_success "Management script already installed: $target_path"
             return 0
         fi
         
         script_path="$0"
     else
-        # Попытаться найти скрипт в /tmp или скачать заново
         local temp_script="/tmp/selfsteal-install.sh"
         if curl -fsSL "$UPDATE_URL" -o "$temp_script" 2>/dev/null; then
             script_path="$temp_script"
             echo -e "${GRAY}📥 Downloaded script from remote source${NC}"
         else
-            echo -e "${YELLOW}⚠️  Could not install management script automatically${NC}"
+            log_warning "Could not install management script automatically"
             echo -e "${GRAY}   You can download it manually from: $UPDATE_URL${NC}"
             return 1
         fi
     fi
     
-    # Установить скрипт только если это разные файлы
     if [ -f "$script_path" ]; then
         if cp "$script_path" "$target_path" 2>/dev/null; then
             chmod +x "$target_path"
-            echo -e "${GREEN}✅ Management script installed: $target_path${NC}"
+            log_success "Management script installed: $target_path"
         else
-            echo -e "${YELLOW}⚠️  Management script installation skipped (already exists)${NC}"
+            log_warning "Management script installation skipped (already exists)"
         fi
         
-        # Очистить временный файл если использовался
         if [ "$script_path" = "/tmp/selfsteal-install.sh" ]; then
             rm -f "$script_path"
         fi
     else
-        echo -e "${RED}❌ Failed to install management script${NC}"
+        log_error "Failed to install management script"
         return 1
     fi
 }
@@ -1545,17 +1407,17 @@ up_command() {
     check_running_as_root
     
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        echo -e "${RED}❌ Caddy is not installed. Run 'sudo $APP_NAME install' first.${NC}"
+        log_error "Caddy is not installed. Run 'sudo $APP_NAME install' first."
         return 1
     fi
     
-    echo -e "${WHITE}🚀 Starting Caddy Services${NC}"
-    cd "$APP_DIR"
+    log_info "Starting Caddy Services"
+    cd "$APP_DIR" || return 1
     
     if docker compose up -d; then
-        echo -e "${GREEN}✅ Caddy services started successfully${NC}"
+        log_success "Caddy services started successfully"
     else
-        echo -e "${RED}❌ Failed to start Caddy services${NC}"
+        log_error "Failed to start Caddy services"
         return 1
     fi
 }
@@ -1564,29 +1426,30 @@ down_command() {
     check_running_as_root
     
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        echo -e "${YELLOW}⚠️  Caddy is not installed${NC}"
+        log_warning "Caddy is not installed"
         return 0
     fi
     
-    echo -e "${WHITE}🛑 Stopping Caddy Services${NC}"
-    cd "$APP_DIR"
+    log_info "Stopping Caddy Services"
+    cd "$APP_DIR" || return 1
     
     if docker compose down; then
-        echo -e "${GREEN}✅ Caddy services stopped successfully${NC}"
+        log_success "Caddy services stopped successfully"
     else
-        echo -e "${RED}❌ Failed to stop Caddy services${NC}"
+        log_error "Failed to stop Caddy services"
         return 1
     fi
 }
 
 restart_command() {
     check_running_as_root
-    echo -e "${YELLOW}⚠️  Validate Caddyfile after editing? [Y/n]:${NC}"
-    read -p "" validate_choice
+    
+    read -p "Validate Caddyfile before restart? [Y/n]: " -r validate_choice
     if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
-        validate_caddyfile
+        validate_caddyfile || return 1
     fi
-    echo -e "${WHITE}🔄 Restarting Caddy Services${NC}"
+    
+    log_info "Restarting Caddy Services"
     down_command
     sleep 2
     up_command
@@ -1594,7 +1457,7 @@ restart_command() {
 
 status_command() {
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy not installed${NC}"
+        log_error "Caddy not installed"
         return 1
     fi
 
@@ -1602,30 +1465,38 @@ status_command() {
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 30))${NC}"
     echo
 
-    cd "$APP_DIR"
+    cd "$APP_DIR" || return 1
     
     # Получаем статус контейнера
-    local container_status=$(docker compose ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}" 2>/dev/null)
-    local running_count=$(docker compose ps -q --status running 2>/dev/null | wc -l)
-    local total_count=$(docker compose ps -q 2>/dev/null | wc -l)
+    local container_status
+    local running_count
+    local total_count
+    local actual_status
     
-    # Проверяем реальный статус
-    local actual_status=$(docker compose ps --format "{{.State}}" 2>/dev/null | head -1)
+    container_status=$(docker compose ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}" 2>/dev/null)
+    running_count=$(docker compose ps -q --status running 2>/dev/null | wc -l)
+    total_count=$(docker compose ps -q 2>/dev/null | wc -l)
+    actual_status=$(docker compose ps --format "{{.State}}" 2>/dev/null | head -1)
     
-    if [ "$actual_status" = "running" ]; then
-        echo -e "${GREEN}✅ Status: Running${NC}"
-        echo -e "${GREEN}✅ All services are running ($running_count/$total_count)${NC}"
-    elif [ "$actual_status" = "restarting" ]; then
-        echo -e "${YELLOW}⚠️  Status: Restarting (Error)${NC}"
-        echo -e "${RED}❌ Service is failing and restarting ($running_count/$total_count)${NC}"
-        echo -e "${YELLOW}🔧 Action needed: Check logs for errors${NC}"
-    elif [ -n "$actual_status" ]; then
-        echo -e "${RED}❌ Status: $actual_status${NC}"
-        echo -e "${RED}❌ Services not running ($running_count/$total_count)${NC}"
-    else
-        echo -e "${RED}❌ Status: Not running${NC}"
-        echo -e "${RED}❌ No services found${NC}"
-    fi
+    case "$actual_status" in
+        "running")
+            log_success "Status: Running"
+            echo -e "${GREEN}✅ All services are running ($running_count/$total_count)${NC}"
+            ;;
+        "restarting")
+            log_warning "Status: Restarting (Error)"
+            log_error "Service is failing and restarting ($running_count/$total_count)"
+            echo -e "${YELLOW}🔧 Action needed: Check logs for errors${NC}"
+            ;;
+        "")
+            log_error "Status: Not running"
+            echo -e "${RED}❌ No services found${NC}"
+            ;;
+        *)
+            log_error "Status: $actual_status"
+            echo -e "${RED}❌ Services not running ($running_count/$total_count)${NC}"
+            ;;
+    esac
 
     echo
     echo -e "${WHITE}📋 Container Details:${NC}"
@@ -1639,17 +1510,19 @@ status_command() {
     if [ "$actual_status" = "restarting" ]; then
         echo
         echo -e "${YELLOW}🔧 Troubleshooting:${NC}"
-        echo -e "${GRAY}   1. Check logs: selfsteal logs${NC}"
-        echo -e "${GRAY}   2. Validate config: selfsteal edit${NC}"
-        echo -e "${GRAY}   3. Restart services: selfsteal restart${NC}"
+        echo -e "${GRAY}   1. Check logs: $APP_NAME logs${NC}"
+        echo -e "${GRAY}   2. Validate config: $APP_NAME edit${NC}"
+        echo -e "${GRAY}   3. Restart services: $APP_NAME restart${NC}"
     fi
     
     # Show configuration summary
     if [ -f "$APP_DIR/.env" ]; then
         echo
         echo -e "${WHITE}⚙️  Configuration:${NC}"
-        local domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
-        local port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" | cut -d'=' -f2)
+        local domain
+        local port
+        domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
+        port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" | cut -d'=' -f2)
         
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
@@ -1660,7 +1533,7 @@ status_command() {
 
 logs_command() {
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        echo -e "${RED}❌ Caddy is not installed${NC}"
+        log_error "Caddy is not installed"
         return 1
     fi
     
@@ -1668,7 +1541,7 @@ logs_command() {
     echo -e "${GRAY}Press Ctrl+C to exit${NC}"
     echo
     
-    cd "$APP_DIR"
+    cd "$APP_DIR" || return 1
     docker compose logs -f
 }
 
@@ -1678,7 +1551,7 @@ clean_logs_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy is not installed${NC}"
+        log_error "Caddy is not installed"
         return 1
     fi
     
@@ -1691,12 +1564,12 @@ clean_logs_command() {
     
     # Docker logs
     local docker_logs_size
-    docker_logs_size=$(docker logs $CONTAINER_NAME 2>&1 | wc -c 2>/dev/null || echo "0")
+    docker_logs_size=$(docker logs "$CONTAINER_NAME" 2>&1 | wc -c 2>/dev/null || echo "0")
     docker_logs_size=$((docker_logs_size / 1024))
     echo -e "${GRAY}   Docker logs: ${WHITE}${docker_logs_size}KB${NC}"
     
     # Caddy access logs
-    local caddy_logs_path="$APP_DIR/caddy_data/_logs"
+    local caddy_logs_path="$APP_DIR/logs"
     if [ -d "$caddy_logs_path" ]; then
         local caddy_logs_size
         caddy_logs_size=$(du -sk "$caddy_logs_path" 2>/dev/null | cut -f1 || echo "0")
@@ -1707,15 +1580,15 @@ clean_logs_command() {
     read -p "Clean all logs? [y/N]: " -r clean_choice
     
     if [[ $clean_choice =~ ^[Yy]$ ]]; then
-        echo -e "${WHITE}🧹 Cleaning logs...${NC}"
+        log_info "Cleaning logs..."
         
         # Clean Docker logs by recreating container
-        if docker ps -q -f name=$CONTAINER_NAME >/dev/null 2>&1; then
+        if docker ps -q -f "name=$CONTAINER_NAME" >/dev/null 2>&1; then
             echo -e "${GRAY}   Stopping Caddy...${NC}"
             cd "$APP_DIR" && docker compose stop
             
             echo -e "${GRAY}   Removing container to clear logs...${NC}"
-            docker rm $CONTAINER_NAME 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
             
             echo -e "${GRAY}   Starting Caddy...${NC}"
             cd "$APP_DIR" && docker compose up -d
@@ -1724,10 +1597,10 @@ clean_logs_command() {
         # Clean Caddy internal logs
         if [ -d "$caddy_logs_path" ]; then
             echo -e "${GRAY}   Cleaning Caddy access logs...${NC}"
-            rm -rf "$caddy_logs_path"/* 2>/dev/null || true
+            rm -rf "${caddy_logs_path:?}"/* 2>/dev/null || true
         fi
         
-        echo -e "${GREEN}✅ Logs cleaned successfully${NC}"
+        log_success "Logs cleaned successfully"
     else
         echo -e "${GRAY}Log cleanup cancelled${NC}"
     fi
@@ -1738,7 +1611,7 @@ logs_size_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy is not installed${NC}"
+        log_error "Caddy is not installed"
         return 1
     fi
     
@@ -1748,38 +1621,12 @@ logs_size_command() {
     
     # Docker logs
     local docker_logs_size
-    if docker ps -q -f name=$CONTAINER_NAME >/dev/null 2>&1; then
-        docker_logs_size=$(docker logs $CONTAINER_NAME 2>&1 | wc -c 2>/dev/null || echo "0")
+    if docker ps -q -f "name=$CONTAINER_NAME" >/dev/null 2>&1; then
+        docker_logs_size=$(docker logs "$CONTAINER_NAME" 2>&1 | wc -c 2>/dev/null || echo "0")
         docker_logs_size=$((docker_logs_size / 1024))
         echo -e "${WHITE}📋 Docker logs:${NC} ${GRAY}${docker_logs_size}KB${NC}"
     else
         echo -e "${WHITE}📋 Docker logs:${NC} ${GRAY}Container not running${NC}"
-    fi
-    
-    # Caddy access logs
-    local caddy_data_dir
-    caddy_data_dir=$(cd "$APP_DIR" && docker volume inspect "${APP_DIR##*/}_${VOLUME_PREFIX}_data" --format '{{.Mountpoint}}' 2>/dev/null || echo "")
-    
-    if [ -n "$caddy_data_dir" ] && [ -d "$caddy_data_dir" ]; then
-        local access_log="$caddy_data_dir/access.log"
-        if [ -f "$access_log" ]; then
-            local access_log_size
-            access_log_size=$(du -k "$access_log" 2>/dev/null | cut -f1 || echo "0")
-            echo -e "${WHITE}📄 Access log:${NC} ${GRAY}${access_log_size}KB${NC}"
-        else
-            echo -e "${WHITE}📄 Access log:${NC} ${GRAY}Not found${NC}"
-        fi
-        
-        # Check for rotated logs
-        local rotated_logs
-        rotated_logs=$(find "$caddy_data_dir" -name "access.log.*" 2>/dev/null | wc -l || echo "0")
-        if [ "$rotated_logs" -gt 0 ]; then
-            local rotated_size
-            rotated_size=$(find "$caddy_data_dir" -name "access.log.*" -exec du -k {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-            echo -e "${WHITE}🔄 Rotated logs:${NC} ${GRAY}${rotated_size}KB (${rotated_logs} files)${NC}"
-        fi
-    else
-        echo -e "${WHITE}📄 Caddy logs:${NC} ${GRAY}Volume not accessible${NC}"
     fi
     
     # Logs directory
@@ -1787,6 +1634,20 @@ logs_size_command() {
         local logs_dir_size
         logs_dir_size=$(du -sk "$APP_DIR/logs" 2>/dev/null | cut -f1 || echo "0")
         echo -e "${WHITE}📁 Logs directory:${NC} ${GRAY}${logs_dir_size}KB${NC}"
+        
+        # List individual log files
+        local log_files
+        log_files=$(find "$APP_DIR/logs" -name "*.log*" -type f 2>/dev/null)
+        if [ -n "$log_files" ]; then
+            echo -e "${GRAY}   Log files:${NC}"
+            while IFS= read -r log_file; do
+                local file_size
+                file_size=$(du -k "$log_file" 2>/dev/null | cut -f1 || echo "0")
+                local file_name
+                file_name=$(basename "$log_file")
+                echo -e "${GRAY}   - $file_name: ${file_size}KB${NC}"
+            done <<< "$log_files"
+        fi
     fi
     
     echo
@@ -1796,7 +1657,7 @@ logs_size_command() {
 
 stop_services() {
     if [ -f "$APP_DIR/docker-compose.yml" ]; then
-        cd "$APP_DIR"
+        cd "$APP_DIR" || return
         docker compose down 2>/dev/null || true
     fi
 }
@@ -1809,11 +1670,11 @@ uninstall_command() {
     echo
     
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${YELLOW}⚠️  Caddy is not installed${NC}"
+        log_warning "Caddy is not installed"
         return 0
     fi
     
-    echo -e "${YELLOW}⚠️  This will completely remove Caddy and all data!${NC}"
+    log_warning "This will completely remove Caddy and all data!"
     echo
     read -p "Are you sure you want to continue? [y/N]: " -r confirm
     
@@ -1823,16 +1684,16 @@ uninstall_command() {
     fi
     
     echo
-    echo -e "${WHITE}🛑 Stopping services...${NC}"
+    log_info "Stopping services..."
     stop_services
     
-    echo -e "${WHITE}🗑️  Removing files...${NC}"
-    rm -rf "$APP_DIR"
+    log_info "Removing files..."
+    rm -rf "${APP_DIR:?}"
     
-    echo -e "${WHITE}🗑️  Removing management script...${NC}"
+    log_info "Removing management script..."
     rm -f "/usr/local/bin/$APP_NAME"
     
-    echo -e "${GREEN}✅ Caddy uninstalled successfully${NC}"
+    log_success "Caddy uninstalled successfully"
     echo
     echo -e "${GRAY}Note: HTML content in $HTML_DIR was preserved${NC}"
 }
@@ -1841,7 +1702,7 @@ edit_command() {
     check_running_as_root
     
     if [ ! -d "$APP_DIR" ]; then
-        echo -e "${RED}❌ Caddy is not installed${NC}"
+        log_error "Caddy is not installed"
         return 1
     fi
     
@@ -1861,26 +1722,25 @@ edit_command() {
     case "$choice" in
         1)
             ${EDITOR:-nano} "$APP_DIR/.env"
-            echo -e "${YELLOW}⚠️  Restart Caddy to apply changes: sudo $APP_NAME restart${NC}"
+            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
             ;;
         2)
             ${EDITOR:-nano} "$APP_DIR/Caddyfile"
-            echo -e "${YELLOW}⚠️  Validate Caddyfile after editing? [Y/n]:${NC}"
-            read -p "" validate_choice
+            read -p "Validate Caddyfile after editing? [Y/n]: " -r validate_choice
             if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
                 validate_caddyfile
             fi
-            echo -e "${YELLOW}⚠️  Restart Caddy to apply changes: sudo $APP_NAME restart${NC}"
+            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
             ;;
         3)
             ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
-            echo -e "${YELLOW}⚠️  Restart Caddy to apply changes: sudo $APP_NAME restart${NC}"
+            log_warning "Restart Caddy to apply changes: sudo $APP_NAME restart"
             ;;
         0)
             echo -e "${GRAY}Cancelled${NC}"
             ;;
         *)
-            echo -e "${RED}❌ Invalid option${NC}"
+            log_error "Invalid option"
             ;;
     esac
 }
