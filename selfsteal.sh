@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Selfsteal Installation Script (Caddy/Nginx)
-# This script installs and manages web server for Reality traffic masking
-# Supports: Caddy (default) and Nginx (--nginx flag)
-# ACME SSL certificates via acme.sh for Nginx
+# ╔════════════════════════════════════════════════════════════════╗
+# ║  Selfsteal - Web Server for Reality Traffic Masking           ║
+# ║  Supports: Caddy (default) and Nginx (--nginx flag)           ║
+# ║                                                                ║
+# ║  Project: gig.ovh                                              ║
+# ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
+# ║  License: MIT                                                  ║
+# ╚════════════════════════════════════════════════════════════════╝
 # VERSION=2.4.2
 
 # Handle @ prefix for consistency with other scripts
@@ -1303,14 +1307,52 @@ install_command() {
         case "$reinstall_choice" in
             1)
                 echo
-                log_warning "Removing existing $existing_name installation..."
+                local remove_dir
                 if [ "$existing_install" = "nginx" ]; then
-                    cd /opt/nginx-selfsteal 2>/dev/null && docker compose down 2>/dev/null || true
-                    rm -rf /opt/nginx-selfsteal
+                    remove_dir="/opt/nginx-selfsteal"
                 else
-                    cd /opt/caddy 2>/dev/null && docker compose down 2>/dev/null || true
-                    rm -rf /opt/caddy
+                    remove_dir="/opt/caddy"
                 fi
+                
+                # Check for unexpected files before removal
+                local expected_files="docker-compose.yml|\.env|nginx\.conf|Caddyfile|html|logs|ssl|conf\.d"
+                local unexpected_files=$(find "$remove_dir" -maxdepth 1 -type f -o -type d | grep -v "^$remove_dir$" | xargs -I{} basename {} | grep -vE "^($expected_files)$" 2>/dev/null)
+                
+                if [ -n "$unexpected_files" ]; then
+                    echo -e "${YELLOW}⚠️  Found unexpected files/folders in $remove_dir:${NC}"
+                    echo -e "${GRAY}$(echo "$unexpected_files" | head -10 | sed 's/^/   • /')${NC}"
+                    local total_unexpected=$(echo "$unexpected_files" | wc -l | tr -d ' ')
+                    if [ "$total_unexpected" -gt 10 ]; then
+                        echo -e "${GRAY}   ... and $((total_unexpected - 10)) more${NC}"
+                    fi
+                    echo
+                    echo -e "${WHITE}Options:${NC}"
+                    echo -e "   ${WHITE}1)${NC} ${GRAY}Create backup and continue${NC}"
+                    echo -e "   ${WHITE}2)${NC} ${GRAY}Delete everything without backup${NC}"
+                    echo -e "   ${WHITE}3)${NC} ${GRAY}Cancel installation${NC}"
+                    echo
+                    read -p "Select option [1-3]: " backup_choice
+                    
+                    case "$backup_choice" in
+                        1)
+                            local backup_dir="/opt/selfsteal-backup-$(date +%Y%m%d-%H%M%S)"
+                            log_info "Creating backup at $backup_dir..."
+                            cp -r "$remove_dir" "$backup_dir"
+                            log_success "Backup created: $backup_dir"
+                            ;;
+                        2)
+                            log_warning "Proceeding without backup..."
+                            ;;
+                        *)
+                            echo -e "${GRAY}Installation cancelled${NC}"
+                            return 0
+                            ;;
+                    esac
+                fi
+                
+                log_warning "Removing existing $existing_name installation..."
+                cd "$remove_dir" 2>/dev/null && docker compose down 2>/dev/null || true
+                rm -rf "$remove_dir"
                 log_success "Existing installation removed"
                 echo
                 ;;
@@ -2841,7 +2883,9 @@ show_help() {
     echo -e "  ${GRAY}sudo $APP_NAME renew-ssl${NC}"
     echo
     echo -e "${WHITE}For more information, visit:${NC}"
-    echo -e "  ${BLUE}https://github.com/remnawave/${NC}"
+    echo -e "  ${BLUE}https://github.com/DigneZzZ/remnawave-scripts${NC}"
+    echo
+    echo -e "${GRAY}Project: gig.ovh | Author: DigneZzZ${NC}"
 }
 
 check_for_updates() {
@@ -3136,8 +3180,9 @@ EOF
     echo
 }
 
-main_menu() {    # Auto-check for updates on first run
-    # check_for_updates_silent
+main_menu() {
+    # Auto-check for updates on first run
+    check_for_updates_silent
     
     local server_name
     if [ "$WEB_SERVER" = "nginx" ]; then
@@ -3150,6 +3195,7 @@ main_menu() {    # Auto-check for updates on first run
         clear
         echo -e "${WHITE}🔗 $server_name for Reality Selfsteal${NC}"
         echo -e "${GRAY}Management System v$SCRIPT_VERSION${NC}"
+        echo -e "${CYAN}Project: gig.ovh | Author: DigneZzZ${NC}"
         echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
         echo
 
