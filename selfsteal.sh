@@ -1262,6 +1262,14 @@ install_command() {
         existing_install="caddy"
     fi
     if [ -d "/opt/nginx-selfsteal" ] && [ -f "/opt/nginx-selfsteal/docker-compose.yml" ]; then
+        if [ -n "$existing_install" ]; then
+            # Both are installed - this shouldn't happen, but handle it
+            echo -e "${RED}❌ Error: Both Caddy and Nginx are installed!${NC}"
+            echo -e "${GRAY}   Please uninstall one of them first:${NC}"
+            echo -e "${GRAY}   selfsteal --caddy uninstall${NC}"
+            echo -e "${GRAY}   selfsteal --nginx uninstall${NC}"
+            return 1
+        fi
         existing_install="nginx"
     fi
     
@@ -1273,11 +1281,22 @@ install_command() {
             existing_name="Caddy"
         fi
         
-        echo -e "${YELLOW}⚠️  Existing $existing_name installation detected${NC}"
-        echo
-        echo -e "${WHITE}Options:${NC}"
-        echo -e "   ${WHITE}1)${NC} ${GRAY}Reinstall with $server_display_name (removes existing)${NC}"
-        echo -e "   ${WHITE}2)${NC} ${GRAY}Cancel installation${NC}"
+        # Check if trying to install the same server
+        if [ "$existing_install" = "$WEB_SERVER" ]; then
+            echo -e "${YELLOW}⚠️  $existing_name is already installed${NC}"
+            echo
+            echo -e "${WHITE}Options:${NC}"
+            echo -e "   ${WHITE}1)${NC} ${GRAY}Reinstall $existing_name${NC}"
+            echo -e "   ${WHITE}2)${NC} ${GRAY}Cancel${NC}"
+        else
+            # Trying to install different server
+            echo -e "${YELLOW}⚠️  $existing_name is already installed${NC}"
+            echo -e "${GRAY}   Only one web server can be installed at a time.${NC}"
+            echo
+            echo -e "${WHITE}Options:${NC}"
+            echo -e "   ${WHITE}1)${NC} ${GRAY}Replace $existing_name with $server_display_name${NC}"
+            echo -e "   ${WHITE}2)${NC} ${GRAY}Cancel installation${NC}"
+        fi
         echo
         read -p "Select option [1-2]: " reinstall_choice
         
