@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.4.4
+# VERSION=2.4.5
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -17,7 +17,7 @@ fi
 set -euo pipefail
 
 # Script Configuration
-SCRIPT_VERSION="2.4.4"
+SCRIPT_VERSION="2.4.5"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -1221,53 +1221,8 @@ server {
     }
 }
 
-# HTTPS server for public access
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name $domain;
-
-    # SSL Configuration with ACME certificates
-    ssl_certificate /etc/nginx/ssl/fullchain.crt;
-    ssl_certificate_key /etc/nginx/ssl/private.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-    ssl_session_tickets off;
-    
-    # Resolver for upstream
-    resolver 8.8.8.8 1.1.1.1 valid=300s;
-    resolver_timeout 5s;
-
-    # Logging
-    access_log /var/log/nginx/access.log main;
-    error_log /var/log/nginx/error.log warn;
-
-    # Root directory
-    root /var/www/html;
-    index index.html index.htm;
-
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
-
-    # Cache static files
-    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-}
-
 # HTTPS server with proxy_protocol support (for Reality)
+# Port 443 is reserved for Xray - all HTTPS traffic comes via proxy_protocol
 server {
     listen 127.0.0.1:$port ssl proxy_protocol;
     server_name $domain;
