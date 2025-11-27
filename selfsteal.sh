@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.4.5
+# VERSION=2.4.6
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -17,7 +17,7 @@ fi
 set -euo pipefail
 
 # Script Configuration
-SCRIPT_VERSION="2.4.5"
+SCRIPT_VERSION="2.4.6"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -152,22 +152,28 @@ install_acme() {
     # Generate random email for registration
     local random_email="user$(shuf -i 10000-99999 -n 1)@$(hostname -f 2>/dev/null || echo 'localhost.local')"
     
-    # Install acme.sh using official method
-    if curl -sS "$ACME_INSTALL_URL" | sh -s email="$random_email" >/dev/null 2>&1; then
-        # Source bashrc to load acme.sh
-        [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+    # Install acme.sh using official method with timeout
+    local install_output
+    install_output=$(timeout 60 curl -sS "$ACME_INSTALL_URL" 2>/dev/null | timeout 120 sh -s email="$random_email" 2>&1) || {
+        log_error "acme.sh installation timed out or failed"
+        echo -e "${GRAY}Output: $install_output${NC}"
+        return 1
+    }
+    
+    # Source bashrc to load acme.sh
+    [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+    
+    if [ -f "$ACME_HOME/acme.sh" ]; then
+        log_success "acme.sh installed successfully"
         
-        if [ -f "$ACME_HOME/acme.sh" ]; then
-            log_success "acme.sh installed successfully"
-            
-            # Set default CA to Let's Encrypt
-            "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-            
-            return 0
-        fi
+        # Set default CA to Let's Encrypt
+        "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        
+        return 0
     fi
     
     log_error "Failed to install acme.sh"
+    echo -e "${GRAY}Installation output: $install_output${NC}"
     return 1
 }
 
@@ -237,6 +243,7 @@ find_available_acme_port() {
 issue_ssl_certificate() {
     local domain="$1"
     local ssl_dir="$2"
+    local skip_reload="${3:-false}"  # Skip reload command during initial install
     
     log_info "Requesting SSL certificate for $domain..."
     
@@ -320,20 +327,39 @@ issue_ssl_certificate() {
         fi
     fi
     
+    # Prepare reload command - skip during initial install when container doesn't exist yet
+    local reload_cmd=""
+    if [ "$skip_reload" != "true" ] && docker ps -q -f "name=$CONTAINER_NAME" 2>/dev/null | grep -q .; then
+        reload_cmd="docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true"
+    fi
+    
     # Issue certificate using standalone + alpn
     log_info "Issuing certificate via TLS-ALPN on port $acme_port..."
+    echo -e "${GRAY}This may take a minute...${NC}"
     
-    if "$ACME_HOME/acme.sh" --issue \
-        --standalone \
-        -d "$domain" \
-        --key-file "$ssl_dir/private.key" \
-        --fullchain-file "$ssl_dir/fullchain.crt" \
-        --alpn \
-        --tlsport "$acme_port" \
-        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
-        --server letsencrypt \
-        --force >/dev/null 2>&1; then
-        
+    local acme_args=(
+        --issue
+        --standalone
+        -d "$domain"
+        --key-file "$ssl_dir/private.key"
+        --fullchain-file "$ssl_dir/fullchain.crt"
+        --alpn
+        --tlsport "$acme_port"
+        --server letsencrypt
+        --force
+        --debug 2
+    )
+    
+    # Add reload command only if container exists
+    if [ -n "$reload_cmd" ]; then
+        acme_args+=(--reloadcmd "$reload_cmd")
+    fi
+    
+    local acme_output
+    acme_output=$("$ACME_HOME/acme.sh" "${acme_args[@]}" 2>&1)
+    local acme_exit_code=$?
+    
+    if [ $acme_exit_code -eq 0 ]; then
         log_success "Certificate issued and installed successfully (port $acme_port)"
         
         # Set proper permissions
@@ -342,7 +368,10 @@ issue_ssl_certificate() {
         
         return 0
     else
-        log_error "Failed to issue certificate on port $acme_port"
+        log_error "Failed to issue certificate on port $acme_port (exit code: $acme_exit_code)"
+        echo -e "${YELLOW}ACME output:${NC}"
+        echo "$acme_output" | tail -30
+        echo
         
         # Try next available port if we haven't exhausted all options
         if [ -z "$ACME_PORT" ]; then
@@ -355,21 +384,34 @@ issue_ssl_certificate() {
                     echo
                     log_warning "Trying fallback port $fallback_port..."
                     
-                    if "$ACME_HOME/acme.sh" --issue \
-                        --standalone \
-                        -d "$domain" \
-                        --key-file "$ssl_dir/private.key" \
-                        --fullchain-file "$ssl_dir/fullchain.crt" \
-                        --alpn \
-                        --tlsport "$fallback_port" \
-                        --reloadcmd "docker exec $CONTAINER_NAME nginx -s reload 2>/dev/null || true" \
-                        --server letsencrypt \
-                        --force >/dev/null 2>&1; then
-                        
+                    local fallback_args=(
+                        --issue
+                        --standalone
+                        -d "$domain"
+                        --key-file "$ssl_dir/private.key"
+                        --fullchain-file "$ssl_dir/fullchain.crt"
+                        --alpn
+                        --tlsport "$fallback_port"
+                        --server letsencrypt
+                        --force
+                        --debug 2
+                    )
+                    
+                    if [ -n "$reload_cmd" ]; then
+                        fallback_args+=(--reloadcmd "$reload_cmd")
+                    fi
+                    
+                    acme_output=$("$ACME_HOME/acme.sh" "${fallback_args[@]}" 2>&1)
+                    acme_exit_code=$?
+                    
+                    if [ $acme_exit_code -eq 0 ]; then
                         log_success "Certificate issued successfully on fallback port $fallback_port"
                         chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
                         chmod 644 "$ssl_dir/fullchain.crt" 2>/dev/null || true
                         return 0
+                    else
+                        echo -e "${YELLOW}Fallback attempt failed:${NC}"
+                        echo "$acme_output" | tail -15
                     fi
                 fi
             done
@@ -1095,8 +1137,8 @@ EOF
     log_info "Obtaining SSL certificate from Let's Encrypt..."
     echo
     
-    # Issue certificate
-    if issue_ssl_certificate "$domain" "$APP_DIR/ssl"; then
+    # Issue certificate with skip_reload=true since container doesn't exist yet
+    if issue_ssl_certificate "$domain" "$APP_DIR/ssl" "true"; then
         log_success "SSL certificate obtained successfully"
         
         # Setup auto-renewal
