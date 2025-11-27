@@ -7,17 +7,36 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.4.6
+# VERSION=2.4.11
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
     shift  
 fi
 
-set -euo pipefail
+# Debug mode - set via --debug flag
+DEBUG_MODE=false
+
+# Check for --debug flag early
+for arg in "$@"; do
+    if [ "$arg" = "--debug" ]; then
+        DEBUG_MODE=true
+        echo "🔧 DEBUG MODE ENABLED"
+        break
+    fi
+done
+
+# Only enable strict mode if not debugging
+if [ "$DEBUG_MODE" = true ]; then
+    set -u  # Only undefined variables
+    # Trap errors to show where they occur
+    trap 'echo "❌ ERROR at line $LINENO: $BASH_COMMAND (exit code: $?)"' ERR
+else
+    set -euo pipefail
+fi
 
 # Script Configuration
-SCRIPT_VERSION="2.4.6"
+SCRIPT_VERSION="2.4.11"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -32,6 +51,12 @@ ACME_FALLBACK_PORTS=(8443 9443 10443 18443 28443)
 WEB_SERVER="caddy"
 WEB_SERVER_EXPLICIT=false
 WEB_SERVER_CONFIG_FILE=""
+
+# Socket Configuration (nginx only)
+# By default uses Unix socket for better performance
+# Use --tcp flag to switch to TCP port
+USE_SOCKET=true
+SOCKET_PATH="/dev/shm/nginx.sock"
 
 # Docker Configuration (will be set based on web server)
 CONTAINER_NAME=""
@@ -143,37 +168,138 @@ check_acme_installed() {
 install_acme() {
     log_info "Installing acme.sh..."
     
+    # Disable exit on error and pipefail for this function
+    set +e
+    set +o pipefail 2>/dev/null || true
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Starting install_acme, ACME_HOME=$ACME_HOME"
+    
     # Check for required dependencies
     if ! command -v curl >/dev/null 2>&1; then
         log_error "curl is required for acme.sh installation"
+        set -e
+        set -o pipefail 2>/dev/null || true
         return 1
     fi
+    
+    # Check if already installed
+    if [ -f "$ACME_HOME/acme.sh" ]; then
+        log_success "acme.sh is already installed"
+        "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        set -e
+        set -o pipefail 2>/dev/null || true
+        return 0
+    fi
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: acme.sh not found at $ACME_HOME/acme.sh"
     
     # Generate random email for registration
     local random_email="user$(shuf -i 10000-99999 -n 1)@$(hostname -f 2>/dev/null || echo 'localhost.local')"
     
-    # Install acme.sh using official method with timeout
-    local install_output
-    install_output=$(timeout 60 curl -sS "$ACME_INSTALL_URL" 2>/dev/null | timeout 120 sh -s email="$random_email" 2>&1) || {
-        log_error "acme.sh installation timed out or failed"
-        echo -e "${GRAY}Output: $install_output${NC}"
-        return 1
-    }
+    echo -e "${GRAY}   Email: $random_email${NC}"
+    echo -e "${GRAY}   Downloading and installing acme.sh...${NC}"
+    
+    # Download script first, then execute (more reliable than pipe)
+    local temp_script="/tmp/acme_install_$$.sh"
+    local install_output=""
+    local install_exit_code=0
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Downloading from https://get.acme.sh to $temp_script"
+    
+    if curl -sS --connect-timeout 30 --max-time 60 https://get.acme.sh -o "$temp_script" 2>/dev/null; then
+        if [ -s "$temp_script" ]; then
+            echo -e "${GRAY}   Running acme.sh installer...${NC}"
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Script size: $(wc -c < "$temp_script") bytes"
+            
+            install_output=$(sh "$temp_script" email="$random_email" 2>&1) || install_exit_code=$?
+            echo -e "${GRAY}   Installer finished with code: $install_exit_code${NC}"
+            
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Install output:"
+            [ "$DEBUG_MODE" = true ] && echo "$install_output"
+        else
+            echo -e "${YELLOW}   Downloaded script is empty${NC}"
+        fi
+    else
+        echo -e "${YELLOW}   Failed to download from get.acme.sh${NC}"
+    fi
+    rm -f "$temp_script"
     
     # Source bashrc to load acme.sh
     [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
     
-    if [ -f "$ACME_HOME/acme.sh" ]; then
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Checking for acme.sh at $ACME_HOME/acme.sh"
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: HOME=$HOME"
+    [ "$DEBUG_MODE" = true ] && ls -la "$ACME_HOME/" 2>/dev/null || echo "DEBUG: $ACME_HOME does not exist"
+    
+    # Check multiple possible locations
+    local acme_found=false
+    for acme_path in "$ACME_HOME/acme.sh" "$HOME/.acme.sh/acme.sh" "/root/.acme.sh/acme.sh"; do
+        [ "$DEBUG_MODE" = true ] && echo "DEBUG: Checking $acme_path"
+        if [ -f "$acme_path" ]; then
+            ACME_HOME=$(dirname "$acme_path")
+            acme_found=true
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Found at $acme_path, setting ACME_HOME=$ACME_HOME"
+            break
+        fi
+    done
+    
+    if [ "$acme_found" = true ]; then
         log_success "acme.sh installed successfully"
         
         # Set default CA to Let's Encrypt
         "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
         
+        [ "$DEBUG_MODE" = false ] && set -e
+        [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
         return 0
     fi
     
+    # If first method failed, try git clone method
+    log_warning "First method failed, trying git clone method..."
+    
+    if command -v git >/dev/null 2>&1; then
+        local temp_dir="/tmp/acme_git_$$"
+        rm -rf "$temp_dir"
+        
+        echo -e "${GRAY}   Cloning acme.sh repository...${NC}"
+        if git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$temp_dir" 2>/dev/null; then
+            cd "$temp_dir" || true
+            echo -e "${GRAY}   Running installer from git...${NC}"
+            install_output=$(./acme.sh --install -m "$random_email" 2>&1) || install_exit_code=$?
+            echo -e "${GRAY}   Git installer finished with code: $install_exit_code${NC}"
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: Git install output: $install_output"
+            cd - >/dev/null || true
+            rm -rf "$temp_dir"
+            
+            # Source bashrc again
+            [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+            
+            # Check again in multiple locations
+            for acme_path in "$ACME_HOME/acme.sh" "$HOME/.acme.sh/acme.sh" "/root/.acme.sh/acme.sh"; do
+                if [ -f "$acme_path" ]; then
+                    ACME_HOME=$(dirname "$acme_path")
+                    log_success "acme.sh installed successfully via git"
+                    "$ACME_HOME/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+                    [ "$DEBUG_MODE" = false ] && set -e
+                    [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
+                    return 0
+                fi
+            done
+        else
+            echo -e "${YELLOW}   Git clone failed${NC}"
+        fi
+        rm -rf "$temp_dir"
+    else
+        echo -e "${YELLOW}   Git not available for fallback${NC}"
+    fi
+    
     log_error "Failed to install acme.sh"
-    echo -e "${GRAY}Installation output: $install_output${NC}"
+    if [ -n "${install_output:-}" ]; then
+        echo -e "${YELLOW}Installation output:${NC}"
+        echo "$install_output" | tail -20
+    fi
+    [ "$DEBUG_MODE" = false ] && set -e
+    [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
     return 1
 }
 
@@ -229,14 +355,15 @@ find_available_acme_port() {
     
     # Try fallback ports
     for port in "${ACME_FALLBACK_PORTS[@]}"; do
-        if ! ss -tlnp 2>/dev/null | grep -q ":$port "; then
+        if ! ss -tlnp 2>/dev/null | grep -q ":$port " 2>/dev/null; then
             echo "$port"
             return 0
         fi
     done
     
-    # No available port found
-    return 1
+    # No available port found - return empty string but success
+    echo ""
+    return 0
 }
 
 # Issue SSL certificate for domain using TLS-ALPN
@@ -247,36 +374,64 @@ issue_ssl_certificate() {
     
     log_info "Requesting SSL certificate for $domain..."
     
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: issue_ssl_certificate started"
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: domain=$domain, ssl_dir=$ssl_dir, skip_reload=$skip_reload"
+    
+    # Disable exit on error and pipefail for this function
+    set +e
+    set +o pipefail 2>/dev/null || true
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Checking if acme.sh is installed"
+    
     # Ensure acme.sh is installed
     if ! check_acme_installed; then
+        [ "$DEBUG_MODE" = true ] && echo "DEBUG: acme.sh not installed, calling install_acme"
         if ! install_acme; then
+            [ "$DEBUG_MODE" = true ] && echo "DEBUG: install_acme FAILED"
+            [ "$DEBUG_MODE" = false ] && set -e
+            [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
             return 1
         fi
+        [ "$DEBUG_MODE" = true ] && echo "DEBUG: install_acme completed successfully"
+    else
+        [ "$DEBUG_MODE" = true ] && echo "DEBUG: acme.sh already installed at $ACME_HOME"
     fi
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Checking for socat"
     
     # Install socat if not available (required for standalone mode)
     if ! command -v socat >/dev/null 2>&1; then
         log_info "Installing socat (required for certificate validation)..."
         if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && apt-get install -y -qq socat >/dev/null 2>&1
+            apt-get update -qq && apt-get install -y -qq socat >/dev/null 2>&1 || true
         elif command -v yum >/dev/null 2>&1; then
-            yum install -y -q socat >/dev/null 2>&1
+            yum install -y -q socat >/dev/null 2>&1 || true
         elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y -q socat >/dev/null 2>&1
+            dnf install -y -q socat >/dev/null 2>&1 || true
         elif command -v apk >/dev/null 2>&1; then
-            apk add --quiet socat >/dev/null 2>&1
+            apk add --quiet socat >/dev/null 2>&1 || true
         fi
         
         if command -v socat >/dev/null 2>&1; then
             log_success "socat installed"
         else
             log_error "Failed to install socat"
+            [ "$DEBUG_MODE" = false ] && set -e
+            [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
             return 1
         fi
     fi
     
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Creating SSL directory: $ssl_dir"
+    
     # Create SSL directory
-    create_dir_safe "$ssl_dir" || return 1
+    if ! create_dir_safe "$ssl_dir"; then
+        [ "$DEBUG_MODE" = false ] && set -e
+        [ "$DEBUG_MODE" = false ] && set -o pipefail 2>/dev/null || true
+        return 1
+    fi
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Finding available ACME port"
     
     # Find available port for ACME
     local acme_port
@@ -356,7 +511,7 @@ issue_ssl_certificate() {
     fi
     
     local acme_output
-    acme_output=$("$ACME_HOME/acme.sh" "${acme_args[@]}" 2>&1)
+    acme_output=$("$ACME_HOME/acme.sh" "${acme_args[@]}" 2>&1) || true
     local acme_exit_code=$?
     
     if [ $acme_exit_code -eq 0 ]; then
@@ -366,6 +521,8 @@ issue_ssl_certificate() {
         chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
         chmod 644 "$ssl_dir/fullchain.crt" 2>/dev/null || true
         
+        set -e
+        set -o pipefail
         return 0
     else
         log_error "Failed to issue certificate on port $acme_port (exit code: $acme_exit_code)"
@@ -380,7 +537,7 @@ issue_ssl_certificate() {
                 if [ "$fallback_port" = "$tried_port" ]; then
                     continue
                 fi
-                if ! ss -tlnp 2>/dev/null | grep -q ":$fallback_port "; then
+                if ! ss -tlnp 2>/dev/null | grep -q ":$fallback_port " 2>/dev/null; then
                     echo
                     log_warning "Trying fallback port $fallback_port..."
                     
@@ -401,13 +558,15 @@ issue_ssl_certificate() {
                         fallback_args+=(--reloadcmd "$reload_cmd")
                     fi
                     
-                    acme_output=$("$ACME_HOME/acme.sh" "${fallback_args[@]}" 2>&1)
+                    acme_output=$("$ACME_HOME/acme.sh" "${fallback_args[@]}" 2>&1) || true
                     acme_exit_code=$?
                     
                     if [ $acme_exit_code -eq 0 ]; then
                         log_success "Certificate issued successfully on fallback port $fallback_port"
                         chmod 600 "$ssl_dir/private.key" 2>/dev/null || true
                         chmod 644 "$ssl_dir/fullchain.crt" 2>/dev/null || true
+                        set -e
+                        set -o pipefail
                         return 0
                     else
                         echo -e "${YELLOW}Fallback attempt failed:${NC}"
@@ -417,6 +576,8 @@ issue_ssl_certificate() {
             done
         fi
         
+        set -e
+        set -o pipefail
         return 1
     fi
 }
@@ -595,6 +756,26 @@ while [ $# -gt 0 ]; do
             if ! [[ "$ACME_PORT" =~ ^[0-9]+$ ]]; then
                 log_error "--acme-port requires a valid port number"
                 exit 1
+            fi
+            shift
+            ;;
+        --debug)
+            # Already handled at the top of the script
+            shift
+            ;;
+        --tcp)
+            # Use TCP port instead of Unix socket (nginx only)
+            USE_SOCKET=false
+            if [ "$WEB_SERVER" != "nginx" ] && [ "$WEB_SERVER_EXPLICIT" != true ]; then
+                log_warning "--tcp flag is only applicable to Nginx, will be ignored for Caddy"
+            fi
+            shift
+            ;;
+        --socket)
+            # Use Unix socket (default for nginx)
+            USE_SOCKET=true
+            if [ "$WEB_SERVER" != "nginx" ] && [ "$WEB_SERVER_EXPLICIT" != true ]; then
+                log_warning "--socket flag is only applicable to Nginx, will be ignored for Caddy"
             fi
             shift
             ;;
@@ -1106,13 +1287,26 @@ create_nginx_config() {
     local domain="$1"
     local port="$2"
     
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: create_nginx_config started, domain=$domain, port=$port"
+    
     # Create .env file
+    local connection_mode="socket"
+    local connection_target="$SOCKET_PATH"
+    if [ "$USE_SOCKET" != true ]; then
+        connection_mode="tcp"
+        connection_target="127.0.0.1:$port"
+    fi
+    
     cat > "$APP_DIR/.env" << EOF
 # Nginx for Reality Selfsteal Configuration
 # Web Server: Nginx
 # Domain Configuration
 SELF_STEAL_DOMAIN=$domain
 SELF_STEAL_PORT=$port
+
+# Connection Mode: $connection_mode
+# Xray target: $connection_target
+# xver: 1 (proxy_protocol v1)
 
 # Generated on $(date)
 # Server IP: $NODE_IP
@@ -1121,12 +1315,16 @@ EOF
 
     log_success ".env file created"
     
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Creating SSL directory"
+    
     # Create SSL directory
     create_dir_safe "$APP_DIR/ssl" || return 1
     
     # Create HTML directory for webroot (needed for ACME)
     create_dir_safe "$HTML_DIR" || return 1
     create_dir_safe "$HTML_DIR/.well-known/acme-challenge" || return 1
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Directories created, starting SSL certificate process"
     
     # Obtain SSL certificate via ACME
     echo
@@ -1136,6 +1334,8 @@ EOF
     
     log_info "Obtaining SSL certificate from Let's Encrypt..."
     echo
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: Calling issue_ssl_certificate"
     
     # Issue certificate with skip_reload=true since container doesn't exist yet
     if issue_ssl_certificate "$domain" "$APP_DIR/ssl" "true"; then
@@ -1166,9 +1366,36 @@ EOF
             return 1
         fi
     fi
+    
+    [ "$DEBUG_MODE" = true ] && echo "DEBUG: SSL certificate process completed, creating docker-compose.yml"
 
-    # Create docker-compose.yml
-    cat > "$APP_DIR/docker-compose.yml" << EOF
+    # Create docker-compose.yml with socket or TCP configuration
+    if [ "$USE_SOCKET" = true ]; then
+        cat > "$APP_DIR/docker-compose.yml" << EOF
+services:
+  nginx:
+    image: nginx:${NGINX_VERSION}
+    container_name: ${CONTAINER_NAME}
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ${HTML_DIR}:/var/www/html:ro
+      - ./logs:/var/log/nginx
+      - ./ssl:/etc/nginx/ssl:ro
+      - /dev/shm:/dev/shm
+    env_file:
+      - .env
+    network_mode: "host"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+EOF
+        log_success "docker-compose.yml created (Unix socket mode)"
+    else
+        cat > "$APP_DIR/docker-compose.yml" << EOF
 services:
   nginx:
     image: nginx:${NGINX_VERSION}
@@ -1189,8 +1416,8 @@ services:
         max-size: "10m"
         max-file: "3"
 EOF
-
-    log_success "docker-compose.yml created"
+        log_success "docker-compose.yml created (TCP port mode)"
+    fi
     
     # Create conf.d directory
     create_dir_safe "$APP_DIR/conf.d" || return 1
@@ -1243,8 +1470,84 @@ EOF
 
     log_success "nginx.conf created"
 
-    # Create site configuration with proxy_protocol support and ACME SSL
-    cat > "$APP_DIR/conf.d/selfsteal.conf" << EOF
+    # Create site configuration based on socket or TCP mode
+    if [ "$USE_SOCKET" = true ]; then
+        # Unix socket configuration for Xray Reality
+        cat > "$APP_DIR/conf.d/selfsteal.conf" << EOF
+# HTTP server - redirect and ACME challenge
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name $domain;
+    
+    # ACME challenge for Let's Encrypt certificate renewal
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
+    }
+    
+    # Redirect all other traffic to HTTPS
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# HTTPS server via Unix socket with proxy_protocol (for Xray Reality)
+# Xray forwards traffic to $SOCKET_PATH with xver: 1 (proxy_protocol v1)
+server {
+    listen unix:$SOCKET_PATH ssl proxy_protocol;
+    server_name $domain;
+
+    # SSL Configuration with ACME certificates
+    ssl_certificate /etc/nginx/ssl/fullchain.crt;
+    ssl_certificate_key /etc/nginx/ssl/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Get real IP from proxy protocol
+    set_real_ip_from unix:;
+    real_ip_header proxy_protocol;
+
+    # Logging
+    access_log /var/log/nginx/access.log proxy_protocol;
+    error_log /var/log/nginx/error.log warn;
+
+    # Root directory
+    root /var/www/html;
+    index index.html index.htm;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    # Cache static files
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+        log_success "Nginx site configuration created (Unix socket: $SOCKET_PATH)"
+        
+        # Show Xray configuration hint
+        echo
+        echo -e "${CYAN}📋 Xray Reality Configuration:${NC}"
+        echo -e "${GRAY}───────────────────────────────────────${NC}"
+        echo -e "${WHITE}   \"target\": \"$SOCKET_PATH\",${NC}"
+        echo -e "${WHITE}   \"xver\": 1${NC}"
+        echo -e "${GRAY}───────────────────────────────────────${NC}"
+        
+    else
+        # TCP port configuration
+        cat > "$APP_DIR/conf.d/selfsteal.conf" << EOF
 # HTTP server - redirect and ACME challenge
 server {
     listen 80 default_server;
@@ -1317,8 +1620,16 @@ server {
     return 204;
 }
 EOF
-
-    log_success "Nginx site configuration created with ACME SSL"
+        log_success "Nginx site configuration created (TCP port: $port)"
+        
+        # Show Xray configuration hint
+        echo
+        echo -e "${CYAN}📋 Xray Reality Configuration:${NC}"
+        echo -e "${GRAY}───────────────────────────────────────${NC}"
+        echo -e "${WHITE}   \"target\": \"127.0.0.1:$port\",${NC}"
+        echo -e "${WHITE}   \"xver\": 1${NC}"
+        echo -e "${GRAY}───────────────────────────────────────${NC}"
+    fi
 }
 
 # Install function
@@ -1643,7 +1954,20 @@ install_command() {
     echo
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Web Server:" "$server_display_name"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
-    printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+    
+    # Show connection mode info for Nginx
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        if [ "$USE_SOCKET" = true ]; then
+            printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Connection Mode:" "Unix Socket"
+            printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Socket Path:" "$SOCKET_PATH"
+        else
+            printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Connection Mode:" "TCP Port"
+            printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+        fi
+    else
+        printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+    fi
+    
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installation Path:" "$APP_DIR"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "HTML Content:" "$HTML_DIR"
     printf "   ${WHITE}%-20s${NC} ${GRAY}%s${NC}\n" "Installed Template:" "$installed_template"
@@ -1652,7 +1976,13 @@ install_command() {
     echo -e "${WHITE}📋 Next Steps:${NC}"
     echo -e "${GRAY}   • Configure your Xray Reality with:${NC}"
     echo -e "${GRAY}     - serverNames: [\"$domain\"]${NC}"
-    echo -e "${GRAY}     - dest: \"127.0.0.1:$port\"${NC}"
+    if [ "$WEB_SERVER" = "nginx" ] && [ "$USE_SOCKET" = true ]; then
+        echo -e "${CYAN}     - target: \"$SOCKET_PATH\"${NC}"
+        echo -e "${CYAN}     - xver: 1${NC}"
+    else
+        echo -e "${CYAN}     - target: \"127.0.0.1:$port\"${NC}"
+        echo -e "${CYAN}     - xver: 1${NC}"
+    fi
     echo -e "${GRAY}   • Change template: sudo $APP_NAME template${NC}"
     echo -e "${GRAY}   • Customize HTML content in: $HTML_DIR${NC}"
     echo -e "${GRAY}   • Check status: sudo $APP_NAME status${NC}"
@@ -2470,10 +2800,24 @@ status_command() {
         local port
         domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" | cut -d'=' -f2)
         port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" | cut -d'=' -f2)
+        local connection_mode
+        connection_mode=$(grep "Connection Mode:" "$APP_DIR/.env" | cut -d':' -f2 | tr -d ' ')
         
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Web Server:" "$server_name"
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
-        printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+        
+        # Show connection mode for Nginx
+        if [ "$WEB_SERVER" = "nginx" ]; then
+            if [ "$connection_mode" = "socket" ] || [ -z "$connection_mode" ]; then
+                printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Connection:" "Unix Socket"
+                printf "   ${WHITE}%-15s${NC} ${CYAN}%s${NC}\n" "Xray target:" "$SOCKET_PATH"
+            else
+                printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Connection:" "TCP Port"
+                printf "   ${WHITE}%-15s${NC} ${CYAN}%s${NC}\n" "Xray target:" "127.0.0.1:$port"
+            fi
+        else
+            printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTTPS Port:" "$port"
+        fi
         printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "HTML Path:" "$HTML_DIR"
     fi
     printf "   ${WHITE}%-15s${NC} ${GRAY}%s${NC}\n" "Script Version:" "v$SCRIPT_VERSION"
@@ -2936,7 +3280,11 @@ show_help() {
     echo -e "${WHITE}Server Options:${NC}"
     printf "   ${CYAN}%-18s${NC} %s\n" "--nginx" "Use Nginx as web server"
     printf "   ${CYAN}%-18s${NC} %s\n" "--caddy" "Use Caddy as web server (default)"
-    printf "   ${CYAN}%-18s${NC} %s\n" "--acme-port <port>" "Custom port for ACME TLS-ALPN (Nginx only)"
+    echo
+    echo -e "${WHITE}Nginx Options:${NC}"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--socket" "Use Unix socket (default)"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--tcp" "Use TCP port instead of socket"
+    printf "   ${CYAN}%-18s${NC} %s\n" "--acme-port <port>" "Custom port for ACME TLS-ALPN"
     echo
     echo -e "${WHITE}Commands:${NC}"
     printf "   ${CYAN}%-12s${NC} %s\n" "install" "🚀 Install $server_name for Reality masking"
@@ -2955,11 +3303,16 @@ show_help() {
     printf "   ${CYAN}%-12s${NC} %s\n" "update" "🔄 Check for script updates"
     echo
     echo -e "${WHITE}Examples:${NC}"
-    echo -e "  ${GRAY}sudo $APP_NAME install${NC}"
-    echo -e "  ${GRAY}sudo $APP_NAME --nginx install${NC}"
+    echo -e "  ${GRAY}sudo $APP_NAME install${NC}                    # Caddy (default)"
+    echo -e "  ${GRAY}sudo $APP_NAME --nginx install${NC}            # Nginx with Unix socket"
+    echo -e "  ${GRAY}sudo $APP_NAME --nginx --tcp install${NC}      # Nginx with TCP port"
     echo -e "  ${GRAY}sudo $APP_NAME status${NC}"
     echo -e "  ${GRAY}sudo $APP_NAME logs${NC}"
     echo -e "  ${GRAY}sudo $APP_NAME renew-ssl${NC}"
+    echo
+    echo -e "${WHITE}Xray Reality Configuration:${NC}"
+    echo -e "  ${GRAY}Socket mode (default):  \"target\": \"/dev/shm/nginx.sock\", \"xver\": 1${NC}"
+    echo -e "  ${GRAY}TCP mode:               \"target\": \"127.0.0.1:9443\", \"xver\": 1${NC}"
     echo
     echo -e "${WHITE}For more information, visit:${NC}"
     echo -e "  ${BLUE}https://github.com/DigneZzZ/remnawave-scripts${NC}"
@@ -3113,13 +3466,35 @@ guide_command() {
     # Get current configuration
     local domain=""
     local port=""
+    local connection_mode=""
+    local xray_target=""
+    
     if [ -f "$APP_DIR/.env" ]; then
         domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
         port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+        connection_mode=$(grep "Connection Mode:" "$APP_DIR/.env" 2>/dev/null | cut -d':' -f2 | tr -d ' ')
+    fi
+    
+    # Determine xray_target based on web server and connection mode
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        if [ "$connection_mode" = "socket" ] || [ -z "$connection_mode" ]; then
+            xray_target="$SOCKET_PATH"
+        else
+            xray_target="127.0.0.1:${port:-9443}"
+        fi
+    else
+        xray_target="127.0.0.1:${port:-9443}"
+    fi
+
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
     fi
 
     echo -e "${BLUE}🎯 What is Selfsteal?${NC}"
-    echo -e "${GRAY}Selfsteal is a Caddy-based front-end for Xray Reality protocol that provides:"
+    echo -e "${GRAY}Selfsteal is a $server_name-based front-end for Xray Reality protocol that provides:"
     echo "• Traffic masking with legitimate-looking websites"
     echo "• SSL/TLS termination and certificate management"
     echo "• Multiple website templates for better camouflage"
@@ -3127,17 +3502,28 @@ guide_command() {
     echo
 
     echo -e "${BLUE}🔧 How it works:${NC}"
-    echo -e "${GRAY}1. Caddy runs on a custom HTTPS port (default: 9443)"
-    echo "2. Xray Reality forwards unrecognized traffic to Caddy"
+    if [ "$WEB_SERVER" = "nginx" ] && [ "$connection_mode" != "tcp" ]; then
+        echo -e "${GRAY}1. Nginx listens on Unix Socket ($SOCKET_PATH)"
+        echo "2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
+    else
+        echo -e "${GRAY}1. $server_name runs on internal port (127.0.0.1:${port:-9443})"
+        echo "2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
+    fi
     echo "3. Regular users see a normal website"
     echo "4. VPN clients connect through Reality protocol${NC}"
     echo
 
-    if [ -n "$domain" ] && [ -n "$port" ]; then
+    if [ -n "$domain" ]; then
         echo -e "${GREEN}✅ Your Current Configuration:${NC}"
+        echo -e "${WHITE}   Web Server:${NC} ${CYAN}$server_name${NC}"
         echo -e "${WHITE}   Domain:${NC} ${CYAN}$domain${NC}"
-        echo -e "${WHITE}   HTTPS Port:${NC} ${CYAN}$port${NC}"
-        echo -e "${WHITE}   Website URL:${NC} ${CYAN}https://$domain:$port${NC}"
+        if [ "$WEB_SERVER" = "nginx" ] && [ "$connection_mode" != "tcp" ]; then
+            echo -e "${WHITE}   Connection:${NC} ${CYAN}Unix Socket${NC}"
+            echo -e "${WHITE}   Xray target:${NC} ${CYAN}$SOCKET_PATH${NC}"
+        else
+            echo -e "${WHITE}   Connection:${NC} ${CYAN}TCP Port${NC}"
+            echo -e "${WHITE}   Xray target:${NC} ${CYAN}127.0.0.1:$port${NC}"
+        fi
         echo
     else
         echo -e "${YELLOW}⚠️  Selfsteal not configured yet. Run installation first!${NC}"
@@ -3158,7 +3544,7 @@ guide_command() {
 ${WHITE}{
     "inbounds": [
         {
-            "tag": "VLESS_SELFSTEAL_WITH_CADDY",
+            "tag": "VLESS_REALITY_SELFSTEAL",
             "port": 443,
             "protocol": "vless",
             "settings": {
@@ -3167,11 +3553,7 @@ ${WHITE}{
             },
             "sniffing": {
                 "enabled": true,
-                "destOverride": [
-                    "http",
-                    "tls",
-                    "quic"
-                ]
+                "destOverride": ["http", "tls", "quic"]
             },
             "streamSettings": {
                 "network": "raw",
@@ -3179,15 +3561,11 @@ ${WHITE}{
                 "realitySettings": {
                     "show": false,
                     "xver": 1,
-                    "target": "127.0.0.1:${port:-9443}",
-                    "spiderX": "",
-                    "shortIds": [
-                        ""
-                    ],
+                    "target": "${xray_target}",
+                    "spiderX": "/",
+                    "shortIds": [""],
                     "privateKey": "$private_key",
-                    "serverNames": [
-                        "${domain:-reality.example.com}"
-                    ]
+                    "serverNames": ["${domain:-reality.example.com}"]
                 }
             }
         }
@@ -3205,11 +3583,13 @@ EOF
         echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generate with Reality key tools${NC}"
     fi
     if [ -z "$domain" ]; then
-        echo -e "${GRAY}• ${WHITE}reality.example.com${GRAY} - Your actual domain${NC}"
+        echo -e "${GRAY}• ${WHITE}serverNames${GRAY} - Your actual domain${NC}"
     fi
-    if [ -z "$port" ] || [ "$port" != "9443" ]; then
-        echo -e "${GRAY}• ${WHITE}9443${GRAY} - Your Caddy HTTPS port${NC}"
-    fi
+    echo
+    
+    echo -e "${CYAN}📌 Important parameters:${NC}"
+    echo -e "${WHITE}   xver: 1${NC} - proxy_protocol version (always 1)"
+    echo -e "${WHITE}   target: ${xray_target}${NC}"
     echo
 
     echo -e "${BLUE}🔐 Generate Reality Keys${NC}"
@@ -3228,8 +3608,8 @@ EOF
     echo
 
     echo -e "${BLUE}🔍 Testing Your Setup:${NC}"
-    echo -e "${GRAY}1. Check if Caddy is running:${NC}"
-    echo -e "${CYAN}   curl -k https://${domain:-your-domain.com}${NC}"
+    echo -e "${GRAY}1. Check if $server_name is running:${NC}"
+    echo -e "${CYAN}   selfsteal status${NC}"
     echo
     echo -e "${GRAY}2. Verify website loads in browser:${NC}"
     echo -e "${CYAN}   https://${domain:-your-domain.com}${NC}"
@@ -3239,10 +3619,14 @@ EOF
     echo
 
     echo -e "${BLUE}🛠️  Troubleshooting:${NC}"
-    echo -e "${GRAY}• ${WHITE}Connection refused:${GRAY} Check if Caddy is running (option 5)${NC}"
+    echo -e "${GRAY}• ${WHITE}Connection refused:${GRAY} Check if $server_name is running (selfsteal status)${NC}"
     echo -e "${GRAY}• ${WHITE}SSL certificate errors:${GRAY} Verify DNS points to your server${NC}"
-    echo -e "${GRAY}• ${WHITE}Reality not working:${GRAY} Check port ${port:-9443} is accessible${NC}"
-    echo -e "${GRAY}• ${WHITE}Website not loading:${GRAY} Try regenerating templates (option 6)${NC}"
+    if [ "$WEB_SERVER" = "nginx" ] && [ "$connection_mode" != "tcp" ]; then
+        echo -e "${GRAY}• ${WHITE}Reality not working:${GRAY} Check socket exists: ls -la $SOCKET_PATH${NC}"
+    else
+        echo -e "${GRAY}• ${WHITE}Reality not working:${GRAY} Check port ${port:-9443} is listening${NC}"
+    fi
+    echo -e "${GRAY}• ${WHITE}Website not loading:${GRAY} Try changing templates (selfsteal template)${NC}"
     echo
 
     echo -e "${GREEN}💡 Pro Tips:${NC}"

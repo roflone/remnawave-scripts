@@ -10,6 +10,7 @@
 ## Основные возможности
 
 - **Выбор веб-сервера**: Caddy (по умолчанию) или Nginx с флагом `--nginx`
+- **Unix Socket (Nginx)**: По умолчанию Nginx использует Unix socket для лучшей производительности
 - **ACME SSL сертификаты**: Let's Encrypt через TLS-ALPN на порту 8443 (не требует 80 порт)
 - **Автоустановка Docker**: Автоматическая установка Docker если не установлен
 - **Проверка Firewall**: Автопроверка UFW, firewalld, iptables
@@ -21,6 +22,7 @@
 
 ## Архитектура
 
+### Caddy (TCP порт)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         Интернет                            │
@@ -35,13 +37,34 @@
                            │ proxy_protocol
                            ▼ 127.0.0.1:9443
 ┌─────────────────────────────────────────────────────────────┐
-│                   Caddy / Nginx                             │
+│                        Caddy                                │
 │         Слушает ТОЛЬКО на 127.0.0.1:9443                    │
 │      Отдаёт сайт-обманку через proxy_protocol               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Важно**: Веб-сервер (Caddy/Nginx) **НЕ слушает на порту 443**. Порт 443 полностью принадлежит Xray. Веб-сервер получает трафик от Xray через внутренний порт 127.0.0.1:9443 с proxy_protocol.
+### Nginx (Unix Socket - по умолчанию)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Интернет                            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼ :443
+┌─────────────────────────────────────────────────────────────┐
+│                     Xray (Reality)                          │
+│                   Занимает порт 443                         │
+│         Принимает VLESS подключения с Reality               │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ proxy_protocol (xver: 1)
+                           ▼ /dev/shm/nginx.sock
+┌─────────────────────────────────────────────────────────────┐
+│                        Nginx                                │
+│       Слушает на Unix Socket /dev/shm/nginx.sock            │
+│      Отдаёт сайт-обманку через proxy_protocol               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Важно**: Веб-сервер (Caddy/Nginx) **НЕ слушает на порту 443**. Порт 443 полностью принадлежит Xray. Веб-сервер получает трафик от Xray через внутренний порт или Unix socket с proxy_protocol.
 
 ## Требования
 
@@ -52,7 +75,8 @@
 - **Домен**: Настроенный домен, указывающий на IP сервера.
 - **Порты**:
   - **443** — зарезервирован для **Xray** (не занимается веб-сервером!)
-  - **9443** — внутренний порт веб-сервера (127.0.0.1, proxy_protocol от Xray)
+  - **Unix socket** `/dev/shm/nginx.sock` — для Nginx (по умолчанию)
+  - **9443** — внутренний TCP порт веб-сервера (Caddy или Nginx с `--tcp`)
   - **80** — редирект на HTTPS (Caddy) или ACME HTTP challenge
   - **8443** — ACME TLS-ALPN для Nginx (с автофолбэком на другие порты)
 
@@ -65,9 +89,14 @@
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
 ```
 
-**Nginx с ACME SSL:**
+**Nginx с Unix Socket (рекомендуется):**
 ```bash
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx install
+```
+
+**Nginx с TCP портом:**
+```bash
+bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --tcp install
 ```
 
 **Nginx с кастомным портом ACME:**
@@ -83,9 +112,9 @@ sudo bash -c "curl -fsSL https://raw.githubusercontent.com/DigneZzZ/remnawave-sc
 
 Затем:
 ```bash
-selfsteal install          # Caddy
-selfsteal --nginx install  # Nginx
-selfsteal --nginx --acme-port 15443 install  # Nginx с кастомным портом ACME
+selfsteal install              # Caddy (TCP порт)
+selfsteal --nginx install      # Nginx (Unix Socket, рекомендуется)
+selfsteal --nginx --tcp install  # Nginx (TCP порт)
 ```
 
 ## Использование
@@ -113,12 +142,18 @@ selfsteal help         # Справка
 ### Опции веб-сервера
 
 ```bash
-selfsteal --caddy install   # Caddy (по умолчанию)
-selfsteal --nginx install   # Nginx с ACME SSL
-selfsteal --nginx --acme-port 15443 install  # Nginx с кастомным портом для ACME
+selfsteal --caddy install       # Caddy (по умолчанию)
+selfsteal --nginx install       # Nginx с Unix Socket (по умолчанию)
+selfsteal --nginx --tcp install # Nginx с TCP портом
 ```
 
-### Опция --acme-port (только для Nginx)
+### Опции Nginx
+
+| Опция | Описание |
+|-------|----------|
+| `--socket` | Использовать Unix Socket (по умолчанию) |
+| `--tcp` | Использовать TCP порт вместо socket |
+| `--acme-port <port>` | Кастомный порт для ACME TLS-ALPN |
 
 При установке Nginx для получения SSL-сертификата используется ACME TLS-ALPN challenge. По умолчанию скрипт пробует порты в следующем порядке: **8443 → 9443 → 10443 → 18443 → 28443**.
 
@@ -136,8 +171,15 @@ selfsteal --nginx --acme-port 12345 install
 | SSL сертификаты | Автоматически (внутренние) | ACME (Let's Encrypt) с автофолбэком портов |
 | Конфигурация | Caddyfile | nginx.conf + conf.d/ |
 | Путь установки | `/opt/caddy` | `/opt/nginx-selfsteal` |
+| **Режим подключения** | TCP порт (127.0.0.1:9443) | **Unix Socket** (по умолчанию) или TCP |
+| **Xray target** | `127.0.0.1:9443` | `/dev/shm/nginx.sock` (socket) или `127.0.0.1:9443` (tcp) |
 | Обновление SSL | Автоматически | `selfsteal renew-ssl` |
-| Порт для SSL | 80 (ACME HTTP) | 8443/9443/10443/18443/28443 (ACME TLS-ALPN) или `--acme-port` |
+| Порт для ACME | 80 (ACME HTTP) | 8443+ (ACME TLS-ALPN) или `--acme-port` |
+
+### Преимущества Unix Socket (Nginx)
+- **Быстрее**: Нет накладных расходов на TCP стек
+- **Безопаснее**: Не занимает сетевой порт
+- **Проще**: Нет конфликтов портов
 
 ## Шаблоны сайтов
 
@@ -179,13 +221,15 @@ selfsteal --nginx --acme-port 12345 install
 
 ## Конфигурация Xray Reality
 
-После установки Caddy настройте Xray Reality, используя параметры из установки. Пример конфигурации `inbounds` для Xray:
+После установки веб-сервера настройте Xray Reality, используя параметры из установки.
+
+### Nginx с Unix Socket (рекомендуется)
 
 ```json
 {
     "inbounds": [
         {
-            "tag": "VLESS_SELFSTEAL_WITH_CADDY",
+            "tag": "VLESS_REALITY_NGINX_SOCKET",
             "port": 443,
             "protocol": "vless",
             "settings": {
@@ -194,11 +238,42 @@ selfsteal --nginx --acme-port 12345 install
             },
             "sniffing": {
                 "enabled": true,
-                "destOverride": [
-                    "http",
-                    "tls",
-                    "quic"
-                ]
+                "destOverride": ["http", "tls", "quic"]
+            },
+            "streamSettings": {
+                "network": "raw",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "xver": 1,
+                    "target": "/dev/shm/nginx.sock",
+                    "spiderX": "/",
+                    "shortIds": [""],
+                    "privateKey": "#REPLACE_WITH_YOUR_PRIVATE_KEY",
+                    "serverNames": ["reality.example.com"]
+                }
+            }
+        }
+    ]
+}
+```
+
+### Caddy или Nginx с TCP портом
+
+```json
+{
+    "inbounds": [
+        {
+            "tag": "VLESS_REALITY_TCP",
+            "port": 443,
+            "protocol": "vless",
+            "settings": {
+                "clients": [],
+                "decryption": "none"
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls", "quic"]
             },
             "streamSettings": {
                 "network": "raw",
@@ -207,14 +282,10 @@ selfsteal --nginx --acme-port 12345 install
                     "show": false,
                     "xver": 1,
                     "target": "127.0.0.1:9443",
-                    "spiderX": "",
-                    "shortIds": [
-                        ""
-                    ],
-                    "privateKey": "#REPLACE_WITH_YOUR_PRIVATE_KEY, GENERATE BELOW ↓",
-                    "serverNames": [
-                        "reality.example.com"
-                    ]
+                    "spiderX": "/",
+                    "shortIds": [""],
+                    "privateKey": "#REPLACE_WITH_YOUR_PRIVATE_KEY",
+                    "serverNames": ["reality.example.com"]
                 }
             }
         }
@@ -222,16 +293,19 @@ selfsteal --nginx --acme-port 12345 install
 }
 ```
 
-Замените:
-- `"reality.example.com"` на ваш домен, указанный при установке Caddy.
-- `"#REPLACE_WITH_YOUR_PRIVATE_KEY"` на ваш сгенерированный приватный ключ Reality.
+### Параметры для замены
 
-Убедитесь, что порт `target` (он же dest) совпадает с портом HTTPS, указанным при установке Caddy (по умолчанию 9443).
+| Параметр | Описание |
+|----------|----------|
+| `target` | `/dev/shm/nginx.sock` (Nginx socket) или `127.0.0.1:9443` (TCP) |
+| `xver` | Всегда `1` для proxy_protocol v1 |
+| `serverNames` | Ваш домен, указанный при установке |
+| `privateKey` | Ваш сгенерированный приватный ключ Reality |
+| `shortIds` | Ваши Reality short IDs |
 
-При добавлении селфстила, не забудьте при создании хоста указать принудительно SNI и Хост таким же, как у вас указано в serverNames в инбаунде.
+> ⚠️ При добавлении селфстила не забудьте при создании хоста указать принудительно SNI и Host таким же, как у вас указано в `serverNames`.
 
 <img width="438" height="435" alt="изображение" src="https://github.com/user-attachments/assets/57f00a62-1cad-4225-825c-23ed6a779744" />
-
 
 ## Кастомизация
 
