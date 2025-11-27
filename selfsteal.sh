@@ -1333,7 +1333,7 @@ install_command() {
         server_display_name="Caddy"
     fi
     
-    echo -e "${WHITE}🚀 $server_display_name for Reality Selfsteal Installation${NC}"
+    echo -e "${WHITE}🚀 $server_display_name for Reality Selfsteal Installation${NC} - version: $SCRIPT_VERSION"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
     echo -e "${CYAN}📦 Web Server: $server_display_name${NC}"
     echo
