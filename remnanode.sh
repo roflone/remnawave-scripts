@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 3.5.2
+# Version: 3.6.0
 set -e
-SCRIPT_VERSION="3.5.2"
+SCRIPT_VERSION="3.6.0"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -510,6 +510,131 @@ EOL
     colorized_echo green "Log rotation setup completed successfully"
 }
 
+# ============================================
+# Selfsteal Socket Integration
+# ============================================
+
+# Socket path for nginx-selfsteal
+SELFSTEAL_SOCKET="/dev/shm/nginx.sock"
+
+# Check if selfsteal socket exists
+check_selfsteal_socket() {
+    if [ -S "$SELFSTEAL_SOCKET" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Enable /dev/shm volume in docker-compose.yml
+enable_shm_volume() {
+    local compose_file="$1"
+    
+    if [ ! -f "$compose_file" ]; then
+        return 1
+    fi
+    
+    # Check if already uncommented
+    if grep -qE "^[[:space:]]*-[[:space:]]*/dev/shm:/dev/shm" "$compose_file"; then
+        colorized_echo green "✅ /dev/shm volume is already enabled"
+        return 0
+    fi
+    
+    # Check if commented and uncomment
+    if grep -qE "^[[:space:]]*#.*-[[:space:]]*/dev/shm:/dev/shm" "$compose_file"; then
+        colorized_echo blue "Enabling /dev/shm volume for selfsteal socket access..."
+        sed -i 's|^[[:space:]]*#[[:space:]]*\(-[[:space:]]*/dev/shm:/dev/shm\)|      \1|' "$compose_file"
+        
+        if docker compose -f "$compose_file" config >/dev/null 2>&1; then
+            colorized_echo green "✅ /dev/shm volume enabled successfully"
+            return 0
+        else
+            colorized_echo red "Failed to validate docker-compose.yml after modification"
+            return 1
+        fi
+    fi
+    
+    colorized_echo yellow "⚠️  /dev/shm volume line not found in docker-compose.yml"
+    return 1
+}
+
+# Configure selfsteal socket access after installation
+configure_selfsteal_integration() {
+    echo
+    colorized_echo cyan "🔍 Checking for Selfsteal (nginx/caddy) installation..."
+    
+    if check_selfsteal_socket; then
+        colorized_echo green "✅ Detected selfsteal socket at $SELFSTEAL_SOCKET"
+        colorized_echo blue "   Enabling socket access for remnanode container..."
+        
+        if enable_shm_volume "$COMPOSE_FILE"; then
+            colorized_echo green "✅ Remnanode configured for selfsteal socket access"
+            echo
+            colorized_echo cyan "📋 Xray Reality Configuration:"
+            colorized_echo white "   \"target\": \"$SELFSTEAL_SOCKET\","
+            colorized_echo white "   \"xver\": 1"
+        fi
+    else
+        colorized_echo gray "   No selfsteal socket detected"
+        colorized_echo gray "   If you install selfsteal later with --nginx, run:"
+        colorized_echo white "   remnanode enable-socket"
+    fi
+}
+
+# Command to enable socket access manually
+enable_socket_command() {
+    echo
+    colorized_echo cyan "🔌 Selfsteal Socket Configuration"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 50))\033[0m"
+    
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        colorized_echo red "❌ docker-compose.yml not found at $COMPOSE_FILE"
+        colorized_echo gray "   Please install remnanode first: remnanode install"
+        exit 1
+    fi
+    
+    # Check if socket exists
+    if check_selfsteal_socket; then
+        colorized_echo green "✅ Selfsteal socket detected at $SELFSTEAL_SOCKET"
+    else
+        colorized_echo yellow "⚠️  Selfsteal socket not found at $SELFSTEAL_SOCKET"
+        colorized_echo gray "   Make sure selfsteal with --nginx is installed and running"
+        echo
+        read -p "Continue anyway? [y/N]: " -r confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            colorized_echo gray "Cancelled"
+            exit 0
+        fi
+    fi
+    
+    echo
+    if enable_shm_volume "$COMPOSE_FILE"; then
+        echo
+        colorized_echo blue "🔄 Restarting remnanode container..."
+        
+        cd "$APP_DIR"
+        if docker compose down && docker compose up -d; then
+            colorized_echo green "✅ Remnanode restarted with socket access"
+            
+            # Verify
+            sleep 2
+            if docker exec "$APP_NAME" ls -la /dev/shm/nginx.sock >/dev/null 2>&1; then
+                colorized_echo green "✅ Verified: Container can access $SELFSTEAL_SOCKET"
+            else
+                colorized_echo yellow "⚠️  Socket not accessible yet (selfsteal may not be running)"
+            fi
+        else
+            colorized_echo red "❌ Failed to restart remnanode"
+        fi
+        
+        echo
+        colorized_echo cyan "📋 Xray Reality Configuration:"
+        colorized_echo white "   \"target\": \"$SELFSTEAL_SOCKET\","
+        colorized_echo white "   \"xver\": 1"
+    else
+        colorized_echo red "❌ Failed to enable socket access"
+    fi
+}
+
 install_remnanode() {
 
     if ! check_system_requirements; then
@@ -607,6 +732,7 @@ EOL
         
         cat >> "$COMPOSE_FILE" <<EOL
       # - $DATA_DIR:$DATA_DIR
+      # - /dev/shm:/dev/shm  # Uncomment for selfsteal socket access
 EOL
     else
         # If Xray is not installed, add commented volumes section
@@ -616,6 +742,7 @@ EOL
     #   - $GEOIP_FILE:/usr/local/share/xray/geoip.dat
     #   - $GEOSITE_FILE:/usr/local/share/xray/geosite.dat
     #   - $DATA_DIR:$DATA_DIR
+    #   - /dev/shm:/dev/shm  # Uncomment for selfsteal socket access
 EOL
     fi
 
@@ -799,6 +926,10 @@ install_command() {
     detect_compose
     install_remnanode_script
     install_remnanode
+    
+    # Check for selfsteal socket and enable volume if needed
+    configure_selfsteal_integration
+    
     up_remnanode
     follow_remnanode_logs
 
@@ -2610,6 +2741,7 @@ usage() {
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "migrate" "🔄 Migrate environment variables"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit" "📝 Edit docker-compose.yml"
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "edit-env" "🔐 Edit environment (.env)"
+    printf "   \033[38;5;178m%-18s\033[0m %s\n" "enable-socket" "🔌 Enable selfsteal socket access"
     echo
 
     echo -e "\033[1;37m📋 Information:\033[0m"
@@ -2849,6 +2981,7 @@ case "${COMMAND:-menu}" in
     edit) edit_command ;;
     edit-env) edit_env_command ;;
     setup-logs) setup_log_rotation ;;
+    enable-socket) enable_socket_command ;;
     help|--help|-h) usage ;;
     version|--version|-v) show_version ;;
     menu) main_menu ;;
