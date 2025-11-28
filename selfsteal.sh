@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.4.11
+# VERSION=2.5.0
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.4.11"
+SCRIPT_VERSION="2.5.0"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -1101,15 +1101,15 @@ validate_domain_dns() {
         echo -e "${GREEN}   ✅ Port 443 is available for Xray${NC}"
     fi
     
-    # Check if port 80 is free (will be used by Caddy)
+    # Check if port 80 is free (used for HTTP redirects)
     echo -e "${GRAY}   Checking port 80 availability...${NC}"
     if ss -tlnp | grep -q ":80 "; then
         echo -e "${YELLOW}   ⚠️  Port 80 is occupied${NC}"
-        echo -e "${GRAY}      This port will be used by Caddy for HTTP redirects${NC}"
+        echo -e "${GRAY}      This port will be used for HTTP → HTTPS redirects${NC}"
         local port80_occupied=$(ss -tlnp | grep ":80 " | head -1)
         echo -e "${GRAY}      Current: $port80_occupied${NC}"
     else
-        echo -e "${GREEN}   ✅ Port 80 is available for Caddy${NC}"
+        echo -e "${GREEN}   ✅ Port 80 is available for HTTP redirects${NC}"
     fi
     
     echo
@@ -1142,9 +1142,17 @@ validate_domain_dns() {
     echo -e "${WHITE}🔧 Setup Requirements for Reality:${NC}"
     echo -e "${GRAY}   • Domain must point to this server ✓${NC}"
     echo -e "${GRAY}   • Port 443 must be free for Xray ✓${NC}"
-    echo -e "${GRAY}   • Port 80 will be used by Caddy for redirects${NC}"
-    echo -e "${GRAY}   • Caddy will serve content on internal port (9443)${NC}"
-    echo -e "${GRAY}   • Configure Xray Reality AFTER Caddy installation${NC}"
+    echo -e "${GRAY}   • Port 80 will be used for HTTP → HTTPS redirects${NC}"
+    if [ "$WEB_SERVER" = "caddy" ]; then
+        echo -e "${GRAY}   • Caddy will serve content on internal port${NC}"
+    else
+        if [ "$USE_SOCKET" = true ]; then
+            echo -e "${GRAY}   • Nginx will use Unix socket: $SOCKET_PATH${NC}"
+        else
+            echo -e "${GRAY}   • Nginx will serve content on internal port${NC}"
+        fi
+    fi
+    echo -e "${GRAY}   • Configure Xray Reality AFTER installation${NC}"
     
     echo
     
@@ -1218,64 +1226,64 @@ EOF
     # Create Caddyfile
     cat > "$APP_DIR/Caddyfile" << 'EOF'
 {
-    https_port {$SELF_STEAL_PORT}
-    default_bind 127.0.0.1
-    servers {
-        listener_wrappers {
-            proxy_protocol {
-                allow 127.0.0.1/32
-            }
-            tls
-        }
-    }
-    auto_https disable_redirects
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 10MB
-            roll_keep 5
-            roll_keep_for 720h
-        }
-        level ERROR
-        format json 
-    }
+	https_port {$SELF_STEAL_PORT}
+	default_bind 127.0.0.1
+	servers {
+		listener_wrappers {
+			proxy_protocol {
+				allow 127.0.0.1/32
+			}
+			tls
+		}
+	}
+	auto_https disable_redirects
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MB
+			roll_keep 5
+			roll_keep_for 720h
+		}
+		level ERROR
+		format json
+	}
 }
 
 http://{$SELF_STEAL_DOMAIN} {
-    bind 0.0.0.0
-    redir https://{$SELF_STEAL_DOMAIN}{uri} permanent
-    log {
-        output file /var/log/caddy/redirect.log {
-            roll_size 5MB
-            roll_keep 3
-            roll_keep_for 168h
-        }
-    }
+	bind 0.0.0.0
+	redir https://{$SELF_STEAL_DOMAIN}{uri} permanent
+	log {
+		output file /var/log/caddy/redirect.log {
+			roll_size 5MB
+			roll_keep 3
+			roll_keep_for 168h
+		}
+	}
 }
 
 https://{$SELF_STEAL_DOMAIN} {
-    root * /var/www/html
-    try_files {path} /index.html
-    file_server
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 10MB
-            roll_keep 5
-            roll_keep_for 720h
-        }
-        level ERROR
-    }
+	root * /var/www/html
+	try_files {path} /index.html
+	file_server
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MB
+			roll_keep 5
+			roll_keep_for 720h
+		}
+		level ERROR
+	}
 }
 
 :{$SELF_STEAL_PORT} {
-    tls internal
-    respond 204
-    log off
+	tls internal
+	respond 204
+	log off
 }
 
 :80 {
-    bind 0.0.0.0
-    respond 204
-    log off
+	bind 0.0.0.0
+	respond 204
+	log off
 }
 EOF
 

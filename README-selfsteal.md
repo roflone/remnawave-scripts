@@ -77,7 +77,7 @@
   - **443** — зарезервирован для **Xray** (не занимается веб-сервером!)
   - **Unix socket** `/dev/shm/nginx.sock` — для Nginx (по умолчанию)
   - **9443** — внутренний TCP порт веб-сервера (Caddy или Nginx с `--tcp`)
-  - **80** — редирект на HTTPS (Caddy) или ACME HTTP challenge
+  - **80** — HTTP → HTTPS редирект (используется Caddy и Nginx)
   - **8443** — ACME TLS-ALPN для Nginx (с автофолбэком на другие порты)
 
 ## Установка
@@ -173,6 +173,7 @@ selfsteal --nginx --acme-port 12345 install
 | Путь установки | `/opt/caddy` | `/opt/nginx-selfsteal` |
 | **Режим подключения** | TCP порт (127.0.0.1:9443) | **Unix Socket** (по умолчанию) или TCP |
 | **Xray target** | `127.0.0.1:9443` | `/dev/shm/nginx.sock` (socket) или `127.0.0.1:9443` (tcp) |
+| Порт 80 (HTTP→HTTPS) | ✅ Да | ✅ Да |
 | Обновление SSL | Автоматически | `selfsteal renew-ssl` |
 | Порт для ACME | 80 (ACME HTTP) | 8443+ (ACME TLS-ALPN) или `--acme-port` |
 
