@@ -714,7 +714,7 @@ services:
   remnanode:
     container_name: $APP_NAME
     hostname: $APP_NAME
-    image: remnawave/node:${IMAGE_TAG}
+    image: ghcr.io/remnawave/node:${IMAGE_TAG}
     env_file:
       - .env
     network_mode: host

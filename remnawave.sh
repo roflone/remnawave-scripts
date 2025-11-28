@@ -2280,7 +2280,7 @@ verify_restore_integrity() {
         integrity_score=$((integrity_score + 1))
         
         # Проверяем использование latest тега
-        if grep -q "remnawave/backend:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
+        if grep -q "ghcr.io/remnawave/backend:latest" "$target_dir/docker-compose.yml" 2>/dev/null; then
             echo -e "\033[1;33m⚠️  WARNING: docker-compose.yml uses 'latest' tag\033[0m"
             echo -e "\033[38;5;244m   This may cause compatibility issues if Docker pulls a newer version\033[0m"
             echo -e "\033[38;5;244m   Recommended: Pin to specific version (e.g., remnawave/backend:2.2.19)\033[0m"
