@@ -4,7 +4,8 @@
 
 Скрипт для автоматической установки и управления веб-сервером (Caddy или Nginx) для маскировки трафика Reality в связке с Xray. Порт 443 остается свободным для Xray.
 
-![изображение](https://github.com/user-attachments/assets/fb82bb59-c6f5-48f4-a6a8-25540be6c03e)
+<img width="429" height="690" alt="изображение" src="https://github.com/user-attachments/assets/2ca2348e-5131-4e87-94d8-0a26aeb0d8be" />
+
 
 
 ## Основные возможности
