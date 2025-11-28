@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.5.4"
+SCRIPT_VERSION="2.5.5"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -1654,6 +1654,23 @@ EOF
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
     echo
     
+    # Pre-check: verify ACME port is available
+    local acme_port_check="${ACME_PORT:-8443}"
+    log_info "Checking ACME port availability..."
+    
+    if ss -tlnp 2>/dev/null | grep -q ":$acme_port_check " 2>/dev/null; then
+        local blocking_process
+        blocking_process=$(ss -tlnp 2>/dev/null | grep ":$acme_port_check " | head -1)
+        log_warning "Port $acme_port_check is currently in use!"
+        echo -e "${GRAY}   $blocking_process${NC}"
+        echo
+        echo -e "${WHITE}This may cause certificate issuance to fail.${NC}"
+        echo -e "${GRAY}The script will try fallback ports: ${ACME_FALLBACK_PORTS[*]}${NC}"
+        echo
+    else
+        log_success "Port $acme_port_check is available"
+    fi
+    
     log_info "Obtaining SSL certificate from Let's Encrypt..."
     echo
     
@@ -1668,10 +1685,22 @@ EOF
     else
         log_error "Failed to obtain SSL certificate"
         echo
-        echo -e "${YELLOW}Possible reasons:${NC}"
-        echo -e "${GRAY}   • Domain DNS not properly configured${NC}"
-        echo -e "${GRAY}   • Port 8443 is blocked by firewall${NC}"
-        echo -e "${GRAY}   • Let's Encrypt rate limit exceeded${NC}"
+        echo -e "${WHITE}Troubleshooting:${NC}"
+        echo
+        echo -e "${YELLOW}   1. Check acme.sh installed:${NC}"
+        echo -e "${GRAY}      ls ~/.acme.sh/acme.sh${NC}"
+        echo -e "${GRAY}      Fix: curl https://get.acme.sh | sh -s email=my@example.com${NC}"
+        echo
+        echo -e "${YELLOW}   2. Check DNS:${NC}"
+        echo -e "${GRAY}      nslookup $domain${NC}"
+        echo -e "${GRAY}      → Should return this server's IP${NC}"
+        echo
+        echo -e "${YELLOW}   3. Check firewall (port 8443):${NC}"
+        echo -e "${GRAY}      ss -tlnp | grep 8443${NC}"
+        echo -e "${GRAY}      ufw allow 8443/tcp  OR  iptables -A INPUT -p tcp --dport 8443 -j ACCEPT${NC}"
+        echo
+        echo -e "${YELLOW}   4. Check if port is in use:${NC}"
+        echo -e "${GRAY}      ss -tlnp | grep ':8443'${NC}"
         echo
         read -p "Continue with self-signed certificate (not recommended)? [y/N]: " -r use_selfsigned
         if [[ $use_selfsigned =~ ^[Yy]$ ]]; then
@@ -2245,6 +2274,38 @@ install_command() {
     
     # Validate configuration based on web server type
     if [ "$WEB_SERVER" = "nginx" ]; then
+        # Check SSL certificates exist
+        if [ ! -f "$APP_DIR/ssl/fullchain.crt" ] || [ ! -f "$APP_DIR/ssl/private.key" ]; then
+            log_error "SSL certificates not found!"
+            echo -e "${YELLOW}   Missing files in: $APP_DIR/ssl/${NC}"
+            echo -e "${GRAY}   Expected: fullchain.crt and private.key${NC}"
+            echo
+            echo -e "${WHITE}   Possible causes and solutions:${NC}"
+            echo
+            echo -e "${YELLOW}   1. acme.sh not installed${NC}"
+            echo -e "${GRAY}      Check: ls ~/.acme.sh/acme.sh${NC}"
+            echo -e "${GRAY}      Fix:   curl https://get.acme.sh | sh -s email=my@example.com${NC}"
+            echo
+            echo -e "${YELLOW}   2. Port blocked by firewall${NC}"
+            echo -e "${GRAY}      Check: ss -tlnp | grep 8443${NC}"
+            echo -e "${GRAY}      Fix:   ufw allow 8443/tcp  OR  iptables -A INPUT -p tcp --dport 8443 -j ACCEPT${NC}"
+            echo
+            echo -e "${YELLOW}   3. DNS not configured${NC}"
+            echo -e "${GRAY}      Check: nslookup \$(grep SELF_STEAL_DOMAIN $APP_DIR/.env | cut -d= -f2)${NC}"
+            echo -e "${GRAY}      Fix:   Add A record pointing to this server's IP${NC}"
+            echo
+            echo -e "${YELLOW}   4. Another service using port 8443${NC}"
+            echo -e "${GRAY}      Check: ss -tlnp | grep ':8443'${NC}"
+            echo -e "${GRAY}      Fix:   Stop the conflicting service or use --acme-port <other_port>${NC}"
+            echo
+            echo -e "${YELLOW}   5. Let's Encrypt rate limit${NC}"
+            echo -e "${GRAY}      Check: Wait 1 hour and try again${NC}"
+            echo -e "${GRAY}      Info:  https://letsencrypt.org/docs/rate-limits/${NC}"
+            echo
+            echo -e "${CYAN}   After fixing the issue, run: $APP_NAME renew-ssl${NC}"
+            return 1
+        fi
+        
         log_info "Validating Nginx configuration..."
         if validate_nginx_config; then
             log_success "Nginx configuration is valid"
@@ -2264,7 +2325,7 @@ install_command() {
             log_success "Caddyfile is valid"
         else
             log_error "Invalid Caddyfile configuration"
-            echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
+            echo -e "${YELLOW}💡 Check syntax: $APP_NAME edit${NC}"
             return 1
         fi
     fi
@@ -2318,10 +2379,10 @@ install_command() {
         echo -e "${CYAN}     - target: \"127.0.0.1:$port\"${NC}"
         echo -e "${CYAN}     - xver: 1${NC}"
     fi
-    echo -e "${GRAY}   • Change template: sudo $APP_NAME template${NC}"
+    echo -e "${GRAY}   • Change template: $APP_NAME template${NC}"
     echo -e "${GRAY}   • Customize HTML content in: $HTML_DIR${NC}"
-    echo -e "${GRAY}   • Check status: sudo $APP_NAME status${NC}"
-    echo -e "${GRAY}   • View logs: sudo $APP_NAME logs${NC}"
+    echo -e "${GRAY}   • Check status: $APP_NAME status${NC}"
+    echo -e "${GRAY}   • View logs: $APP_NAME logs${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 50))${NC}"
 }
 
@@ -2369,7 +2430,7 @@ validate_caddyfile() {
         return 0
     else
         echo -e "${RED}❌ Invalid Caddyfile configuration${NC}"
-        echo -e "${YELLOW}💡 Check syntax: sudo $APP_NAME edit${NC}"
+        echo -e "${YELLOW}💡 Check syntax: $APP_NAME edit${NC}"
         return 1
     fi
 }
@@ -2762,7 +2823,7 @@ create_default_html() {
         <div class="info">
             <h3>🎨 Ready for Templates</h3>
             <p>Use the template manager to install website templates:</p>
-            <div class="command">sudo selfsteal template</div>
+            <div class="command">selfsteal template</div>
             <p>Choose from 10 pre-built AI-generated templates including meme sites, downloaders, file converters, and more!</p>
         </div>
     </div>
@@ -2888,7 +2949,7 @@ template_command() {
     fi
 
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Web server is not installed. Run 'sudo $APP_NAME install' first."
+        log_error "Web server is not installed. Run '$APP_NAME install' first."
         return 1
     fi
 
@@ -3009,7 +3070,7 @@ up_command() {
     check_running_as_root
     
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        log_error "Web server is not installed. Run 'sudo $APP_NAME install' first."
+        log_error "Web server is not installed. Run '$APP_NAME install' first."
         return 1
     fi
     
@@ -3254,6 +3315,21 @@ renew_ssl_command() {
             
             # Install acme.sh and get certificate
             if install_acme; then
+                # Pre-check: verify ACME port is available
+                local acme_port_check="${ACME_PORT:-8443}"
+                log_info "Checking ACME port availability..."
+                
+                if ss -tlnp 2>/dev/null | grep -q ":$acme_port_check " 2>/dev/null; then
+                    local blocking_process
+                    blocking_process=$(ss -tlnp 2>/dev/null | grep ":$acme_port_check " | head -1)
+                    log_warning "Port $acme_port_check is currently in use!"
+                    echo -e "${GRAY}   $blocking_process${NC}"
+                    echo -e "${GRAY}The script will try fallback ports: ${ACME_FALLBACK_PORTS[*]}${NC}"
+                    echo
+                else
+                    log_success "Port $acme_port_check is available"
+                fi
+                
                 log_info "Stopping Nginx for certificate issuance..."
                 cd "$APP_DIR" && docker compose stop
                 
@@ -3320,6 +3396,22 @@ renew_ssl_command() {
         2)
             echo
             log_warning "Forcing certificate renewal..."
+            
+            # Pre-check: verify ACME port is available
+            local acme_port_check="${ACME_PORT:-8443}"
+            log_info "Checking ACME port availability..."
+            
+            if ss -tlnp 2>/dev/null | grep -q ":$acme_port_check " 2>/dev/null; then
+                local blocking_process
+                blocking_process=$(ss -tlnp 2>/dev/null | grep ":$acme_port_check " | head -1)
+                log_warning "Port $acme_port_check is currently in use!"
+                echo -e "${GRAY}   $blocking_process${NC}"
+                echo -e "${GRAY}The script will try fallback ports: ${ACME_FALLBACK_PORTS[*]}${NC}"
+                echo
+            else
+                log_success "Port $acme_port_check is available"
+            fi
+            
             log_info "Stopping Nginx for certificate renewal..."
             
             cd "$APP_DIR" && docker compose stop
@@ -3466,7 +3558,7 @@ logs_size_command() {
     fi
     
     echo
-    echo -e "${GRAY}💡 Tip: Use 'sudo $APP_NAME clean-logs' to clean all logs${NC}"
+    echo -e "${GRAY}💡 Tip: Use '$APP_NAME clean-logs' to clean all logs${NC}"
     echo
 }
 
@@ -3558,7 +3650,7 @@ edit_command() {
         case "$choice" in
             1)
                 ${EDITOR:-nano} "$APP_DIR/.env"
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             2)
                 ${EDITOR:-nano} "$APP_DIR/nginx.conf"
@@ -3566,7 +3658,7 @@ edit_command() {
                 if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
                     validate_nginx_config
                 fi
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             3)
                 ${EDITOR:-nano} "$APP_DIR/conf.d/selfsteal.conf"
@@ -3574,11 +3666,11 @@ edit_command() {
                 if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
                     validate_nginx_config
                 fi
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             4)
                 ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             0)
                 echo -e "${GRAY}Cancelled${NC}"
@@ -3593,7 +3685,7 @@ edit_command() {
         case "$choice" in
             1)
                 ${EDITOR:-nano} "$APP_DIR/.env"
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             2)
                 ${EDITOR:-nano} "$APP_DIR/Caddyfile"
@@ -3601,11 +3693,11 @@ edit_command() {
                 if [[ ! $validate_choice =~ ^[Nn]$ ]]; then
                     validate_caddyfile
                 fi
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             3)
                 ${EDITOR:-nano} "$APP_DIR/docker-compose.yml"
-                log_warning "Restart $server_name to apply changes: sudo $APP_NAME restart"
+                log_warning "Restart $server_name to apply changes: $APP_NAME restart"
                 ;;
             0)
                 echo -e "${GRAY}Cancelled${NC}"
@@ -3659,12 +3751,12 @@ show_help() {
     printf "   ${CYAN}%-12s${NC} %s\n" "update" "🔄 Check for script updates"
     echo
     echo -e "${WHITE}Examples:${NC}"
-    echo -e "  ${GRAY}sudo $APP_NAME install${NC}                    # Caddy (default)"
-    echo -e "  ${GRAY}sudo $APP_NAME --nginx install${NC}            # Nginx with Unix socket"
-    echo -e "  ${GRAY}sudo $APP_NAME --nginx --tcp install${NC}      # Nginx with TCP port"
-    echo -e "  ${GRAY}sudo $APP_NAME status${NC}"
-    echo -e "  ${GRAY}sudo $APP_NAME logs${NC}"
-    echo -e "  ${GRAY}sudo $APP_NAME renew-ssl${NC}"
+    echo -e "  ${GRAY}$APP_NAME install${NC}                    # Caddy (default)"
+    echo -e "  ${GRAY}$APP_NAME --nginx install${NC}            # Nginx with Unix socket"
+    echo -e "  ${GRAY}$APP_NAME --nginx --tcp install${NC}      # Nginx with TCP port"
+    echo -e "  ${GRAY}$APP_NAME status${NC}"
+    echo -e "  ${GRAY}$APP_NAME logs${NC}"
+    echo -e "  ${GRAY}$APP_NAME renew-ssl${NC}"
     echo
     echo -e "${WHITE}Xray Reality Configuration:${NC}"
     echo -e "  ${GRAY}Socket mode (default):  \"target\": \"/dev/shm/nginx.sock\", \"xver\": 1${NC}"
@@ -3800,7 +3892,7 @@ check_for_updates_silent() {
         
         if [ -n "$remote_script_version" ] && [ "$SCRIPT_VERSION" != "$remote_script_version" ]; then
             echo -e "${YELLOW}💡 Update available: v$remote_script_version (current: v$SCRIPT_VERSION)${NC}"
-            echo -e "${GRAY}   Run 'sudo $APP_NAME update' to update${NC}"
+            echo -e "${GRAY}   Run '$APP_NAME update' to update${NC}"
             echo
         fi
     fi 2>/dev/null || true  # Suppress any errors completely
