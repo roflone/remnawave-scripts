@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Version: 3.6.0
 set -e
-SCRIPT_VERSION="3.6.0"
+SCRIPT_VERSION="3.6.1"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -542,7 +542,14 @@ enable_shm_volume() {
     # Check if commented and uncomment
     if grep -qE "^[[:space:]]*#.*-[[:space:]]*/dev/shm:/dev/shm" "$compose_file"; then
         colorized_echo blue "Enabling /dev/shm volume for selfsteal socket access..."
-        sed -i 's|^[[:space:]]*#[[:space:]]*\(-[[:space:]]*/dev/shm:/dev/shm\)|      \1|' "$compose_file"
+        
+        # First, check if 'volumes:' is also commented and uncomment it
+        if grep -qE "^[[:space:]]*#[[:space:]]*volumes:" "$compose_file"; then
+            sed -i 's|^[[:space:]]*#[[:space:]]*\(volumes:\)|    \1|' "$compose_file"
+        fi
+        
+        # Then uncomment the /dev/shm line
+        sed -i 's|^[[:space:]]*#[[:space:]]*\(-[[:space:]]*/dev/shm:/dev/shm.*\)|      \1|' "$compose_file"
         
         if docker compose -f "$compose_file" config >/dev/null 2>&1; then
             colorized_echo green "✅ /dev/shm volume enabled successfully"
