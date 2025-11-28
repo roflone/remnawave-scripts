@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.5.2"
+SCRIPT_VERSION="2.5.4"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -382,8 +382,13 @@ uncomment_shm_volume() {
     cp "$compose_file" "$backup_file"
     log_info "Created backup: $backup_file"
     
-    # Uncomment the line with /dev/shm
-    sed -i 's|^[[:space:]]*#[[:space:]]*\(-[[:space:]]*/dev/shm:/dev/shm\)|\      \1|' "$compose_file"
+    # First, check if 'volumes:' is also commented and uncomment it
+    if grep -qE "^[[:space:]]*#[[:space:]]*volumes:" "$compose_file"; then
+        sed -i 's|^[[:space:]]*#[[:space:]]*\(volumes:\)|    \1|' "$compose_file"
+    fi
+    
+    # Then uncomment the /dev/shm line
+    sed -i 's|^[[:space:]]*#[[:space:]]*\(-[[:space:]]*/dev/shm:/dev/shm.*\)|      \1|' "$compose_file"
     
     # Validate the modified compose file
     if docker compose -f "$compose_file" config >/dev/null 2>&1; then
@@ -2883,15 +2888,22 @@ template_command() {
     fi
 
     if [ ! -d "$APP_DIR" ]; then
-        log_error "Caddy is not installed. Run 'sudo $APP_NAME install' first."
+        log_error "Web server is not installed. Run 'sudo $APP_NAME install' first."
         return 1
+    fi
+
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
     fi
 
     local running_services
     running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
     
     if [ "$running_services" -gt 0 ]; then
-        log_warning "Caddy is currently running"
+        log_warning "$server_name is currently running"
         echo -e "${GRAY}   Template changes will be applied immediately${NC}"
         echo
         read -p "Continue with template download? [Y/n]: " -r continue_template
@@ -2997,17 +3009,24 @@ up_command() {
     check_running_as_root
     
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        log_error "Caddy is not installed. Run 'sudo $APP_NAME install' first."
+        log_error "Web server is not installed. Run 'sudo $APP_NAME install' first."
         return 1
     fi
     
-    log_info "Starting Caddy Services"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    log_info "Starting $server_name Services"
     cd "$APP_DIR" || return 1
     
     if docker compose up -d; then
-        log_success "Caddy services started successfully"
+        log_success "$server_name services started successfully"
     else
-        log_error "Failed to start Caddy services"
+        log_error "Failed to start $server_name services"
         return 1
     fi
 }
@@ -3016,17 +3035,24 @@ down_command() {
     check_running_as_root
     
     if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
-        log_warning "Caddy is not installed"
+        log_warning "Web server is not installed"
         return 0
     fi
     
-    log_info "Stopping Caddy Services"
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
+    log_info "Stopping $server_name Services"
     cd "$APP_DIR" || return 1
     
     if docker compose down; then
-        log_success "Caddy services stopped successfully"
+        log_success "$server_name services stopped successfully"
     else
-        log_error "Failed to stop Caddy services"
+        log_error "Failed to stop $server_name services"
         return 1
     fi
 }
