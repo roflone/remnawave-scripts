@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.5.6
+# VERSION=2.5.7
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.5.6"
+SCRIPT_VERSION="2.5.7"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -3918,9 +3918,9 @@ guide_command() {
     local xray_target=""
     
     if [ -f "$APP_DIR/.env" ]; then
-        domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
-        port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2)
-        connection_mode=$(grep "Connection Mode:" "$APP_DIR/.env" 2>/dev/null | cut -d':' -f2 | tr -d ' ')
+        domain=$(grep "SELF_STEAL_DOMAIN=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2 || true)
+        port=$(grep "SELF_STEAL_PORT=" "$APP_DIR/.env" 2>/dev/null | cut -d'=' -f2 || true)
+        connection_mode=$(grep "Connection Mode:" "$APP_DIR/.env" 2>/dev/null | cut -d':' -f2 | tr -d ' ' || true)
     fi
     
     # Determine xray_target based on web server and connection mode
@@ -3943,22 +3943,22 @@ guide_command() {
 
     echo -e "${BLUE}🎯 What is Selfsteal?${NC}"
     echo -e "${GRAY}Selfsteal is a $server_name-based front-end for Xray Reality protocol that provides:"
-    echo "• Traffic masking with legitimate-looking websites"
-    echo "• SSL/TLS termination and certificate management"
-    echo "• Multiple website templates for better camouflage"
-    echo "• Easy integration with Xray Reality servers${NC}"
+    echo -e "${GRAY}• Traffic masking with legitimate-looking websites"
+    echo -e "${GRAY}• SSL/TLS termination and certificate management"
+    echo -e "${GRAY}• Multiple website templates for better camouflage"
+    echo -e "${GRAY}• Easy integration with Xray Reality servers${NC}"
     echo
 
     echo -e "${BLUE}🔧 How it works:${NC}"
     if [ "$WEB_SERVER" = "nginx" ] && [ "$connection_mode" != "tcp" ]; then
         echo -e "${GRAY}1. Nginx listens on Unix Socket ($SOCKET_PATH)"
-        echo "2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
+        echo -e "${GRAY}2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
     else
         echo -e "${GRAY}1. $server_name runs on internal port (127.0.0.1:${port:-9443})"
-        echo "2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
+        echo -e "${GRAY}2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
     fi
-    echo "3. Regular users see a normal website"
-    echo "4. VPN clients connect through Reality protocol${NC}"
+    echo -e "${GRAY}3. Regular users see a normal website"
+    echo -e "${GRAY}4. VPN clients connect through Reality protocol${NC}"
     echo
 
     if [ -n "$domain" ]; then
@@ -3982,53 +3982,67 @@ guide_command() {
     echo -e "${GRAY}Copy this template and customize it for your Xray server:${NC}"
     echo
 
-    # Generate a random private key if openssl is available
-    local private_key="#REPLACE_WITH_YOUR_PRIVATE_KEY"
-    if command -v openssl >/dev/null 2>&1; then
-        private_key=$(openssl rand -base64 32 | tr -d '=' | head -c 43)
+    # Try to get X25519 private key from remnanode container
+    local private_key=""
+    local key_generated=false
+    
+    # Try docker exec if remnanode is running
+    if docker ps -q -f "name=remnanode" 2>/dev/null | grep -q .; then
+        local xray_output
+        xray_output=$(docker exec remnanode xray x25519 2>/dev/null) || true
+        if [ -n "$xray_output" ]; then
+            private_key=$(echo "$xray_output" | grep "PrivateKey:" | awk '{print $2}' || true)
+            if [ -n "$private_key" ]; then
+                key_generated=true
+            fi
+        fi
+    fi
+    
+    # Use placeholder if remnanode not available
+    if [ "$key_generated" = false ]; then
+        private_key="YOUR_PRIVATE_KEY_HERE"
+        echo -e "${YELLOW}💡 Remnanode not running. Generate keys with:${NC}"
+        echo -e "${GRAY}   docker exec remnanode xray x25519${NC}"
+        echo
     fi
 
-    cat << EOF
-${WHITE}{
-    "inbounds": [
+    echo -e "${WHITE}{
+    \"inbounds\": [
         {
-            "tag": "VLESS_REALITY_SELFSTEAL",
-            "port": 443,
-            "protocol": "vless",
-            "settings": {
-                "clients": [],
-                "decryption": "none"
+            \"tag\": \"VLESS_REALITY_SELFSTEAL\",
+            \"port\": 443,
+            \"protocol\": \"vless\",
+            \"settings\": {
+                \"clients\": [],
+                \"decryption\": \"none\"
             },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls", "quic"]
+            \"sniffing\": {
+                \"enabled\": true,
+                \"destOverride\": [\"http\", \"tls\", \"quic\"]
             },
-            "streamSettings": {
-                "network": "raw",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "xver": 1,
-                    "target": "${xray_target}",
-                    "spiderX": "/",
-                    "shortIds": [""],
-                    "privateKey": "$private_key",
-                    "serverNames": ["${domain:-reality.example.com}"]
+            \"streamSettings\": {
+                \"network\": \"raw\",
+                \"security\": \"reality\",
+                \"realitySettings\": {
+                    \"show\": false,
+                    \"xver\": 1,
+                    \"target\": \"${xray_target}\",
+                    \"spiderX\": \"/\",
+                    \"shortIds\": [\"\"],
+                    \"privateKey\": \"$private_key\",
+                    \"serverNames\": [\"${domain:-reality.example.com}\"]
                 }
             }
         }
     ]
-}${NC}
-EOF
+}${NC}"
 
     echo
     echo -e "${YELLOW}🔑 Replace the following values:${NC}"
     echo -e "${GRAY}• ${WHITE}clients[]${GRAY} - Add your client configurations with UUIDs${NC}"
     echo -e "${GRAY}• ${WHITE}shortIds${GRAY} - Add your Reality short IDs${NC}"
-    if command -v openssl >/dev/null 2>&1; then
-        echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generated above (or use your own)${NC}"
-    else
-        echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generate with Reality key tools${NC}"
+    if [ "$key_generated" = false ]; then
+        echo -e "${GRAY}• ${WHITE}privateKey${GRAY} - Generate with: ${WHITE}docker exec remnanode xray x25519${NC}"
     fi
     if [ -z "$domain" ]; then
         echo -e "${GRAY}• ${WHITE}serverNames${GRAY} - Your actual domain${NC}"
@@ -4040,9 +4054,12 @@ EOF
     echo -e "${WHITE}   target: ${xray_target}${NC}"
     echo
 
-    echo -e "${BLUE}🔐 Generate Reality Keys${NC}"
-    echo -e "${GRAY}• Use ${WHITE}Private key${GRAY} in your Xray server config${NC}"
-    echo
+    if [ "$key_generated" = false ]; then
+        echo -e "${BLUE}🔐 Generate Reality Keys${NC}"
+        echo -e "${GRAY}Run: ${WHITE}docker exec remnanode xray x25519${NC}"
+        echo -e "${GRAY}Use ${WHITE}PrivateKey${GRAY} in server config, ${WHITE}Password${GRAY} (public key) in client config${NC}"
+        echo
+    fi
 
     echo -e "${BLUE}📱 Client Configuration Tips:${NC}"
     echo -e "${GRAY}For client apps (v2rayN, v2rayNG, etc.):${NC}"
@@ -4052,7 +4069,6 @@ EOF
     echo -e "${WHITE}• Port:${NC} 443"
     echo -e "${WHITE}• Flow:${NC} xtls-rprx-vision"
     echo -e "${WHITE}• SNI:${NC} ${domain:-your-domain.com}"
-    echo -e "${WHITE}• Reality Public Key:${NC} (from x25519 generation)"
     echo
 
     echo -e "${BLUE}🔍 Testing Your Setup:${NC}"
