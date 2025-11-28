@@ -42,6 +42,9 @@ UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
 
 # ACME Configuration
+# Ensure HOME is set correctly (important for sudo)
+[ -z "$HOME" ] && HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+[ "$(id -u)" = "0" ] && HOME="/root"
 ACME_HOME="$HOME/.acme.sh"
 ACME_INSTALL_URL="https://get.acme.sh"
 ACME_PORT=""  # Will be auto-detected or set via --acme-port
@@ -229,7 +232,7 @@ install_acme() {
     
     [ "$DEBUG_MODE" = true ] && echo "DEBUG: Checking for acme.sh at $ACME_HOME/acme.sh"
     [ "$DEBUG_MODE" = true ] && echo "DEBUG: HOME=$HOME"
-    [ "$DEBUG_MODE" = true ] && ls -la "$ACME_HOME/" 2>/dev/null || echo "DEBUG: $ACME_HOME does not exist"
+    [ "$DEBUG_MODE" = true ] && { ls -la "$ACME_HOME/" 2>/dev/null || echo "DEBUG: $ACME_HOME does not exist"; }
     
     # Check multiple possible locations
     local acme_found=false
