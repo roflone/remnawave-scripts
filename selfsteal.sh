@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.5.7
+# VERSION=2.5.8
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.5.7"
+SCRIPT_VERSION="2.5.8"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -1318,6 +1318,9 @@ validate_domain_dns() {
     echo -e "${WHITE}🔍 Checking DNS Records:${NC}"
     echo
     
+    # Initialize dns_match to false
+    local dns_match="false"
+    
     # A record check
     echo -e "${GRAY}   Checking A record...${NC}"
     local a_records=$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
@@ -1330,7 +1333,7 @@ validate_domain_dns() {
         while IFS= read -r ip; do
             echo -e "${GRAY}      → $ip${NC}"
             if [ "$ip" = "$server_ip" ]; then
-                local dns_match="true"
+                dns_match="true"
             fi
         done <<< "$a_records"
     fi
@@ -1365,7 +1368,7 @@ validate_domain_dns() {
             while IFS= read -r ip; do
                 echo -e "${GRAY}      → $ip${NC}"
                 if [ "$ip" = "$server_ip" ]; then
-                    local dns_match="true"
+                    dns_match="true"
                 fi
             done <<< "$cname_a_records"
         fi
