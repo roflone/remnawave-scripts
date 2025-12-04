@@ -79,8 +79,8 @@ DEFAULT_PORT="9443"
 # Template Registry (id:folder:emoji:name)
 declare -A TEMPLATE_FOLDERS=(
     ["1"]="10gag"
-    ["2"]="converter"
-    ["3"]="convertit"
+    ["2"]="convertit"
+    ["3"]="converter"
     ["4"]="downloader"
     ["5"]="filecloud"
     ["6"]="games-site"
@@ -93,8 +93,8 @@ declare -A TEMPLATE_FOLDERS=(
 
 declare -A TEMPLATE_NAMES=(
     ["1"]="😂 10gag - Сайт мемов"
-    ["2"]="🎬 Converter - Видеостудия-конвертер"
-    ["3"]="📁 Convertit - Конвертер файлов"
+    ["2"]="📁 Convertit - Конвертер файлов"
+    ["3"]="🎬 Converter - Видеостудия-конвертер"
     ["4"]="⬇️ Downloader - Даунлоадер"
     ["5"]="☁️ FileCloud - Облачное хранилище"
     ["6"]="🎮 Games-site - Ретро игровой портал"
@@ -2920,24 +2920,31 @@ apply_template_and_restart() {
     if download_template "$template_id"; then
         log_success "$template_name downloaded successfully!"
         echo
-        maybe_restart_caddy
+        maybe_restart_webserver
     else
         log_error "Failed to download template: $template_name"
     fi
     read -p "Press Enter to continue..."
 }
 
-# Check if Caddy is running and offer restart
-maybe_restart_caddy() {
+# Check if web server is running and offer restart
+maybe_restart_webserver() {
     local running_services
     running_services=$(cd "$APP_DIR" && docker compose ps -q 2>/dev/null | wc -l || echo "0")
     
+    local server_name
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        server_name="Nginx"
+    else
+        server_name="Caddy"
+    fi
+    
     if [ "$running_services" -gt 0 ]; then
-        read -p "Restart Caddy to apply changes? [Y/n]: " -r restart_caddy
-        if [[ ! $restart_caddy =~ ^[Nn]$ ]]; then
-            echo -e "${YELLOW}🔄 Restarting Caddy...${NC}"
+        read -p "Restart $server_name to apply changes? [Y/n]: " -r restart_server
+        if [[ ! $restart_server =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}🔄 Restarting $server_name...${NC}"
             cd "$APP_DIR" && docker compose restart
-            log_success "Caddy restarted"
+            log_success "$server_name restarted"
         fi
     fi
 }
