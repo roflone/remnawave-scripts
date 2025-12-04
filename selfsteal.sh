@@ -7,7 +7,7 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.5.8
+# VERSION=2.5.9
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -36,7 +36,7 @@ else
 fi
 
 # Script Configuration
-SCRIPT_VERSION="2.5.8"
+SCRIPT_VERSION="2.5.9"
 GITHUB_REPO="dignezzz/remnawave-scripts"
 UPDATE_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main/selfsteal.sh"
 SCRIPT_URL="$UPDATE_URL"
@@ -2375,12 +2375,17 @@ install_command() {
     echo -e "${WHITE}📋 Next Steps:${NC}"
     echo -e "${GRAY}   • Configure your Xray Reality with:${NC}"
     echo -e "${GRAY}     - serverNames: [\"$domain\"]${NC}"
-    if [ "$WEB_SERVER" = "nginx" ] && [ "$USE_SOCKET" = true ]; then
-        echo -e "${CYAN}     - target: \"$SOCKET_PATH\"${NC}"
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        if [ "$USE_SOCKET" = true ]; then
+            echo -e "${CYAN}     - target: \"$SOCKET_PATH\"${NC}"
+        else
+            echo -e "${CYAN}     - target: \"127.0.0.1:$port\"${NC}"
+        fi
         echo -e "${CYAN}     - xver: 1${NC}"
     else
+        # Caddy doesn't support proxy_protocol
         echo -e "${CYAN}     - target: \"127.0.0.1:$port\"${NC}"
-        echo -e "${CYAN}     - xver: 1${NC}"
+        echo -e "${CYAN}     - xver: 0${NC}"
     fi
     echo -e "${GRAY}   • Change template: $APP_NAME template${NC}"
     echo -e "${GRAY}   • Customize HTML content in: $HTML_DIR${NC}"
@@ -3934,13 +3939,16 @@ guide_command() {
     fi
     
     # Determine xray_target based on web server and connection mode
+    local xver_value=0
     if [ "$WEB_SERVER" = "nginx" ]; then
+        xver_value=1
         if [ "$connection_mode" = "socket" ] || [ -z "$connection_mode" ]; then
             xray_target="$SOCKET_PATH"
         else
             xray_target="127.0.0.1:${port:-9443}"
         fi
     else
+        xver_value=0
         xray_target="127.0.0.1:${port:-9443}"
     fi
 
@@ -3960,12 +3968,16 @@ guide_command() {
     echo
 
     echo -e "${BLUE}🔧 How it works:${NC}"
-    if [ "$WEB_SERVER" = "nginx" ] && [ "$connection_mode" != "tcp" ]; then
-        echo -e "${GRAY}1. Nginx listens on Unix Socket ($SOCKET_PATH)"
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        if [ "$connection_mode" != "tcp" ]; then
+            echo -e "${GRAY}1. Nginx listens on Unix Socket ($SOCKET_PATH)"
+        else
+            echo -e "${GRAY}1. Nginx runs on internal port (127.0.0.1:${port:-9443})"
+        fi
         echo -e "${GRAY}2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
     else
         echo -e "${GRAY}1. $server_name runs on internal port (127.0.0.1:${port:-9443})"
-        echo -e "${GRAY}2. Xray Reality forwards traffic via proxy_protocol (xver: 1)"
+        echo -e "${GRAY}2. Xray Reality forwards traffic directly (xver: 0)"
     fi
     echo -e "${GRAY}3. Regular users see a normal website"
     echo -e "${GRAY}4. VPN clients connect through Reality protocol${NC}"
@@ -4035,7 +4047,7 @@ guide_command() {
                 \"security\": \"reality\",
                 \"realitySettings\": {
                     \"show\": false,
-                    \"xver\": 1,
+                    \"xver\": $xver_value,
                     \"target\": \"${xray_target}\",
                     \"spiderX\": \"/\",
                     \"shortIds\": [\"\"],
@@ -4060,7 +4072,11 @@ guide_command() {
     echo
     
     echo -e "${CYAN}📌 Important parameters:${NC}"
-    echo -e "${WHITE}   xver: 1${NC} - proxy_protocol version (always 1)"
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        echo -e "${WHITE}   xver: 1${NC} - proxy_protocol version (Nginx requires xver: 1)"
+    else
+        echo -e "${WHITE}   xver: 0${NC} - no proxy_protocol (Caddy requires xver: 0)"
+    fi
     echo -e "${WHITE}   target: ${xray_target}${NC}"
     echo
 
