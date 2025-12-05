@@ -510,6 +510,120 @@ EOL
     colorized_echo green "Log rotation setup completed successfully"
 }
 
+post_install_logrotate_and_restart() {
+    check_running_as_root
+
+    # Create log directory for remnanode logs
+    local log_dir="/var/log/remnanode"
+    if [ ! -d "$log_dir" ]; then
+        colorized_echo blue "Creating log directory $log_dir"
+        mkdir -p "$log_dir"
+    else
+        colorized_echo green "Log directory $log_dir already exists"
+    fi
+
+    # Ensure logrotate is installed
+    if ! command -v logrotate >/dev/null 2>&1; then
+        colorized_echo blue "Installing logrotate"
+        detect_os
+        install_package logrotate
+    else
+        colorized_echo green "Logrotate is already installed"
+    fi
+
+    # Create /etc/logrotate.d/remnanode with /var/log/remnanode/*.log rules
+    local logrotate_config="/etc/logrotate.d/remnanode"
+    colorized_echo blue "Configuring logrotate at $logrotate_config"
+    cat > "$logrotate_config" <<EOL
+/var/log/remnanode/*.log {
+    size 50M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOL
+
+    chmod 644 "$logrotate_config"
+
+    # Optionally test logrotate configuration (non-fatal on failure)
+    if command -v logrotate >/dev/null 2>&1; then
+        if logrotate -d "$logrotate_config" >/dev/null 2>&1; then
+            colorized_echo green "Logrotate configuration test for /var/log/remnanode successful"
+        else
+            colorized_echo yellow "Logrotate configuration test for /var/log/remnanode reported issues, please check $logrotate_config manually"
+        fi
+    fi
+
+    # Restart remnanode container to ensure volumes and logging are in effect
+    if [ -d "$APP_DIR" ] && [ -f "$COMPOSE_FILE" ]; then
+        colorized_echo blue "Restarting RemnaNode container to apply log settings"
+        detect_compose
+        cd "$APP_DIR"
+        $COMPOSE down || true
+        $COMPOSE up -d --remove-orphans
+    fi
+}
+
+xray_logger_agent_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install Xray Logger Agent"
+    colorized_echo white "This will run an external installer to collect and send Xray logs."
+    colorized_echo white "Source: https://github.com/roflone/xray-logger"
+    echo
+
+    read -p "Do you want to install Xray Logger Agent now? (y/N): " -r install_logger
+    if [[ ! "$install_logger" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Xray Logger Agent installation"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
+    fi
+
+    colorized_echo blue "Running Xray Logger Agent installer..."
+    if curl -fsSL "https://raw.githubusercontent.com/roflone/xray-logger/refs/heads/main/start-xray-logger-agent.sh" | bash -s --; then
+        colorized_echo green "Xray Logger Agent installed successfully"
+    else
+        colorized_echo red "Xray Logger Agent installation failed. Please check your network and try again manually."
+    fi
+}
+
+warp_native_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install Warp Native"
+    colorized_echo white "This will run an external installer for Warp Native client."
+    colorized_echo white "Source: https://github.com/distillium/warp-native"
+    echo
+
+    read -p "Do you want to install Warp Native now? (y/N): " -r install_warp
+    if [[ ! "$install_warp" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Warp Native installation"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
+    fi
+
+    colorized_echo blue "Running Warp Native installer..."
+    if bash <(curl -fsSL "https://raw.githubusercontent.com/distillium/warp-native/main/install.sh"); then
+        colorized_echo green "Warp Native installed successfully"
+    else
+        colorized_echo red "Warp Native installation failed. Please check your network and try again manually."
+    fi
+}
+
 # ============================================
 # Selfsteal Socket Integration
 # ============================================
@@ -726,6 +840,7 @@ EOL
         # If Xray is installed, add uncommented volumes section
         cat >> "$COMPOSE_FILE" <<EOL
     volumes:
+      - '/var/log/remnanode:/var/log/remnanode'
       - $XRAY_FILE:/usr/local/bin/xray
 EOL
         
@@ -744,12 +859,13 @@ EOL
     else
         # If Xray is not installed, add commented volumes section
         cat >> "$COMPOSE_FILE" <<EOL
-    # volumes:
-    #   - $XRAY_FILE:/usr/local/bin/xray
-    #   - $GEOIP_FILE:/usr/local/share/xray/geoip.dat
-    #   - $GEOSITE_FILE:/usr/local/share/xray/geosite.dat
-    #   - $DATA_DIR:$DATA_DIR
-    #   - /dev/shm:/dev/shm  # Uncomment for selfsteal socket access
+    volumes:
+      - '/var/log/remnanode:/var/log/remnanode'
+    #  - $XRAY_FILE:/usr/local/bin/xray
+    #  - $GEOIP_FILE:/usr/local/share/xray/geoip.dat
+    #  - $GEOSITE_FILE:/usr/local/share/xray/geosite.dat
+    #  - $DATA_DIR:$DATA_DIR
+    #  - /dev/shm:/dev/shm  # Uncomment for selfsteal socket access
 EOL
     fi
 
@@ -933,11 +1049,19 @@ install_command() {
     detect_compose
     install_remnanode_script
     install_remnanode
-    
+
     # Check for selfsteal socket and enable volume if needed
     configure_selfsteal_integration
-    
-    up_remnanode
+
+    # Set up /var/log/remnanode logrotate config and restart container
+    post_install_logrotate_and_restart
+
+    # Offer to install external Xray Logger Agent
+    xray_logger_agent_offer_install
+
+    # Offer to install Warp Native client
+    warp_native_offer_install
+
     follow_remnanode_logs
 
     # final message
