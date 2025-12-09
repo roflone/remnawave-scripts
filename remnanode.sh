@@ -624,6 +624,262 @@ warp_native_offer_install() {
     fi
 }
 
+bbr_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Enable TCP BBR congestion control"
+    colorized_echo white "This will tune system networking for better performance (Linux only)."
+    echo
+
+    read -p "Do you want to enable BBR now? (y/N): " -r enable_bbr
+    if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping BBR configuration"
+        return 0
+    fi
+
+    # Check if BBR is already active
+    if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
+        colorized_echo green "BBR is already enabled in the current system configuration"
+        return 0
+    fi
+
+    colorized_echo blue "Configuring BBR parameters in /etc/sysctl.conf"
+
+    # Ensure fq qdisc line exists
+    if ! grep -q "^net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
+        echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf >/dev/null
+    else
+        colorized_echo gray "net.core.default_qdisc=fq already present in /etc/sysctl.conf"
+    fi
+
+    # Ensure BBR congestion control line exists
+    if ! grep -q "^net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
+        echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf >/dev/null
+    else
+        colorized_echo gray "net.ipv4.tcp_congestion_control=bbr already present in /etc/sysctl.conf"
+    fi
+
+    colorized_echo blue "Applying sysctl settings..."
+    if sysctl -p >/dev/null 2>&1; then
+        colorized_echo green "BBR settings applied successfully"
+        sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr" && \
+            colorized_echo green "TCP BBR congestion control is now active"
+    else
+        colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
+        return 1
+    fi
+}
+
+beszel_agent_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install Beszel Agent (Docker)"
+    colorized_echo white "This will create /opt/beszel-agent and run a Docker Compose stack."
+    echo
+
+    read -p "Do you want to install Beszel Agent now? (y/N): " -r install_beszel
+    if [[ ! "$install_beszel" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Beszel Agent installation"
+        return 0
+    fi
+
+    # Ensure Docker and Compose are available
+    detect_os
+    if ! command -v docker >/dev/null 2>&1; then
+        colorized_echo blue "Docker not found, installing..."
+        install_docker
+    fi
+    detect_compose
+
+    local beszel_dir="$INSTALL_DIR/beszel-agent"
+    colorized_echo blue "Creating Beszel Agent directory at $beszel_dir"
+    mkdir -p "$beszel_dir"
+    cd "$beszel_dir"
+
+    colorized_echo blue "Opening docker-compose.yml for Beszel Agent configuration"
+    colorized_echo white "Please paste your Beszel Agent docker-compose configuration, then save and exit."
+
+    # Prefer nano if available, otherwise fall back to EDITOR detection
+    if command -v nano >/dev/null 2>&1; then
+        nano docker-compose.yml
+    else
+        check_editor
+        $EDITOR docker-compose.yml
+    fi
+
+    if [ ! -s docker-compose.yml ]; then
+        colorized_echo red "docker-compose.yml is empty or missing, skipping Beszel Agent start"
+        return 1
+    fi
+
+    colorized_echo blue "Starting Beszel Agent Docker stack in $beszel_dir..."
+    if $COMPOSE up -d; then
+        colorized_echo green "Beszel Agent containers started successfully"
+    else
+        colorized_echo red "Failed to start Beszel Agent containers. Please check docker-compose.yml manually."
+        return 1
+    fi
+}
+
+selfsteal_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install Selfsteal (nginx/caddy proxy)"
+    colorized_echo white "This will run an external installer from remnawave-scripts."
+    echo
+
+    read -p "Do you want to install Selfsteal now? (y/N): " -r install_selfsteal
+    if [[ ! "$install_selfsteal" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Selfsteal installation"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
+    fi
+
+    colorized_echo blue "Running Selfsteal installer..."
+    if bash <(curl -Ls "https://github.com/roflone/remnawave-scripts/raw/main/selfsteal.sh") @ install; then
+        colorized_echo green "Selfsteal installed successfully"
+    else
+        colorized_echo red "Selfsteal installation failed. Please check the output above and try again manually."
+        return 1
+    fi
+}
+
+torrent_blocker_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install Torrent Blocker"
+    colorized_echo white "This will run an external installer from git.new."
+    echo
+
+    read -p "Do you want to install Torrent Blocker now? (y/N): " -r install_tb
+    if [[ ! "$install_tb" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Torrent Blocker installation"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
+    fi
+
+    colorized_echo blue "Running Torrent Blocker installer..."
+    if bash <(curl -fsSL "git.new/install"); then
+        colorized_echo green "Torrent Blocker installed successfully"
+    else
+        colorized_echo red "Torrent Blocker installation failed. Please check the output above and try again manually."
+        return 1
+    fi
+}
+
+ipv6_disable_offer() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Permanently disable IPv6"
+    colorized_echo white "This will modify /etc/sysctl.conf to disable IPv6 system-wide."
+    echo
+
+    read -p "Do you want to disable IPv6 now? (y/N): " -r disable_ipv6
+    if [[ ! "$disable_ipv6" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping IPv6 disable"
+        return 0
+    fi
+
+    local sysctl_conf="/etc/sysctl.conf"
+
+    if [ ! -f "$sysctl_conf" ]; then
+        colorized_echo yellow "$sysctl_conf not found, creating new file"
+        touch "$sysctl_conf"
+    fi
+
+    colorized_echo blue "Configuring IPv6 disable flags in $sysctl_conf"
+
+    # Append lines only if they are not already present
+    grep -q "^net.ipv6.conf.all.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
+        echo "net.ipv6.conf.all.disable_ipv6 = 1" >> "$sysctl_conf"
+
+    grep -q "^net.ipv6.conf.default.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
+        echo "net.ipv6.conf.default.disable_ipv6 = 1" >> "$sysctl_conf"
+
+    grep -q "^net.ipv6.conf.lo.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
+        echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> "$sysctl_conf"
+
+    colorized_echo blue "Applying sysctl settings..."
+    if sysctl -p >/dev/null 2>&1; then
+        colorized_echo green "IPv6 has been disabled according to /etc/sysctl.conf"
+    else
+        colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
+        return 1
+    fi
+}
+
+ufw_f2b_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Install UFW and Fail2Ban"
+    colorized_echo white "This will install UFW firewall and Fail2Ban hardening scripts."
+    echo
+
+    read -p "Do you want to install UFW + Fail2Ban now? (y/N): " -r install_ufw_f2b
+    if [[ ! "$install_ufw_f2b" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping UFW + Fail2Ban installation"
+        return 0
+    fi
+
+    detect_os
+
+    # Install UFW (prefer apt if available)
+    if command -v apt >/dev/null 2>&1; then
+        colorized_echo blue "Installing ufw via apt..."
+        apt update -y >/dev/null 2>&1 || true
+        apt install ufw -y >/dev/null 2>&1
+    else
+        colorized_echo blue "Installing ufw via system package manager..."
+        install_package ufw
+    fi
+
+    # Ensure wget is available for remote scripts
+    if ! command -v wget >/dev/null 2>&1; then
+        colorized_echo blue "wget not found, installing wget..."
+        install_package wget
+    fi
+
+    # Run UFW helper twice (as requested)
+    colorized_echo blue "Running UFW configuration helper (1/2)..."
+    if bash <(wget -qO- "https://dignezzz.github.io/server/ufw-check.sh"); then
+        colorized_echo green "First ufw-check.sh run completed"
+    else
+        colorized_echo yellow "First ufw-check.sh run reported issues, continuing to second run..."
+    fi
+
+    colorized_echo blue "Running UFW configuration helper (2/2)..."
+    if bash <(wget -qO- "https://dignezzz.github.io/server/ufw-check.sh"); then
+        colorized_echo green "Second ufw-check.sh run completed"
+    else
+        colorized_echo yellow "Second ufw-check.sh run reported issues, please review its output"
+    fi
+
+    # Run Fail2Ban script
+    colorized_echo blue "Running Fail2Ban installer..."
+    if bash <(wget -qO- "https://dignezzz.github.io/server/f2b.sh"); then
+        colorized_echo green "Fail2Ban installation script completed"
+    else
+        colorized_echo red "Fail2Ban installation script failed. Please check the output above and try again manually."
+        return 1
+    fi
+}
+
 # ============================================
 # Selfsteal Socket Integration
 # ============================================
@@ -1061,6 +1317,24 @@ install_command() {
 
     # Offer to install Warp Native client
     warp_native_offer_install
+
+    # Offer to enable TCP BBR congestion control
+    bbr_offer_install
+
+    # Offer to install Beszel Agent
+    beszel_agent_offer_install
+
+    # Offer to install Selfsteal (nginx/caddy proxy)
+    selfsteal_offer_install
+
+    # Offer to install Torrent Blocker
+    torrent_blocker_offer_install
+
+    # Offer to permanently disable IPv6
+    ipv6_disable_offer
+
+    # Offer to install UFW + Fail2Ban
+    ufw_f2b_offer_install
 
     follow_remnanode_logs
 
