@@ -857,14 +857,14 @@ ufw_f2b_offer_install() {
 
     # Run UFW helper twice (as requested)
     colorized_echo blue "Running UFW configuration helper (1/2)..."
-    if bash <(wget -qO- "https://dignezzz.github.io/server/ufw-check.sh"); then
+    if bash <(wget -qO- "https://raw.githubusercontent.com/roflone/tests/main/ufw-check.sh"); then
         colorized_echo green "First ufw-check.sh run completed"
     else
         colorized_echo yellow "First ufw-check.sh run reported issues, continuing to second run..."
     fi
 
     colorized_echo blue "Running UFW configuration helper (2/2)..."
-    if bash <(wget -qO- "https://dignezzz.github.io/server/ufw-check.sh"); then
+    if bash <(wget -qO- "https://raw.githubusercontent.com/roflone/tests/main/ufw-check.sh"); then
         colorized_echo green "Second ufw-check.sh run completed"
     else
         colorized_echo yellow "Second ufw-check.sh run reported issues, please review its output"
