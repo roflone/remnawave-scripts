@@ -752,77 +752,6 @@ selfsteal_offer_install() {
     fi
 }
 
-torrent_blocker_offer_install() {
-    check_running_as_root
-
-    echo
-    colorized_echo cyan "Optional: Install Torrent Blocker"
-    colorized_echo white "This will run an external installer from git.new."
-    echo
-
-    read -p "Do you want to install Torrent Blocker now? (y/N): " -r install_tb
-    if [[ ! "$install_tb" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Torrent Blocker installation"
-        return 0
-    fi
-
-    if ! command -v curl >/dev/null 2>&1; then
-        colorized_echo blue "curl not found, installing curl..."
-        detect_os
-        install_package curl
-    fi
-
-    colorized_echo blue "Running Torrent Blocker installer..."
-    if bash <(curl -fsSL "git.new/install"); then
-        colorized_echo green "Torrent Blocker installed successfully"
-    else
-        colorized_echo red "Torrent Blocker installation failed. Please check the output above and try again manually."
-        return 1
-    fi
-}
-
-ipv6_disable_offer() {
-    check_running_as_root
-
-    echo
-    colorized_echo cyan "Optional: Permanently disable IPv6"
-    colorized_echo white "This will modify /etc/sysctl.conf to disable IPv6 system-wide."
-    echo
-
-    read -p "Do you want to disable IPv6 now? (y/N): " -r disable_ipv6
-    if [[ ! "$disable_ipv6" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping IPv6 disable"
-        return 0
-    fi
-
-    local sysctl_conf="/etc/sysctl.conf"
-
-    if [ ! -f "$sysctl_conf" ]; then
-        colorized_echo yellow "$sysctl_conf not found, creating new file"
-        touch "$sysctl_conf"
-    fi
-
-    colorized_echo blue "Configuring IPv6 disable flags in $sysctl_conf"
-
-    # Append lines only if they are not already present
-    grep -q "^net.ipv6.conf.all.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
-        echo "net.ipv6.conf.all.disable_ipv6 = 1" >> "$sysctl_conf"
-
-    grep -q "^net.ipv6.conf.default.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
-        echo "net.ipv6.conf.default.disable_ipv6 = 1" >> "$sysctl_conf"
-
-    grep -q "^net.ipv6.conf.lo.disable_ipv6" "$sysctl_conf" 2>/dev/null || \
-        echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> "$sysctl_conf"
-
-    colorized_echo blue "Applying sysctl settings..."
-    if sysctl -p >/dev/null 2>&1; then
-        colorized_echo green "IPv6 has been disabled according to /etc/sysctl.conf"
-    else
-        colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
-        return 1
-    fi
-}
-
 ufw_f2b_offer_install() {
     check_running_as_root
 
@@ -847,6 +776,13 @@ ufw_f2b_offer_install() {
     else
         colorized_echo blue "Installing ufw via system package manager..."
         install_package ufw
+    fi
+
+    colorized_echo blue "Adding outbound UFW deny rule for SMTP/proxy ports..."
+    if ufw deny out 25,465,587,1080,3128,8080/tcp >/dev/null 2>&1; then
+        colorized_echo green "Outbound UFW deny rule added"
+    else
+        colorized_echo yellow "Failed to add outbound UFW deny rule automatically"
     fi
 
     # Ensure wget is available for remote scripts
@@ -1326,12 +1262,6 @@ install_command() {
 
     # Offer to install Selfsteal (nginx/caddy proxy)
     selfsteal_offer_install
-
-    # Offer to install Torrent Blocker
-    torrent_blocker_offer_install
-
-    # Offer to permanently disable IPv6
-    ipv6_disable_offer
 
     # Offer to install UFW + Fail2Ban
     ufw_f2b_offer_install
