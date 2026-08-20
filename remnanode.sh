@@ -587,11 +587,79 @@ xray_logger_agent_offer_install() {
         install_package curl
     fi
 
+    if ! command -v docker >/dev/null 2>&1; then
+        colorized_echo blue "Docker not found, installing..."
+        detect_os
+        install_docker
+    fi
+    detect_compose
+
+    ask_xray_logger_required() {
+        local prompt="$1"
+        local reply=""
+        while :; do
+            read -p "$prompt " -r reply
+            if [ -n "$reply" ]; then
+                printf '%s' "$reply"
+                return 0
+            fi
+            colorized_echo red "Value cannot be empty. Please try again."
+        done
+    }
+
+    set_xray_logger_env() {
+        local key="$1"
+        local value="$2"
+        local esc
+        esc="$(printf '%s' "$value" | sed -e 's/[\/&]/\\&/g')"
+        if [ -f .env ] && grep -Eq "^[[:space:]]*#?[[:space:]]*$key=" .env; then
+            sed -i -E "s|^[[:space:]]*#?[[:space:]]*$key=.*|$key=$esc|" .env
+        else
+            printf '%s=%s\n' "$key" "$value" >> .env
+        fi
+    }
+
+    local ACCESS_LOG_DIR="/var/log/remnanode"
+    local ACCESS_LOG_FILE="access.log"
+    local ENCRYPTION_KEY_BASE64 API_URL NODE_NAME
+
+    echo
+    colorized_echo gray "Log directory: $ACCESS_LOG_DIR (auto)"
+    colorized_echo gray "Log file: $ACCESS_LOG_FILE (auto)"
+    echo
+
+    ENCRYPTION_KEY_BASE64="$(ask_xray_logger_required "Enter the secret code you received when installing the xray-logger server:")"
+    API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
+    NODE_NAME="$(ask_xray_logger_required "Enter the Node name (example: Netherlands-1):")"
+
     colorized_echo blue "Running Xray Logger Agent installer..."
-    if curl -fsSL "https://raw.githubusercontent.com/roflone/xray-logger/refs/heads/main/start-xray-logger-agent.sh" | bash -s --; then
+
+    local logger_dir="/opt/xray-logger-agent"
+    local raw_base="https://raw.githubusercontent.com/likstanov/xray-logger/refs/heads/main/xray-logger-agent"
+
+    if (
+        umask 077
+        mkdir -p "$logger_dir"
+        cd "$logger_dir" || exit 1
+
+        curl -fsSL "$raw_base/docker-compose.yml" -o docker-compose.yml || exit 1
+        curl -fsSL "$raw_base/.env.example" -o .env.example || exit 1
+        cp -f .env.example .env && rm -f .env.example
+        chmod 600 .env || true
+
+        set_xray_logger_env "ENCRYPTION_KEY_BASE64" "$ENCRYPTION_KEY_BASE64"
+        set_xray_logger_env "ACCESS_LOG_DIR" "$ACCESS_LOG_DIR"
+        set_xray_logger_env "ACCESS_LOG_FILE" "$ACCESS_LOG_FILE"
+        set_xray_logger_env "API_URL" "$API_URL"
+        set_xray_logger_env "NODE_NAME" "$NODE_NAME"
+
+        mkdir -p "$ACCESS_LOG_DIR" || true
+        $COMPOSE up -d
+    ); then
         colorized_echo green "Xray Logger Agent installed successfully"
     else
         colorized_echo red "Xray Logger Agent installation failed. Please check your network and try again manually."
+        return 1
     fi
 }
 
@@ -667,58 +735,6 @@ bbr_offer_install() {
             colorized_echo green "TCP BBR congestion control is now active"
     else
         colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
-        return 1
-    fi
-}
-
-beszel_agent_offer_install() {
-    check_running_as_root
-
-    echo
-    colorized_echo cyan "Optional: Install Beszel Agent (Docker)"
-    colorized_echo white "This will create /opt/beszel-agent and run a Docker Compose stack."
-    echo
-
-    read -p "Do you want to install Beszel Agent now? (y/N): " -r install_beszel
-    if [[ ! "$install_beszel" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Beszel Agent installation"
-        return 0
-    fi
-
-    # Ensure Docker and Compose are available
-    detect_os
-    if ! command -v docker >/dev/null 2>&1; then
-        colorized_echo blue "Docker not found, installing..."
-        install_docker
-    fi
-    detect_compose
-
-    local beszel_dir="$INSTALL_DIR/beszel-agent"
-    colorized_echo blue "Creating Beszel Agent directory at $beszel_dir"
-    mkdir -p "$beszel_dir"
-    cd "$beszel_dir"
-
-    colorized_echo blue "Opening docker-compose.yml for Beszel Agent configuration"
-    colorized_echo white "Please paste your Beszel Agent docker-compose configuration, then save and exit."
-
-    # Prefer nano if available, otherwise fall back to EDITOR detection
-    if command -v nano >/dev/null 2>&1; then
-        nano docker-compose.yml
-    else
-        check_editor
-        $EDITOR docker-compose.yml
-    fi
-
-    if [ ! -s docker-compose.yml ]; then
-        colorized_echo red "docker-compose.yml is empty or missing, skipping Beszel Agent start"
-        return 1
-    fi
-
-    colorized_echo blue "Starting Beszel Agent Docker stack in $beszel_dir..."
-    if $COMPOSE up -d; then
-        colorized_echo green "Beszel Agent containers started successfully"
-    else
-        colorized_echo red "Failed to start Beszel Agent containers. Please check docker-compose.yml manually."
         return 1
     fi
 }
@@ -1007,7 +1023,7 @@ EOL
     colorized_echo green "Environment file saved in $ENV_FILE"
 
     # Determine image based on --dev flag
-    IMAGE_TAG="latest"
+    IMAGE_TAG="2.8.0"
     if [ "$USE_DEV_BRANCH" == "true" ]; then
         IMAGE_TAG="dev"
     fi
@@ -1256,9 +1272,6 @@ install_command() {
 
     # Offer to enable TCP BBR congestion control
     bbr_offer_install
-
-    # Offer to install Beszel Agent
-    beszel_agent_offer_install
 
     # Offer to install Selfsteal (nginx/caddy proxy)
     selfsteal_offer_install
