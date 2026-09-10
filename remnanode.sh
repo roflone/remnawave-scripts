@@ -832,6 +832,53 @@ ufw_f2b_offer_install() {
     fi
 }
 
+node_accelerator_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Installing Node Accelerator"
+    colorized_echo white "Source: https://github.com/jestivald/node-accelerator"
+    echo
+
+    if ! command -v git >/dev/null 2>&1; then
+        colorized_echo blue "git not found, installing git..."
+        detect_os
+        install_package git
+    fi
+
+    local dest="/root/node-accelerator"
+    local repo_url="https://github.com/jestivald/node-accelerator.git"
+
+    if [ -d "$dest/.git" ]; then
+        colorized_echo blue "Updating Node Accelerator in $dest..."
+        if ! git -C "$dest" pull --ff-only; then
+            colorized_echo yellow "git pull failed, continuing with the existing copy"
+        fi
+    elif [ -d "$dest" ]; then
+        colorized_echo yellow "Directory $dest already exists, skipping clone"
+    else
+        colorized_echo blue "Cloning Node Accelerator into $dest..."
+        if ! git clone "$repo_url" "$dest"; then
+            colorized_echo red "Failed to clone Node Accelerator. Please check your network and try again manually."
+            return 1
+        fi
+    fi
+
+    if [ ! -f "$dest/install.sh" ]; then
+        colorized_echo red "install.sh not found in $dest"
+        return 1
+    fi
+
+    chmod +x "$dest/install.sh"
+    colorized_echo blue "Running Node Accelerator installer..."
+    if (cd "$dest" && bash install.sh); then
+        colorized_echo green "Node Accelerator installer finished"
+    else
+        colorized_echo red "Node Accelerator installer failed. You can run it again from $dest/install.sh"
+        return 1
+    fi
+}
+
 # ============================================
 # Selfsteal Socket Integration
 # ============================================
@@ -1278,6 +1325,9 @@ install_command() {
 
     # Offer to install UFW + Fail2Ban
     ufw_f2b_offer_install
+
+    # Clone and run Node Accelerator last
+    node_accelerator_install
 
     follow_remnanode_logs
 
