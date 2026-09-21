@@ -959,6 +959,117 @@ hysteria_buffer_offer_install() {
     fi
 }
 
+ssh_key_hardening_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: SSH key login and disable password auth"
+    colorized_echo white "A public key will be installed, then password SSH login will be turned off."
+    colorized_echo yellow "Keep this session open until you confirm key login works from another terminal."
+    echo
+
+    read -p "Do you want to configure SSH key auth now? (y/N): " -r install_ssh_key
+    if [[ ! "$install_ssh_key" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping SSH key hardening"
+        return 0
+    fi
+
+    local ssh_dir="/root/.ssh"
+    local auth_keys="$ssh_dir/authorized_keys"
+    mkdir -p "$ssh_dir"
+    chmod 700 "$ssh_dir"
+
+    local pubkey=""
+    echo
+    colorized_echo white "Paste your SSH public key (one line, starts with ssh-ed25519 or ssh-rsa)."
+    colorized_echo gray "Or type generate to create a new ed25519 key on this server."
+    read -p "Public key: " -r pubkey
+
+    if [ "$pubkey" = "generate" ]; then
+        local key_file="$ssh_dir/id_ed25519_remnanode"
+        if [ -f "$key_file" ]; then
+            colorized_echo yellow "Key already exists at $key_file, reusing it"
+        else
+            ssh-keygen -t ed25519 -f "$key_file" -N "" -q
+        fi
+        pubkey="$(cat "${key_file}.pub")"
+        echo
+        colorized_echo yellow "Copy this PRIVATE key to your computer now, it will not be shown again by the script:"
+        echo
+        cat "$key_file"
+        echo
+        read -p "Press Enter after you saved the private key..."
+    fi
+
+    if [[ ! "$pubkey" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]] ]]; then
+        colorized_echo red "Invalid public key. Password login was not disabled."
+        return 1
+    fi
+
+    touch "$auth_keys"
+    chmod 600 "$auth_keys"
+    if grep -qxF "$pubkey" "$auth_keys" 2>/dev/null; then
+        colorized_echo gray "Public key already present in $auth_keys"
+    else
+        printf '%s\n' "$pubkey" >> "$auth_keys"
+        colorized_echo green "Public key added to $auth_keys"
+    fi
+
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        local user_home
+        user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+        if [ -n "$user_home" ] && [ -d "$user_home" ]; then
+            mkdir -p "$user_home/.ssh"
+            chmod 700 "$user_home/.ssh"
+            touch "$user_home/.ssh/authorized_keys"
+            chmod 600 "$user_home/.ssh/authorized_keys"
+            if ! grep -qxF "$pubkey" "$user_home/.ssh/authorized_keys" 2>/dev/null; then
+                printf '%s\n' "$pubkey" >> "$user_home/.ssh/authorized_keys"
+            fi
+            chown -R "$SUDO_USER:$SUDO_USER" "$user_home/.ssh"
+            colorized_echo green "Public key also added for user $SUDO_USER"
+        fi
+    fi
+
+    colorized_echo blue "Disabling SSH password authentication..."
+    local dropin_dir="/etc/ssh/sshd_config.d"
+    local sshd_conf="/etc/ssh/sshd_config"
+    if [ -d "$dropin_dir" ]; then
+        cat > "$dropin_dir/00-disable-password.conf" <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+EOF
+        if [ -f "$dropin_dir/50-cloud-init.conf" ]; then
+            sed -i 's/^PasswordAuthentication.*/PasswordAuthentication no/' "$dropin_dir/50-cloud-init.conf"
+        fi
+    fi
+
+    if [ -f "$sshd_conf" ]; then
+        sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$sshd_conf"
+        sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' "$sshd_conf"
+    fi
+
+    if ! sshd -t 2>/dev/null; then
+        colorized_echo red "sshd config test failed. Password login was not reloaded. Check /etc/ssh/sshd_config"
+        return 1
+    fi
+
+    if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+        || systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null; then
+        colorized_echo green "SSH reloaded: key login enabled, password login disabled"
+        colorized_echo yellow "Open a new SSH session with your key before closing this one"
+    else
+        colorized_echo red "Failed to reload SSH service. Config is written, reload it manually."
+        return 1
+    fi
+}
+
 # ============================================
 # Selfsteal Socket Integration
 # ============================================
@@ -1411,6 +1522,9 @@ install_command() {
 
     # Offer Hysteria UDP buffer tweak after accelerator
     hysteria_buffer_offer_install
+
+    # Offer SSH key auth and disable password login
+    ssh_key_hardening_offer_install
 
     follow_remnanode_logs
 
