@@ -1507,7 +1507,8 @@ get_container_xray_version() {
 
 print_extras_menu() {
     echo
-    echo -e "\033[1;37mOptional components:\033[0m"
+    echo -e "\033[1;37mWhat to install:\033[0m"
+    echo -e "   \033[38;5;15m0)\033[0m  RemnaNode core"
     echo -e "   \033[38;5;15m1)\033[0m  Xray Logger Agent"
     echo -e "   \033[38;5;15m2)\033[0m  Warp Native"
     echo -e "   \033[38;5;15m3)\033[0m  TCP BBR"
@@ -1517,10 +1518,11 @@ print_extras_menu() {
     echo -e "   \033[38;5;15m7)\033[0m  Hysteria buffer"
     echo -e "   \033[38;5;15m8)\033[0m  SSH key hardening"
     echo
-    echo -e "\033[38;5;244mEnter numbers (e.g. 1 5 6 8), \033[38;5;15mall\033[38;5;244m or \033[38;5;15mnone\033[38;5;244m\033[0m"
+    echo -e "\033[38;5;244mEnter numbers (e.g. 0 1 5 6 8), \033[38;5;15mall\033[38;5;244m or \033[38;5;15mnone\033[38;5;244m\033[0m"
 }
 
 reset_install_extras() {
+    RUN_EXTRA_CORE=false
     RUN_EXTRA_LOGGER=false
     RUN_EXTRA_WARP=false
     RUN_EXTRA_BBR=false
@@ -1536,6 +1538,7 @@ apply_extras_choice() {
     reset_install_extras
 
     if [[ "$extra_choice" =~ ^([Aa][Ll][Ll]|a)$ ]]; then
+        RUN_EXTRA_CORE=true
         RUN_EXTRA_LOGGER=true
         RUN_EXTRA_WARP=true
         RUN_EXTRA_BBR=true
@@ -1554,6 +1557,7 @@ apply_extras_choice() {
     local n
     for n in $extra_choice; do
         case "$n" in
+            0|core|remnanode) RUN_EXTRA_CORE=true ;;
             1|logger|xray-logger) RUN_EXTRA_LOGGER=true ;;
             2|warp) RUN_EXTRA_WARP=true ;;
             3|bbr) RUN_EXTRA_BBR=true ;;
@@ -1571,6 +1575,7 @@ apply_extras_choice() {
 
 show_selected_extras() {
     local selected=""
+    [ "$RUN_EXTRA_CORE" = true ] && selected+="remnanode "
     [ "$RUN_EXTRA_LOGGER" = true ] && selected+="logger "
     [ "$RUN_EXTRA_WARP" = true ] && selected+="warp "
     [ "$RUN_EXTRA_BBR" = true ] && selected+="bbr "
@@ -1609,6 +1614,10 @@ run_install_extras() {
 run_single_extra() {
     local item="$1"
     case "$item" in
+        0|core|remnanode)
+            colorized_echo yellow "RemnaNode core is installed via: sudo $APP_NAME install"
+            return 1
+            ;;
         1|logger|xray-logger) xray_logger_agent_offer_install force ;;
         2|warp) warp_native_offer_install force ;;
         3|bbr) bbr_offer_install force ;;
@@ -1631,6 +1640,9 @@ extras_command() {
     local item="${1:-${EXTRAS_ITEM:-}}"
     if [ -z "$item" ]; then
         select_install_extras
+        if [ "$RUN_EXTRA_CORE" = true ]; then
+            colorized_echo yellow "RemnaNode core is skipped here. Select it from: sudo $APP_NAME install"
+        fi
         run_install_extras
         return 0
     fi
@@ -1639,23 +1651,25 @@ extras_command() {
 
 install_command() {
     check_running_as_root
-    local skip_core_install=false
-    if is_remnanode_installed; then
-        colorized_echo yellow "Remnanode is already installed at $APP_DIR"
-        read -p "Do you want to override the previous installation? (y/n) "
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            colorized_echo blue "Keeping the current RemnaNode. You can still install extras."
-            skip_core_install=true
-        fi
+
+    select_install_extras
+
+    local do_core=false
+    if [ "$RUN_EXTRA_CORE" = true ]; then
+        do_core=true
+    elif ! is_remnanode_installed; then
+        colorized_echo yellow "RemnaNode is not installed. Add 0 to the selection to install the core."
     fi
 
-    if [ "$skip_core_install" = true ]; then
+    if [ "$do_core" != true ]; then
         detect_os
-        select_install_extras
         run_install_extras
         return 0
     fi
 
+    if is_remnanode_installed; then
+        colorized_echo yellow "Remnanode is already installed at $APP_DIR, reinstalling as selected."
+    fi
     detect_os
     if ! command -v curl >/dev/null 2>&1; then
         install_package curl
@@ -1674,7 +1688,6 @@ install_command() {
     # Set up /var/log/remnanode logrotate config and restart container
     post_install_logrotate_and_restart
 
-    select_install_extras
     run_install_extras
 
     follow_remnanode_logs
