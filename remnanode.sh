@@ -1639,14 +1639,23 @@ extras_command() {
 
 install_command() {
     check_running_as_root
+    local skip_core_install=false
     if is_remnanode_installed; then
-        colorized_echo red "Remnanode is already installed at $APP_DIR"
+        colorized_echo yellow "Remnanode is already installed at $APP_DIR"
         read -p "Do you want to override the previous installation? (y/n) "
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            colorized_echo red "Aborted installation"
-            exit 1
+            colorized_echo blue "Keeping the current RemnaNode. You can still install extras."
+            skip_core_install=true
         fi
     fi
+
+    if [ "$skip_core_install" = true ]; then
+        detect_os
+        select_install_extras
+        run_install_extras
+        return 0
+    fi
+
     detect_os
     if ! command -v curl >/dev/null 2>&1; then
         install_package curl
