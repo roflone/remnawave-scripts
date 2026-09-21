@@ -794,6 +794,13 @@ ufw_f2b_offer_install() {
         install_package ufw
     fi
 
+    colorized_echo blue "Allowing HTTP port 80/tcp..."
+    if ufw allow 80/tcp >/dev/null 2>&1; then
+        colorized_echo green "UFW rule added: allow 80/tcp"
+    else
+        colorized_echo yellow "Failed to add UFW allow 80/tcp rule automatically"
+    fi
+
     colorized_echo blue "Adding outbound UFW deny rule for SMTP/proxy ports..."
     if ufw deny out 25,465,587,1080,3128,8080/tcp >/dev/null 2>&1; then
         colorized_echo green "Outbound UFW deny rule added"
