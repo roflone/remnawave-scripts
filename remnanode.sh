@@ -43,8 +43,13 @@ while [[ $# -gt 0 ]]; do
             exit 0
         ;;
         *)
-            echo "Unknown argument: $key"
-            exit 1
+            if [[ "$COMMAND" == "extras" ]]; then
+                EXTRAS_ITEM="$key"
+                shift
+            else
+                echo "Unknown argument: $key"
+                exit 1
+            fi
         ;;
     esac
 done
@@ -585,10 +590,12 @@ xray_logger_agent_offer_install() {
     colorized_echo white "Source: https://github.com/roflone/xray-logger"
     echo
 
-    read -p "Do you want to install Xray Logger Agent now? (y/N): " -r install_logger
-    if [[ ! "$install_logger" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Xray Logger Agent installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Xray Logger Agent now? (y/N): " -r install_logger
+        if [[ ! "$install_logger" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Xray Logger Agent installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -704,10 +711,12 @@ warp_native_offer_install() {
     colorized_echo white "Source: https://github.com/distillium/warp-native"
     echo
 
-    read -p "Do you want to install Warp Native now? (y/N): " -r install_warp
-    if [[ ! "$install_warp" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Warp Native installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Warp Native now? (y/N): " -r install_warp
+        if [[ ! "$install_warp" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Warp Native installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -732,10 +741,12 @@ bbr_offer_install() {
     colorized_echo white "This will tune system networking for better performance (Linux only)."
     echo
 
-    read -p "Do you want to enable BBR now? (y/N): " -r enable_bbr
-    if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping BBR configuration"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to enable BBR now? (y/N): " -r enable_bbr
+        if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping BBR configuration"
+            return 0
+        fi
     fi
 
     # Check if BBR is already active
@@ -779,10 +790,12 @@ selfsteal_offer_install() {
     colorized_echo white "This will run an external installer from remnawave-scripts."
     echo
 
-    read -p "Do you want to install Selfsteal now? (y/N): " -r install_selfsteal
-    if [[ ! "$install_selfsteal" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Selfsteal installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Selfsteal now? (y/N): " -r install_selfsteal
+        if [[ ! "$install_selfsteal" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Selfsteal installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -808,10 +821,12 @@ ufw_f2b_offer_install() {
     colorized_echo white "This will install UFW firewall and Fail2Ban hardening scripts."
     echo
 
-    read -p "Do you want to install UFW + Fail2Ban now? (y/N): " -r install_ufw_f2b
-    if [[ ! "$install_ufw_f2b" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping UFW + Fail2Ban installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install UFW + Fail2Ban now? (y/N): " -r install_ufw_f2b
+        if [[ ! "$install_ufw_f2b" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping UFW + Fail2Ban installation"
+            return 0
+        fi
     fi
 
     detect_os
@@ -874,6 +889,18 @@ ufw_f2b_offer_install() {
 node_accelerator_install() {
     check_running_as_root
 
+    if [ "${1:-}" != "force" ]; then
+        echo
+        colorized_echo cyan "Optional: Install Node Accelerator"
+        colorized_echo white "Source: https://github.com/jestivald/node-accelerator"
+        echo
+        read -p "Do you want to install Node Accelerator now? (y/N): " -r install_accelerator
+        if [[ ! "$install_accelerator" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Node Accelerator installation"
+            return 0
+        fi
+    fi
+
     echo
     colorized_echo cyan "Installing Node Accelerator"
     colorized_echo white "Source: https://github.com/jestivald/node-accelerator"
@@ -926,10 +953,12 @@ hysteria_buffer_offer_install() {
     colorized_echo white "This writes /etc/sysctl.d/99-zz-hysteria-buffer.conf, applies sysctl, and restarts the node."
     echo
 
-    read -p "Do you want to apply the Hysteria buffer tweak now? (y/N): " -r install_hysteria_buffer
-    if [[ ! "$install_hysteria_buffer" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Hysteria buffer tweak"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to apply the Hysteria buffer tweak now? (y/N): " -r install_hysteria_buffer
+        if [[ ! "$install_hysteria_buffer" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Hysteria buffer tweak"
+            return 0
+        fi
     fi
 
     local sysctl_file="/etc/sysctl.d/99-zz-hysteria-buffer.conf"
@@ -968,10 +997,12 @@ ssh_key_hardening_offer_install() {
     colorized_echo yellow "Keep this session open until you confirm key login works from another terminal."
     echo
 
-    read -p "Do you want to configure SSH key auth now? (y/N): " -r install_ssh_key
-    if [[ ! "$install_ssh_key" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping SSH key hardening"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to configure SSH key auth now? (y/N): " -r install_ssh_key
+        if [[ ! "$install_ssh_key" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping SSH key hardening"
+            return 0
+        fi
     fi
 
     local ssh_dir="/root/.ssh"
@@ -1474,6 +1505,138 @@ get_container_xray_version() {
     return 0
 }
 
+print_extras_menu() {
+    echo
+    echo -e "\033[1;37mOptional components:\033[0m"
+    echo -e "   \033[38;5;15m1)\033[0m  Xray Logger Agent"
+    echo -e "   \033[38;5;15m2)\033[0m  Warp Native"
+    echo -e "   \033[38;5;15m3)\033[0m  TCP BBR"
+    echo -e "   \033[38;5;15m4)\033[0m  Selfsteal"
+    echo -e "   \033[38;5;15m5)\033[0m  UFW + Fail2Ban"
+    echo -e "   \033[38;5;15m6)\033[0m  Node Accelerator"
+    echo -e "   \033[38;5;15m7)\033[0m  Hysteria buffer"
+    echo -e "   \033[38;5;15m8)\033[0m  SSH key hardening"
+    echo
+    echo -e "\033[38;5;244mEnter numbers (e.g. 1 5 6 8), \033[38;5;15mall\033[38;5;244m or \033[38;5;15mnone\033[38;5;244m\033[0m"
+}
+
+reset_install_extras() {
+    RUN_EXTRA_LOGGER=false
+    RUN_EXTRA_WARP=false
+    RUN_EXTRA_BBR=false
+    RUN_EXTRA_SELFSTEAL=false
+    RUN_EXTRA_UFW=false
+    RUN_EXTRA_ACCELERATOR=false
+    RUN_EXTRA_HYSTERIA=false
+    RUN_EXTRA_SSH=false
+}
+
+apply_extras_choice() {
+    local extra_choice="$1"
+    reset_install_extras
+
+    if [[ "$extra_choice" =~ ^([Aa][Ll][Ll]|a)$ ]]; then
+        RUN_EXTRA_LOGGER=true
+        RUN_EXTRA_WARP=true
+        RUN_EXTRA_BBR=true
+        RUN_EXTRA_SELFSTEAL=true
+        RUN_EXTRA_UFW=true
+        RUN_EXTRA_ACCELERATOR=true
+        RUN_EXTRA_HYSTERIA=true
+        RUN_EXTRA_SSH=true
+        return 0
+    fi
+
+    if [[ -z "$extra_choice" || "$extra_choice" =~ ^([Nn][Oo][Nn][Ee]|n)$ ]]; then
+        return 0
+    fi
+
+    local n
+    for n in $extra_choice; do
+        case "$n" in
+            1|logger|xray-logger) RUN_EXTRA_LOGGER=true ;;
+            2|warp) RUN_EXTRA_WARP=true ;;
+            3|bbr) RUN_EXTRA_BBR=true ;;
+            4|selfsteal) RUN_EXTRA_SELFSTEAL=true ;;
+            5|ufw|ufw-f2b) RUN_EXTRA_UFW=true ;;
+            6|accelerator) RUN_EXTRA_ACCELERATOR=true ;;
+            7|hysteria|hysteria-buffer) RUN_EXTRA_HYSTERIA=true ;;
+            8|ssh|ssh-key) RUN_EXTRA_SSH=true ;;
+            *)
+                colorized_echo yellow "Unknown extra: $n"
+                ;;
+        esac
+    done
+}
+
+show_selected_extras() {
+    local selected=""
+    [ "$RUN_EXTRA_LOGGER" = true ] && selected+="logger "
+    [ "$RUN_EXTRA_WARP" = true ] && selected+="warp "
+    [ "$RUN_EXTRA_BBR" = true ] && selected+="bbr "
+    [ "$RUN_EXTRA_SELFSTEAL" = true ] && selected+="selfsteal "
+    [ "$RUN_EXTRA_UFW" = true ] && selected+="ufw "
+    [ "$RUN_EXTRA_ACCELERATOR" = true ] && selected+="accelerator "
+    [ "$RUN_EXTRA_HYSTERIA" = true ] && selected+="hysteria-buffer "
+    [ "$RUN_EXTRA_SSH" = true ] && selected+="ssh-key "
+    if [ -z "$selected" ]; then
+        colorized_echo gray "No optional components selected"
+    else
+        colorized_echo green "Selected: $selected"
+    fi
+}
+
+select_install_extras() {
+    print_extras_menu
+    local extra_choice=""
+    read -p "Select: " -r extra_choice
+    apply_extras_choice "$extra_choice"
+    echo
+    show_selected_extras
+}
+
+run_install_extras() {
+    [ "$RUN_EXTRA_LOGGER" = true ] && xray_logger_agent_offer_install force || true
+    [ "$RUN_EXTRA_WARP" = true ] && warp_native_offer_install force || true
+    [ "$RUN_EXTRA_BBR" = true ] && bbr_offer_install force || true
+    [ "$RUN_EXTRA_SELFSTEAL" = true ] && selfsteal_offer_install force || true
+    [ "$RUN_EXTRA_UFW" = true ] && ufw_f2b_offer_install force || true
+    [ "$RUN_EXTRA_ACCELERATOR" = true ] && node_accelerator_install force || true
+    [ "$RUN_EXTRA_HYSTERIA" = true ] && hysteria_buffer_offer_install force || true
+    [ "$RUN_EXTRA_SSH" = true ] && ssh_key_hardening_offer_install force || true
+}
+
+run_single_extra() {
+    local item="$1"
+    case "$item" in
+        1|logger|xray-logger) xray_logger_agent_offer_install force ;;
+        2|warp) warp_native_offer_install force ;;
+        3|bbr) bbr_offer_install force ;;
+        4|selfsteal) selfsteal_offer_install force ;;
+        5|ufw|ufw-f2b) ufw_f2b_offer_install force ;;
+        6|accelerator) node_accelerator_install force ;;
+        7|hysteria|hysteria-buffer) hysteria_buffer_offer_install force ;;
+        8|ssh|ssh-key) ssh_key_hardening_offer_install force ;;
+        *)
+            colorized_echo red "Unknown extra: $item"
+            print_extras_menu
+            echo -e "\033[38;5;244mExample: sudo $APP_NAME extras logger\033[0m"
+            return 1
+            ;;
+    esac
+}
+
+extras_command() {
+    check_running_as_root
+    local item="${1:-${EXTRAS_ITEM:-}}"
+    if [ -z "$item" ]; then
+        select_install_extras
+        run_install_extras
+        return 0
+    fi
+    run_single_extra "$item"
+}
+
 install_command() {
     check_running_as_root
     if is_remnanode_installed; then
@@ -1502,29 +1665,8 @@ install_command() {
     # Set up /var/log/remnanode logrotate config and restart container
     post_install_logrotate_and_restart
 
-    # Offer to install external Xray Logger Agent
-    xray_logger_agent_offer_install
-
-    # Offer to install Warp Native client
-    warp_native_offer_install
-
-    # Offer to enable TCP BBR congestion control
-    bbr_offer_install
-
-    # Offer to install Selfsteal (nginx/caddy proxy)
-    selfsteal_offer_install
-
-    # Offer to install UFW + Fail2Ban
-    ufw_f2b_offer_install
-
-    # Clone and run Node Accelerator last
-    node_accelerator_install
-
-    # Offer Hysteria UDP buffer tweak after accelerator
-    hysteria_buffer_offer_install
-
-    # Offer SSH key auth and disable password login
-    ssh_key_hardening_offer_install
+    select_install_extras
+    run_install_extras
 
     follow_remnanode_logs
 
@@ -3339,6 +3481,18 @@ usage() {
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "enable-socket" "🔌 Enable selfsteal socket access"
     echo
 
+    echo -e "\033[1;37m🧩 Optional extras:\033[0m"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "extras" "🎛️  Choose and install extras"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "logger" "📥  Xray Logger Agent"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "warp" "🌀  Warp Native"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "bbr" "⚡  TCP BBR"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "selfsteal" "🕵️  Selfsteal"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "ufw" "🛡️  UFW + Fail2Ban"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "accelerator" "🚀  Node Accelerator"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "hysteria-buffer" "📶  Hysteria rmem buffer"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "ssh-key" "🔑  SSH key + disable password"
+    echo
+
     echo -e "\033[1;37m📋 Information:\033[0m"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "help" "📖 Show this help"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "version" "📋 Show version info"
@@ -3360,6 +3514,9 @@ usage() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
     echo -e "\033[1;37m📖 Examples:\033[0m"
     echo -e "\033[38;5;244m   sudo $APP_NAME install\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME extras\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME extras logger\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME ssh-key\033[0m"
     echo -e "\033[38;5;244m   sudo $APP_NAME core-update\033[0m"
     echo -e "\033[38;5;244m   $APP_NAME logs\033[0m"
     echo -e "\033[38;5;244m   $APP_NAME menu           # Interactive menu\033[0m"
@@ -3506,6 +3663,7 @@ main_menu() {
         echo -e "   \033[38;5;15m13)\033[0m 📝 Edit docker-compose.yml"
         echo -e "   \033[38;5;15m14)\033[0m 🔐 Edit environment (.env)"
         echo -e "   \033[38;5;15m15)\033[0m 🗂️  Setup log rotation"
+        echo -e "   \033[38;5;15m16)\033[0m 🧩 Optional extras"
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
@@ -3530,7 +3688,7 @@ main_menu() {
         
         echo -e "\033[38;5;8mRemnaNode CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-15]:\033[0m ")" choice
+        read -p "$(echo -e "\033[1;37mSelect option [0-16]:\033[0m ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -3548,6 +3706,7 @@ main_menu() {
             13) edit_command; read -p "Press Enter to continue..." ;;
             14) edit_env_command; read -p "Press Enter to continue..." ;;
             15) setup_log_rotation; read -p "Press Enter to continue..." ;;
+            16) extras_command; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "\033[1;31m❌ Invalid option!\033[0m"
@@ -3577,6 +3736,15 @@ case "${COMMAND:-menu}" in
     edit-env) edit_env_command ;;
     setup-logs) setup_log_rotation ;;
     enable-socket) enable_socket_command ;;
+    extras) extras_command ;;
+    logger|xray-logger) extras_command logger ;;
+    warp) extras_command warp ;;
+    bbr) extras_command bbr ;;
+    selfsteal) extras_command selfsteal ;;
+    ufw|ufw-f2b) extras_command ufw ;;
+    accelerator) extras_command accelerator ;;
+    hysteria|hysteria-buffer) extras_command hysteria-buffer ;;
+    ssh|ssh-key) extras_command ssh-key ;;
     help|--help|-h) usage ;;
     version|--version|-v) show_version ;;
     menu) main_menu ;;
