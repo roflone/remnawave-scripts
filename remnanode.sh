@@ -76,6 +76,16 @@ GEOIP_FILE="$DATA_DIR/geoip.dat"
 GEOSITE_FILE="$DATA_DIR/geosite.dat"
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/remnanode.sh"
 
+# Xray Logger Agent: fill these or create /root/.xray-logger.env (do not commit secrets)
+# File format:
+#   XRAY_LOGGER_ENCRYPTION_KEY=...
+#   XRAY_LOGGER_API_URL=https://xraylogger.example.com
+#   XRAY_LOGGER_NODE_NAME=Netherlands-1   # optional, defaults to hostname
+XRAY_LOGGER_ENV_FILE="/root/.xray-logger.env"
+XRAY_LOGGER_ENCRYPTION_KEY="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
+XRAY_LOGGER_API_URL="${XRAY_LOGGER_API_URL:-}"
+XRAY_LOGGER_NODE_NAME="${XRAY_LOGGER_NODE_NAME:-}"
+
 # Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -594,6 +604,12 @@ xray_logger_agent_offer_install() {
     fi
     detect_compose
 
+    if [ -f "$XRAY_LOGGER_ENV_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$XRAY_LOGGER_ENV_FILE"
+        colorized_echo gray "Loaded Xray Logger settings from $XRAY_LOGGER_ENV_FILE"
+    fi
+
     ask_xray_logger_required() {
         local prompt="$1"
         local reply=""
@@ -626,11 +642,27 @@ xray_logger_agent_offer_install() {
     echo
     colorized_echo gray "Log directory: $ACCESS_LOG_DIR (auto)"
     colorized_echo gray "Log file: $ACCESS_LOG_FILE (auto)"
-    echo
 
-    ENCRYPTION_KEY_BASE64="$(ask_xray_logger_required "Enter the secret code you received when installing the xray-logger server:")"
-    API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
-    NODE_NAME="$(ask_xray_logger_required "Enter the Node name (example: Netherlands-1):")"
+    ENCRYPTION_KEY_BASE64="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
+    API_URL="${XRAY_LOGGER_API_URL:-}"
+    NODE_NAME="${XRAY_LOGGER_NODE_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+
+    if [ -n "$ENCRYPTION_KEY_BASE64" ]; then
+        colorized_echo gray "Secret key: (auto)"
+    else
+        echo
+        ENCRYPTION_KEY_BASE64="$(ask_xray_logger_required "Enter the secret code you received when installing the xray-logger server:")"
+    fi
+
+    if [ -n "$API_URL" ]; then
+        colorized_echo gray "API URL: $API_URL (auto)"
+    else
+        echo
+        API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
+    fi
+
+    colorized_echo gray "Node name: $NODE_NAME (auto)"
+    echo
 
     colorized_echo blue "Running Xray Logger Agent installer..."
 
@@ -882,6 +914,47 @@ node_accelerator_install() {
         colorized_echo green "Node Accelerator installer finished"
     else
         colorized_echo red "Node Accelerator installer failed. You can run it again from $dest/install.sh"
+        return 1
+    fi
+}
+
+hysteria_buffer_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Hysteria UDP receive buffer (rmem_default)"
+    colorized_echo white "This writes /etc/sysctl.d/99-zz-hysteria-buffer.conf, applies sysctl, and restarts the node."
+    echo
+
+    read -p "Do you want to apply the Hysteria buffer tweak now? (y/N): " -r install_hysteria_buffer
+    if [[ ! "$install_hysteria_buffer" =~ ^[Yy]$ ]]; then
+        colorized_echo yellow "Skipping Hysteria buffer tweak"
+        return 0
+    fi
+
+    local sysctl_file="/etc/sysctl.d/99-zz-hysteria-buffer.conf"
+    colorized_echo blue "Writing $sysctl_file..."
+    if printf 'net.core.rmem_default=8388608\n' > "$sysctl_file"; then
+        colorized_echo green "Sysctl file saved"
+    else
+        colorized_echo red "Failed to write $sysctl_file"
+        return 1
+    fi
+
+    colorized_echo blue "Applying sysctl --system..."
+    if sysctl --system >/dev/null 2>&1; then
+        colorized_echo green "Sysctl settings applied"
+    else
+        colorized_echo yellow "sysctl --system reported issues, continuing..."
+    fi
+
+    sysctl net.core.rmem_default 2>/dev/null || true
+
+    colorized_echo blue "Restarting $APP_NAME container..."
+    if docker restart "$APP_NAME" >/dev/null 2>&1; then
+        colorized_echo green "$APP_NAME restarted"
+    else
+        colorized_echo yellow "Failed to restart $APP_NAME. Start it later with: docker restart $APP_NAME"
         return 1
     fi
 }
@@ -1335,6 +1408,9 @@ install_command() {
 
     # Clone and run Node Accelerator last
     node_accelerator_install
+
+    # Offer Hysteria UDP buffer tweak after accelerator
+    hysteria_buffer_offer_install
 
     follow_remnanode_logs
 
