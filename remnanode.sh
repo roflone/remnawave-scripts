@@ -737,47 +737,30 @@ bbr_offer_install() {
     check_running_as_root
 
     echo
-    colorized_echo cyan "Optional: Enable TCP BBR congestion control"
-    colorized_echo white "This will tune system networking for better performance (Linux only)."
+    colorized_echo cyan "Optional: Bridge TCP tune"
+    colorized_echo white "BBR + fq, MTU probing and RPS/RFS/XPS."
+    colorized_echo white "Source: https://github.com/roflone/tests/blob/main/bridge-tcp-tune.sh"
     echo
 
     if [ "${1:-}" != "force" ]; then
-        read -p "Do you want to enable BBR now? (y/N): " -r enable_bbr
+        read -p "Do you want to apply bridge TCP tune now? (y/N): " -r enable_bbr
         if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
-            colorized_echo yellow "Skipping BBR configuration"
+            colorized_echo yellow "Skipping bridge TCP tune"
             return 0
         fi
     fi
 
-    # Check if BBR is already active
-    if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
-        colorized_echo green "BBR is already enabled in the current system configuration"
-        return 0
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
     fi
 
-    colorized_echo blue "Configuring BBR parameters in /etc/sysctl.conf"
-
-    # Ensure fq qdisc line exists
-    if ! grep -q "^net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
-        echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf >/dev/null
+    colorized_echo blue "Running bridge-tcp-tune.sh..."
+    if bash <(curl -fsSL "https://raw.githubusercontent.com/roflone/tests/main/bridge-tcp-tune.sh"); then
+        colorized_echo green "Bridge TCP tune applied"
     else
-        colorized_echo gray "net.core.default_qdisc=fq already present in /etc/sysctl.conf"
-    fi
-
-    # Ensure BBR congestion control line exists
-    if ! grep -q "^net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
-        echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf >/dev/null
-    else
-        colorized_echo gray "net.ipv4.tcp_congestion_control=bbr already present in /etc/sysctl.conf"
-    fi
-
-    colorized_echo blue "Applying sysctl settings..."
-    if sysctl -p >/dev/null 2>&1; then
-        colorized_echo green "BBR settings applied successfully"
-        sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr" && \
-            colorized_echo green "TCP BBR congestion control is now active"
-    else
-        colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
+        colorized_echo red "Bridge TCP tune failed. You can rerun it with: sudo $APP_NAME tcp-tune"
         return 1
     fi
 }
@@ -1511,7 +1494,7 @@ print_extras_menu() {
     echo -e "   \033[38;5;15m0)\033[0m  RemnaNode core"
     echo -e "   \033[38;5;15m1)\033[0m  Xray Logger Agent"
     echo -e "   \033[38;5;15m2)\033[0m  Warp Native"
-    echo -e "   \033[38;5;15m3)\033[0m  TCP BBR"
+    echo -e "   \033[38;5;15m3)\033[0m  Bridge TCP tune"
     echo -e "   \033[38;5;15m4)\033[0m  Selfsteal"
     echo -e "   \033[38;5;15m5)\033[0m  UFW + Fail2Ban"
     echo -e "   \033[38;5;15m6)\033[0m  Node Accelerator"
@@ -1560,7 +1543,7 @@ apply_extras_choice() {
             0|core|remnanode) RUN_EXTRA_CORE=true ;;
             1|logger|xray-logger) RUN_EXTRA_LOGGER=true ;;
             2|warp) RUN_EXTRA_WARP=true ;;
-            3|bbr) RUN_EXTRA_BBR=true ;;
+            3|bbr|tcp-tune|bridge) RUN_EXTRA_BBR=true ;;
             4|selfsteal) RUN_EXTRA_SELFSTEAL=true ;;
             5|ufw|ufw-f2b) RUN_EXTRA_UFW=true ;;
             6|accelerator) RUN_EXTRA_ACCELERATOR=true ;;
@@ -1578,7 +1561,7 @@ show_selected_extras() {
     [ "$RUN_EXTRA_CORE" = true ] && selected+="remnanode "
     [ "$RUN_EXTRA_LOGGER" = true ] && selected+="logger "
     [ "$RUN_EXTRA_WARP" = true ] && selected+="warp "
-    [ "$RUN_EXTRA_BBR" = true ] && selected+="bbr "
+    [ "$RUN_EXTRA_BBR" = true ] && selected+="tcp-tune "
     [ "$RUN_EXTRA_SELFSTEAL" = true ] && selected+="selfsteal "
     [ "$RUN_EXTRA_UFW" = true ] && selected+="ufw "
     [ "$RUN_EXTRA_ACCELERATOR" = true ] && selected+="accelerator "
@@ -1620,7 +1603,7 @@ run_single_extra() {
             ;;
         1|logger|xray-logger) xray_logger_agent_offer_install force ;;
         2|warp) warp_native_offer_install force ;;
-        3|bbr) bbr_offer_install force ;;
+        3|bbr|tcp-tune|bridge) bbr_offer_install force ;;
         4|selfsteal) selfsteal_offer_install force ;;
         5|ufw|ufw-f2b) ufw_f2b_offer_install force ;;
         6|accelerator) node_accelerator_install force ;;
@@ -3507,7 +3490,7 @@ usage() {
     printf "   \033[38;5;15m%-18s\033[0m %s\n" "extras" "🎛️  Choose and install extras"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "logger" "📥  Xray Logger Agent"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "warp" "🌀  Warp Native"
-    printf "   \033[38;5;250m%-18s\033[0m %s\n" "bbr" "⚡  TCP BBR"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "tcp-tune" "⚡  Bridge TCP tune (BBR+fq+RPS)"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "selfsteal" "🕵️  Selfsteal"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "ufw" "🛡️  UFW + Fail2Ban"
     printf "   \033[38;5;250m%-18s\033[0m %s\n" "accelerator" "🚀  Node Accelerator"
@@ -3761,7 +3744,7 @@ case "${COMMAND:-menu}" in
     extras) extras_command ;;
     logger|xray-logger) extras_command logger ;;
     warp) extras_command warp ;;
-    bbr) extras_command bbr ;;
+    bbr|tcp-tune|bridge) extras_command tcp-tune ;;
     selfsteal) extras_command selfsteal ;;
     ufw|ufw-f2b) extras_command ufw ;;
     accelerator) extras_command accelerator ;;
