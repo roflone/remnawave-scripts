@@ -43,8 +43,13 @@ while [[ $# -gt 0 ]]; do
             exit 0
         ;;
         *)
-            echo "Unknown argument: $key"
-            exit 1
+            if [[ "$COMMAND" == "extras" ]]; then
+                EXTRAS_ITEM="$key"
+                shift
+            else
+                echo "Unknown argument: $key"
+                exit 1
+            fi
         ;;
     esac
 done
@@ -75,6 +80,16 @@ XRAY_FILE="$DATA_DIR/xray"
 GEOIP_FILE="$DATA_DIR/geoip.dat"
 GEOSITE_FILE="$DATA_DIR/geosite.dat"
 SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/remnanode.sh"
+
+# Xray Logger Agent: fill these or create /root/.xray-logger.env (do not commit secrets)
+# File format:
+#   XRAY_LOGGER_ENCRYPTION_KEY=...
+#   XRAY_LOGGER_API_URL=https://xraylogger.example.com
+#   XRAY_LOGGER_NODE_NAME=Netherlands-1   # optional, defaults to hostname
+XRAY_LOGGER_ENV_FILE="/root/.xray-logger.env"
+XRAY_LOGGER_ENCRYPTION_KEY="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
+XRAY_LOGGER_API_URL="${XRAY_LOGGER_API_URL:-}"
+XRAY_LOGGER_NODE_NAME="${XRAY_LOGGER_NODE_NAME:-}"
 
 # Color definitions
 RED='\033[0;31m'
@@ -575,10 +590,12 @@ xray_logger_agent_offer_install() {
     colorized_echo white "Source: https://github.com/roflone/xray-logger"
     echo
 
-    read -p "Do you want to install Xray Logger Agent now? (y/N): " -r install_logger
-    if [[ ! "$install_logger" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Xray Logger Agent installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Xray Logger Agent now? (y/N): " -r install_logger
+        if [[ ! "$install_logger" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Xray Logger Agent installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -593,6 +610,12 @@ xray_logger_agent_offer_install() {
         install_docker
     fi
     detect_compose
+
+    if [ -f "$XRAY_LOGGER_ENV_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$XRAY_LOGGER_ENV_FILE"
+        colorized_echo gray "Loaded Xray Logger settings from $XRAY_LOGGER_ENV_FILE"
+    fi
 
     ask_xray_logger_required() {
         local prompt="$1"
@@ -626,11 +649,27 @@ xray_logger_agent_offer_install() {
     echo
     colorized_echo gray "Log directory: $ACCESS_LOG_DIR (auto)"
     colorized_echo gray "Log file: $ACCESS_LOG_FILE (auto)"
-    echo
 
-    ENCRYPTION_KEY_BASE64="$(ask_xray_logger_required "Enter the secret code you received when installing the xray-logger server:")"
-    API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
-    NODE_NAME="$(ask_xray_logger_required "Enter the Node name (example: Netherlands-1):")"
+    ENCRYPTION_KEY_BASE64="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
+    API_URL="${XRAY_LOGGER_API_URL:-}"
+    NODE_NAME="${XRAY_LOGGER_NODE_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+
+    if [ -n "$ENCRYPTION_KEY_BASE64" ]; then
+        colorized_echo gray "Secret key: (auto)"
+    else
+        echo
+        ENCRYPTION_KEY_BASE64="$(ask_xray_logger_required "Enter the secret code you received when installing the xray-logger server:")"
+    fi
+
+    if [ -n "$API_URL" ]; then
+        colorized_echo gray "API URL: $API_URL (auto)"
+    else
+        echo
+        API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
+    fi
+
+    colorized_echo gray "Node name: $NODE_NAME (auto)"
+    echo
 
     colorized_echo blue "Running Xray Logger Agent installer..."
 
@@ -672,10 +711,12 @@ warp_native_offer_install() {
     colorized_echo white "Source: https://github.com/distillium/warp-native"
     echo
 
-    read -p "Do you want to install Warp Native now? (y/N): " -r install_warp
-    if [[ ! "$install_warp" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Warp Native installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Warp Native now? (y/N): " -r install_warp
+        if [[ ! "$install_warp" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Warp Native installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -696,45 +737,30 @@ bbr_offer_install() {
     check_running_as_root
 
     echo
-    colorized_echo cyan "Optional: Enable TCP BBR congestion control"
-    colorized_echo white "This will tune system networking for better performance (Linux only)."
+    colorized_echo cyan "Optional: Bridge TCP tune"
+    colorized_echo white "BBR + fq, MTU probing and RPS/RFS/XPS."
+    colorized_echo white "Source: https://github.com/roflone/tests/blob/main/bridge-tcp-tune.sh"
     echo
 
-    read -p "Do you want to enable BBR now? (y/N): " -r enable_bbr
-    if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping BBR configuration"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to apply bridge TCP tune now? (y/N): " -r enable_bbr
+        if [[ ! "$enable_bbr" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping bridge TCP tune"
+            return 0
+        fi
     fi
 
-    # Check if BBR is already active
-    if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
-        colorized_echo green "BBR is already enabled in the current system configuration"
-        return 0
+    if ! command -v curl >/dev/null 2>&1; then
+        colorized_echo blue "curl not found, installing curl..."
+        detect_os
+        install_package curl
     fi
 
-    colorized_echo blue "Configuring BBR parameters in /etc/sysctl.conf"
-
-    # Ensure fq qdisc line exists
-    if ! grep -q "^net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
-        echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf >/dev/null
+    colorized_echo blue "Running bridge-tcp-tune.sh..."
+    if bash <(curl -fsSL "https://raw.githubusercontent.com/roflone/tests/main/bridge-tcp-tune.sh"); then
+        colorized_echo green "Bridge TCP tune applied"
     else
-        colorized_echo gray "net.core.default_qdisc=fq already present in /etc/sysctl.conf"
-    fi
-
-    # Ensure BBR congestion control line exists
-    if ! grep -q "^net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null; then
-        echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf >/dev/null
-    else
-        colorized_echo gray "net.ipv4.tcp_congestion_control=bbr already present in /etc/sysctl.conf"
-    fi
-
-    colorized_echo blue "Applying sysctl settings..."
-    if sysctl -p >/dev/null 2>&1; then
-        colorized_echo green "BBR settings applied successfully"
-        sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr" && \
-            colorized_echo green "TCP BBR congestion control is now active"
-    else
-        colorized_echo red "Failed to apply sysctl settings. Please check /etc/sysctl.conf manually."
+        colorized_echo red "Bridge TCP tune failed. You can rerun it with: sudo $APP_NAME tcp-tune"
         return 1
     fi
 }
@@ -747,10 +773,12 @@ selfsteal_offer_install() {
     colorized_echo white "This will run an external installer from remnawave-scripts."
     echo
 
-    read -p "Do you want to install Selfsteal now? (y/N): " -r install_selfsteal
-    if [[ ! "$install_selfsteal" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping Selfsteal installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install Selfsteal now? (y/N): " -r install_selfsteal
+        if [[ ! "$install_selfsteal" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Selfsteal installation"
+            return 0
+        fi
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
@@ -768,86 +796,6 @@ selfsteal_offer_install() {
     fi
 }
 
-# f2b.sh writes only the smallest "Port" from sshd_config into jail.local.
-# No Port line means it writes 22. The ban then closes 22 while sshd
-# listens on another port, so brute force on the real port is never blocked.
-fix_fail2ban_ssh_port() {
-    local jail="/etc/fail2ban/jail.local"
-    local ports="" seen="" p tmp
-
-    if [ ! -f "$jail" ]; then
-        return 0
-    fi
-
-    if command -v ss >/dev/null 2>&1; then
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            case ",${seen}," in
-                *,"$p",*) continue ;;
-            esac
-            seen="${seen:+$seen,}$p"
-        done < <(ss -tlnp 2>/dev/null | awk '
-            $0 ~ /sshd/ {
-                n = split($4, a, ":")
-                p = a[n]
-                gsub(/%.*/, "", p)
-                if (p ~ /^[0-9]+$/) print p
-            }
-        ' | sort -un || true)
-    fi
-
-    if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            case ",${seen}," in
-                *,"$p",*) continue ;;
-            esac
-            seen="${seen:+$seen,}$p"
-        done < <(systemctl show ssh.socket -p Listen --value 2>/dev/null | grep -oE '[0-9]+[[:space:]]+\(Stream\)' | awk '{print $1}' | sort -un || true)
-    fi
-
-    if [ -z "$seen" ] && command -v sshd >/dev/null 2>&1; then
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            case ",${seen}," in
-                *,"$p",*) continue ;;
-            esac
-            seen="${seen:+$seen,}$p"
-        done < <(sshd -T 2>/dev/null | awk 'tolower($1)=="port" && $2 ~ /^[0-9]+$/ {print $2}' | sort -un || true)
-    fi
-
-    ports="$seen"
-    if [ -z "$ports" ]; then
-        colorized_echo yellow "SSH listen port was not detected. Fail2Ban jail was left as the installer wrote it."
-        return 0
-    fi
-
-    tmp="$(mktemp)"
-    awk -v ports="$ports" '
-        BEGIN { in_sshd = 0; wrote = 0 }
-        /^\[sshd\][[:space:]]*$/ { in_sshd = 1; wrote = 0; print; next }
-        /^\[/ {
-            if (in_sshd && !wrote) print "port = " ports
-            in_sshd = 0
-        }
-        in_sshd && /^[[:space:]]*port[[:space:]]*=/ {
-            print "port = " ports
-            wrote = 1
-            next
-        }
-        { print }
-        END { if (in_sshd && !wrote) print "port = " ports }
-    ' "$jail" > "$tmp"
-    mv "$tmp" "$jail"
-    chmod 644 "$jail"
-
-    if systemctl restart fail2ban; then
-        colorized_echo green "Fail2Ban SSH jail now bans port(s): ${ports}"
-    else
-        colorized_echo yellow "Fail2Ban jail updated for port(s) ${ports}, but the service did not restart."
-    fi
-}
-
 ufw_f2b_offer_install() {
     check_running_as_root
 
@@ -856,10 +804,12 @@ ufw_f2b_offer_install() {
     colorized_echo white "This will install UFW firewall and Fail2Ban hardening scripts."
     echo
 
-    read -p "Do you want to install UFW + Fail2Ban now? (y/N): " -r install_ufw_f2b
-    if [[ ! "$install_ufw_f2b" =~ ^[Yy]$ ]]; then
-        colorized_echo yellow "Skipping UFW + Fail2Ban installation"
-        return 0
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to install UFW + Fail2Ban now? (y/N): " -r install_ufw_f2b
+        if [[ ! "$install_ufw_f2b" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping UFW + Fail2Ban installation"
+            return 0
+        fi
     fi
 
     detect_os
@@ -872,6 +822,13 @@ ufw_f2b_offer_install() {
     else
         colorized_echo blue "Installing ufw via system package manager..."
         install_package ufw
+    fi
+
+    colorized_echo blue "Allowing HTTP port 80/tcp..."
+    if ufw allow 80/tcp >/dev/null 2>&1; then
+        colorized_echo green "UFW rule added: allow 80/tcp"
+    else
+        colorized_echo yellow "Failed to add UFW allow 80/tcp rule automatically"
     fi
 
     colorized_echo blue "Adding outbound UFW deny rule for SMTP/proxy ports..."
@@ -902,20 +859,227 @@ ufw_f2b_offer_install() {
         colorized_echo yellow "Second ufw-check.sh run reported issues, please review its output"
     fi
 
-    # Run Fail2Ban script. It still prints its own errors. If it dies after
-    # writing jail.local, the SSH port is corrected anyway.
+    # Run Fail2Ban script
     colorized_echo blue "Running Fail2Ban installer..."
-    local f2b_rc=0
-    bash <(wget -qO- "https://dignezzz.github.io/server/f2b.sh") || f2b_rc=$?
-    if [ -f /etc/fail2ban/jail.local ]; then
-        if [ "$f2b_rc" -ne 0 ]; then
-            colorized_echo yellow "Fail2Ban installer exited with an error. Setting the SSH jail to the port sshd is actually listening on."
-        else
-            colorized_echo green "Fail2Ban installation script completed"
-        fi
-        fix_fail2ban_ssh_port
+    if bash <(wget -qO- "https://raw.githubusercontent.com/roflone/remnawave-scripts/main/f2b.sh"); then
+        colorized_echo green "Fail2Ban installation script completed"
     else
-        colorized_echo red "Fail2Ban installer failed and did not write a jail. Check the output above."
+        colorized_echo red "Fail2Ban installation script failed. Please check the output above and try again manually."
+        return 1
+    fi
+}
+
+node_accelerator_install() {
+    check_running_as_root
+
+    if [ "${1:-}" != "force" ]; then
+        echo
+        colorized_echo cyan "Optional: Install Node Accelerator"
+        colorized_echo white "Source: https://github.com/jestivald/node-accelerator"
+        echo
+        read -p "Do you want to install Node Accelerator now? (y/N): " -r install_accelerator
+        if [[ ! "$install_accelerator" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Node Accelerator installation"
+            return 0
+        fi
+    fi
+
+    echo
+    colorized_echo cyan "Installing Node Accelerator"
+    colorized_echo white "Source: https://github.com/jestivald/node-accelerator"
+    echo
+
+    if ! command -v git >/dev/null 2>&1; then
+        colorized_echo blue "git not found, installing git..."
+        detect_os
+        install_package git
+    fi
+
+    local dest="/root/node-accelerator"
+    local repo_url="https://github.com/jestivald/node-accelerator.git"
+
+    if [ -d "$dest/.git" ]; then
+        colorized_echo blue "Updating Node Accelerator in $dest..."
+        if ! git -C "$dest" pull --ff-only; then
+            colorized_echo yellow "git pull failed, continuing with the existing copy"
+        fi
+    elif [ -d "$dest" ]; then
+        colorized_echo yellow "Directory $dest already exists, skipping clone"
+    else
+        colorized_echo blue "Cloning Node Accelerator into $dest..."
+        if ! git clone "$repo_url" "$dest"; then
+            colorized_echo red "Failed to clone Node Accelerator. Please check your network and try again manually."
+            return 1
+        fi
+    fi
+
+    if [ ! -f "$dest/install.sh" ]; then
+        colorized_echo red "install.sh not found in $dest"
+        return 1
+    fi
+
+    chmod +x "$dest/install.sh"
+    colorized_echo blue "Running Node Accelerator installer..."
+    if (cd "$dest" && bash install.sh); then
+        colorized_echo green "Node Accelerator installer finished"
+    else
+        colorized_echo red "Node Accelerator installer failed. You can run it again from $dest/install.sh"
+        return 1
+    fi
+}
+
+hysteria_buffer_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: Hysteria UDP receive buffer (rmem_default)"
+    colorized_echo white "This writes /etc/sysctl.d/99-zz-hysteria-buffer.conf, applies sysctl, and restarts the node."
+    echo
+
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to apply the Hysteria buffer tweak now? (y/N): " -r install_hysteria_buffer
+        if [[ ! "$install_hysteria_buffer" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping Hysteria buffer tweak"
+            return 0
+        fi
+    fi
+
+    local sysctl_file="/etc/sysctl.d/99-zz-hysteria-buffer.conf"
+    colorized_echo blue "Writing $sysctl_file..."
+    if printf 'net.core.rmem_default=8388608\n' > "$sysctl_file"; then
+        colorized_echo green "Sysctl file saved"
+    else
+        colorized_echo red "Failed to write $sysctl_file"
+        return 1
+    fi
+
+    colorized_echo blue "Applying sysctl --system..."
+    if sysctl --system >/dev/null 2>&1; then
+        colorized_echo green "Sysctl settings applied"
+    else
+        colorized_echo yellow "sysctl --system reported issues, continuing..."
+    fi
+
+    sysctl net.core.rmem_default 2>/dev/null || true
+
+    colorized_echo blue "Restarting $APP_NAME container..."
+    if docker restart "$APP_NAME" >/dev/null 2>&1; then
+        colorized_echo green "$APP_NAME restarted"
+    else
+        colorized_echo yellow "Failed to restart $APP_NAME. Start it later with: docker restart $APP_NAME"
+        return 1
+    fi
+}
+
+ssh_key_hardening_offer_install() {
+    check_running_as_root
+
+    echo
+    colorized_echo cyan "Optional: SSH key login and disable password auth"
+    colorized_echo white "A public key will be installed, then password SSH login will be turned off."
+    colorized_echo yellow "Keep this session open until you confirm key login works from another terminal."
+    echo
+
+    if [ "${1:-}" != "force" ]; then
+        read -p "Do you want to configure SSH key auth now? (y/N): " -r install_ssh_key
+        if [[ ! "$install_ssh_key" =~ ^[Yy]$ ]]; then
+            colorized_echo yellow "Skipping SSH key hardening"
+            return 0
+        fi
+    fi
+
+    local ssh_dir="/root/.ssh"
+    local auth_keys="$ssh_dir/authorized_keys"
+    mkdir -p "$ssh_dir"
+    chmod 700 "$ssh_dir"
+
+    local pubkey=""
+    echo
+    colorized_echo white "Paste your SSH public key (one line, starts with ssh-ed25519 or ssh-rsa)."
+    colorized_echo gray "Or type generate to create a new ed25519 key on this server."
+    read -p "Public key: " -r pubkey
+
+    if [ "$pubkey" = "generate" ]; then
+        local key_file="$ssh_dir/id_ed25519_remnanode"
+        if [ -f "$key_file" ]; then
+            colorized_echo yellow "Key already exists at $key_file, reusing it"
+        else
+            ssh-keygen -t ed25519 -f "$key_file" -N "" -q
+        fi
+        pubkey="$(cat "${key_file}.pub")"
+        echo
+        colorized_echo yellow "Copy this PRIVATE key to your computer now, it will not be shown again by the script:"
+        echo
+        cat "$key_file"
+        echo
+        read -p "Press Enter after you saved the private key..."
+    fi
+
+    if [[ ! "$pubkey" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]] ]]; then
+        colorized_echo red "Invalid public key. Password login was not disabled."
+        return 1
+    fi
+
+    touch "$auth_keys"
+    chmod 600 "$auth_keys"
+    if grep -qxF "$pubkey" "$auth_keys" 2>/dev/null; then
+        colorized_echo gray "Public key already present in $auth_keys"
+    else
+        printf '%s\n' "$pubkey" >> "$auth_keys"
+        colorized_echo green "Public key added to $auth_keys"
+    fi
+
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        local user_home
+        user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+        if [ -n "$user_home" ] && [ -d "$user_home" ]; then
+            mkdir -p "$user_home/.ssh"
+            chmod 700 "$user_home/.ssh"
+            touch "$user_home/.ssh/authorized_keys"
+            chmod 600 "$user_home/.ssh/authorized_keys"
+            if ! grep -qxF "$pubkey" "$user_home/.ssh/authorized_keys" 2>/dev/null; then
+                printf '%s\n' "$pubkey" >> "$user_home/.ssh/authorized_keys"
+            fi
+            chown -R "$SUDO_USER:$SUDO_USER" "$user_home/.ssh"
+            colorized_echo green "Public key also added for user $SUDO_USER"
+        fi
+    fi
+
+    colorized_echo blue "Disabling SSH password authentication..."
+    local dropin_dir="/etc/ssh/sshd_config.d"
+    local sshd_conf="/etc/ssh/sshd_config"
+    if [ -d "$dropin_dir" ]; then
+        cat > "$dropin_dir/00-disable-password.conf" <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+EOF
+        if [ -f "$dropin_dir/50-cloud-init.conf" ]; then
+            sed -i 's/^PasswordAuthentication.*/PasswordAuthentication no/' "$dropin_dir/50-cloud-init.conf"
+        fi
+    fi
+
+    if [ -f "$sshd_conf" ]; then
+        sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "$sshd_conf"
+        sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$sshd_conf"
+        sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' "$sshd_conf"
+    fi
+
+    if ! sshd -t 2>/dev/null; then
+        colorized_echo red "sshd config test failed. Password login was not reloaded. Check /etc/ssh/sshd_config"
+        return 1
+    fi
+
+    if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null \
+        || systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null; then
+        colorized_echo green "SSH reloaded: key login enabled, password login disabled"
+        colorized_echo yellow "Open a new SSH session with your key before closing this one"
+    else
+        colorized_echo red "Failed to reload SSH service. Config is written, reload it manually."
         return 1
     fi
 }
@@ -1324,15 +1488,170 @@ get_container_xray_version() {
     return 0
 }
 
+print_extras_menu() {
+    echo
+    echo -e "\033[1;37mWhat to install:\033[0m"
+    echo -e "   \033[38;5;15m0)\033[0m  RemnaNode core"
+    echo -e "   \033[38;5;15m1)\033[0m  Xray Logger Agent"
+    echo -e "   \033[38;5;15m2)\033[0m  Warp Native"
+    echo -e "   \033[38;5;15m3)\033[0m  Bridge TCP tune"
+    echo -e "   \033[38;5;15m4)\033[0m  Selfsteal"
+    echo -e "   \033[38;5;15m5)\033[0m  UFW + Fail2Ban"
+    echo -e "   \033[38;5;15m6)\033[0m  Node Accelerator"
+    echo -e "   \033[38;5;15m7)\033[0m  Hysteria buffer"
+    echo -e "   \033[38;5;15m8)\033[0m  SSH key hardening"
+    echo
+    echo -e "\033[38;5;244mEnter numbers (e.g. 0 1 5 6 8), \033[38;5;15mall\033[38;5;244m or \033[38;5;15mnone\033[38;5;244m\033[0m"
+}
+
+reset_install_extras() {
+    RUN_EXTRA_CORE=false
+    RUN_EXTRA_LOGGER=false
+    RUN_EXTRA_WARP=false
+    RUN_EXTRA_BBR=false
+    RUN_EXTRA_SELFSTEAL=false
+    RUN_EXTRA_UFW=false
+    RUN_EXTRA_ACCELERATOR=false
+    RUN_EXTRA_HYSTERIA=false
+    RUN_EXTRA_SSH=false
+}
+
+apply_extras_choice() {
+    local extra_choice="$1"
+    reset_install_extras
+
+    if [[ "$extra_choice" =~ ^([Aa][Ll][Ll]|a)$ ]]; then
+        RUN_EXTRA_CORE=true
+        RUN_EXTRA_LOGGER=true
+        RUN_EXTRA_WARP=true
+        RUN_EXTRA_BBR=true
+        RUN_EXTRA_SELFSTEAL=true
+        RUN_EXTRA_UFW=true
+        RUN_EXTRA_ACCELERATOR=true
+        RUN_EXTRA_HYSTERIA=true
+        RUN_EXTRA_SSH=true
+        return 0
+    fi
+
+    if [[ -z "$extra_choice" || "$extra_choice" =~ ^([Nn][Oo][Nn][Ee]|n)$ ]]; then
+        return 0
+    fi
+
+    local n
+    for n in $extra_choice; do
+        case "$n" in
+            0|core|remnanode) RUN_EXTRA_CORE=true ;;
+            1|logger|xray-logger) RUN_EXTRA_LOGGER=true ;;
+            2|warp) RUN_EXTRA_WARP=true ;;
+            3|bbr|tcp-tune|bridge) RUN_EXTRA_BBR=true ;;
+            4|selfsteal) RUN_EXTRA_SELFSTEAL=true ;;
+            5|ufw|ufw-f2b) RUN_EXTRA_UFW=true ;;
+            6|accelerator) RUN_EXTRA_ACCELERATOR=true ;;
+            7|hysteria|hysteria-buffer) RUN_EXTRA_HYSTERIA=true ;;
+            8|ssh|ssh-key) RUN_EXTRA_SSH=true ;;
+            *)
+                colorized_echo yellow "Unknown extra: $n"
+                ;;
+        esac
+    done
+}
+
+show_selected_extras() {
+    local selected=""
+    [ "$RUN_EXTRA_CORE" = true ] && selected+="remnanode "
+    [ "$RUN_EXTRA_LOGGER" = true ] && selected+="logger "
+    [ "$RUN_EXTRA_WARP" = true ] && selected+="warp "
+    [ "$RUN_EXTRA_BBR" = true ] && selected+="tcp-tune "
+    [ "$RUN_EXTRA_SELFSTEAL" = true ] && selected+="selfsteal "
+    [ "$RUN_EXTRA_UFW" = true ] && selected+="ufw "
+    [ "$RUN_EXTRA_ACCELERATOR" = true ] && selected+="accelerator "
+    [ "$RUN_EXTRA_HYSTERIA" = true ] && selected+="hysteria-buffer "
+    [ "$RUN_EXTRA_SSH" = true ] && selected+="ssh-key "
+    if [ -z "$selected" ]; then
+        colorized_echo gray "No optional components selected"
+    else
+        colorized_echo green "Selected: $selected"
+    fi
+}
+
+select_install_extras() {
+    print_extras_menu
+    local extra_choice=""
+    read -p "Select: " -r extra_choice
+    apply_extras_choice "$extra_choice"
+    echo
+    show_selected_extras
+}
+
+run_install_extras() {
+    [ "$RUN_EXTRA_LOGGER" = true ] && xray_logger_agent_offer_install force || true
+    [ "$RUN_EXTRA_WARP" = true ] && warp_native_offer_install force || true
+    [ "$RUN_EXTRA_BBR" = true ] && bbr_offer_install force || true
+    [ "$RUN_EXTRA_SELFSTEAL" = true ] && selfsteal_offer_install force || true
+    [ "$RUN_EXTRA_UFW" = true ] && ufw_f2b_offer_install force || true
+    [ "$RUN_EXTRA_ACCELERATOR" = true ] && node_accelerator_install force || true
+    [ "$RUN_EXTRA_HYSTERIA" = true ] && hysteria_buffer_offer_install force || true
+    [ "$RUN_EXTRA_SSH" = true ] && ssh_key_hardening_offer_install force || true
+}
+
+run_single_extra() {
+    local item="$1"
+    case "$item" in
+        0|core|remnanode)
+            colorized_echo yellow "RemnaNode core is installed via: sudo $APP_NAME install"
+            return 1
+            ;;
+        1|logger|xray-logger) xray_logger_agent_offer_install force ;;
+        2|warp) warp_native_offer_install force ;;
+        3|bbr|tcp-tune|bridge) bbr_offer_install force ;;
+        4|selfsteal) selfsteal_offer_install force ;;
+        5|ufw|ufw-f2b) ufw_f2b_offer_install force ;;
+        6|accelerator) node_accelerator_install force ;;
+        7|hysteria|hysteria-buffer) hysteria_buffer_offer_install force ;;
+        8|ssh|ssh-key) ssh_key_hardening_offer_install force ;;
+        *)
+            colorized_echo red "Unknown extra: $item"
+            print_extras_menu
+            echo -e "\033[38;5;244mExample: sudo $APP_NAME extras logger\033[0m"
+            return 1
+            ;;
+    esac
+}
+
+extras_command() {
+    check_running_as_root
+    local item="${1:-${EXTRAS_ITEM:-}}"
+    if [ -z "$item" ]; then
+        select_install_extras
+        if [ "$RUN_EXTRA_CORE" = true ]; then
+            colorized_echo yellow "RemnaNode core is skipped here. Select it from: sudo $APP_NAME install"
+        fi
+        run_install_extras
+        return 0
+    fi
+    run_single_extra "$item"
+}
+
 install_command() {
     check_running_as_root
+
+    select_install_extras
+
+    local do_core=false
+    if [ "$RUN_EXTRA_CORE" = true ]; then
+        do_core=true
+    elif ! is_remnanode_installed; then
+        colorized_echo yellow "RemnaNode is not installed. Add 0 to the selection to install the core."
+    fi
+
+    if [ "$do_core" != true ]; then
+        detect_os
+        run_install_extras
+        return 0
+    fi
+
     if is_remnanode_installed; then
-        colorized_echo red "Remnanode is already installed at $APP_DIR"
-        read -p "Do you want to override the previous installation? (y/n) "
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            colorized_echo red "Aborted installation"
-            exit 1
-        fi
+        colorized_echo yellow "Remnanode is already installed at $APP_DIR, reinstalling as selected."
     fi
     detect_os
     if ! command -v curl >/dev/null 2>&1; then
@@ -1352,20 +1671,7 @@ install_command() {
     # Set up /var/log/remnanode logrotate config and restart container
     post_install_logrotate_and_restart
 
-    # Offer to install external Xray Logger Agent
-    xray_logger_agent_offer_install
-
-    # Offer to install Warp Native client
-    warp_native_offer_install
-
-    # Offer to enable TCP BBR congestion control
-    bbr_offer_install
-
-    # Offer to install Selfsteal (nginx/caddy proxy)
-    selfsteal_offer_install
-
-    # Offer to install UFW + Fail2Ban
-    ufw_f2b_offer_install
+    run_install_extras
 
     follow_remnanode_logs
 
@@ -3180,6 +3486,18 @@ usage() {
     printf "   \033[38;5;178m%-18s\033[0m %s\n" "enable-socket" "🔌 Enable selfsteal socket access"
     echo
 
+    echo -e "\033[1;37m🧩 Optional extras:\033[0m"
+    printf "   \033[38;5;15m%-18s\033[0m %s\n" "extras" "🎛️  Choose and install extras"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "logger" "📥  Xray Logger Agent"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "warp" "🌀  Warp Native"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "tcp-tune" "⚡  Bridge TCP tune (BBR+fq+RPS)"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "selfsteal" "🕵️  Selfsteal"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "ufw" "🛡️  UFW + Fail2Ban"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "accelerator" "🚀  Node Accelerator"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "hysteria-buffer" "📶  Hysteria rmem buffer"
+    printf "   \033[38;5;250m%-18s\033[0m %s\n" "ssh-key" "🔑  SSH key + disable password"
+    echo
+
     echo -e "\033[1;37m📋 Information:\033[0m"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "help" "📖 Show this help"
     printf "   \033[38;5;117m%-18s\033[0m %s\n" "version" "📋 Show version info"
@@ -3201,6 +3519,9 @@ usage() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
     echo -e "\033[1;37m📖 Examples:\033[0m"
     echo -e "\033[38;5;244m   sudo $APP_NAME install\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME extras\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME extras logger\033[0m"
+    echo -e "\033[38;5;244m   sudo $APP_NAME ssh-key\033[0m"
     echo -e "\033[38;5;244m   sudo $APP_NAME core-update\033[0m"
     echo -e "\033[38;5;244m   $APP_NAME logs\033[0m"
     echo -e "\033[38;5;244m   $APP_NAME menu           # Interactive menu\033[0m"
@@ -3347,6 +3668,7 @@ main_menu() {
         echo -e "   \033[38;5;15m13)\033[0m 📝 Edit docker-compose.yml"
         echo -e "   \033[38;5;15m14)\033[0m 🔐 Edit environment (.env)"
         echo -e "   \033[38;5;15m15)\033[0m 🗂️  Setup log rotation"
+        echo -e "   \033[38;5;15m16)\033[0m 🧩 Optional extras"
         echo
         echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo -e "\033[38;5;15m   0)\033[0m 🚪 Exit to terminal"
@@ -3371,7 +3693,7 @@ main_menu() {
         
         echo -e "\033[38;5;8mRemnaNode CLI v$SCRIPT_VERSION by DigneZzZ • gig.ovh\033[0m"
         echo
-        read -p "$(echo -e "\033[1;37mSelect option [0-15]:\033[0m ")" choice
+        read -p "$(echo -e "\033[1;37mSelect option [0-16]:\033[0m ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -3389,6 +3711,7 @@ main_menu() {
             13) edit_command; read -p "Press Enter to continue..." ;;
             14) edit_env_command; read -p "Press Enter to continue..." ;;
             15) setup_log_rotation; read -p "Press Enter to continue..." ;;
+            16) extras_command; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "\033[1;31m❌ Invalid option!\033[0m"
@@ -3418,6 +3741,15 @@ case "${COMMAND:-menu}" in
     edit-env) edit_env_command ;;
     setup-logs) setup_log_rotation ;;
     enable-socket) enable_socket_command ;;
+    extras) extras_command ;;
+    logger|xray-logger) extras_command logger ;;
+    warp) extras_command warp ;;
+    bbr|tcp-tune|bridge) extras_command tcp-tune ;;
+    selfsteal) extras_command selfsteal ;;
+    ufw|ufw-f2b) extras_command ufw ;;
+    accelerator) extras_command accelerator ;;
+    hysteria|hysteria-buffer) extras_command hysteria-buffer ;;
+    ssh|ssh-key) extras_command ssh-key ;;
     help|--help|-h) usage ;;
     version|--version|-v) show_version ;;
     menu) main_menu ;;
