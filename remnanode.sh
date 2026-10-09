@@ -861,7 +861,7 @@ ufw_f2b_offer_install() {
 
     # Run Fail2Ban script
     colorized_echo blue "Running Fail2Ban installer..."
-    if bash <(wget -qO- "https://raw.githubusercontent.com/roflone/remnawave-scripts/main/f2b.sh"); then
+    if bash <(wget -qO- "https://dignezzz.github.io/server/f2b.sh"); then
         colorized_echo green "Fail2Ban installation script completed"
     else
         colorized_echo red "Fail2Ban installation script failed. Please check the output above and try again manually."
