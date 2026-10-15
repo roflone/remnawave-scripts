@@ -584,8 +584,8 @@ EOL
 # City / CC from the IP geolocation, hoster from the AS name.
 # ipinfo.io is not used for the place: hosters publish a geofeed there
 # (Helsinki / FI) that does not match the IP country in other databases.
-# AS215730 H2NEXUS CLOUD SERVICES - FZCO + Oslo / NO
-#   -> Oslo / NO, H2NEXUS CLOUD SERVICES
+# AS215730 H2NEXUS CLOUD SERVICES - FZCO + Oslo / NO + 144.31.128.208
+#   -> Oslo / NO, H2NEXUS CLOUD SERVICES - 144.31.128.208
 xray_logger_json_string() {
     local json="$1"
     local key="$2"
@@ -593,24 +593,26 @@ xray_logger_json_string() {
 }
 
 xray_logger_detect_node_name() {
-    local org city country short_org place name geo status json asn
+    local org city country short_org place name geo status json asn node_ip
 
-    geo="$(curl -fsSL --max-time 10 "http://ip-api.com/line/?fields=status,city,countryCode,as" 2>/dev/null || true)"
+    geo="$(curl -4 -fsSL --max-time 10 "http://ip-api.com/line/?fields=status,countryCode,city,as,query" 2>/dev/null || true)"
     status="$(printf '%s\n' "$geo" | sed -n '1p' | tr -d '\r')"
     # ip-api всегда отдаёт поля в своём порядке, не в порядке запроса:
-    # status, countryCode, city, as
+    # status, countryCode, city, as, query
     if [ "$status" = "success" ]; then
         country="$(printf '%s\n' "$geo" | sed -n '2p' | tr -d '\r')"
         city="$(printf '%s\n' "$geo" | sed -n '3p' | tr -d '\r')"
         org="$(printf '%s\n' "$geo" | sed -n '4p' | tr -d '\r')"
+        node_ip="$(printf '%s\n' "$geo" | sed -n '5p' | tr -d '\r')"
     fi
 
     if [ -z "$country" ]; then
-        json="$(curl -fsSL --max-time 10 "https://ipwho.is/" 2>/dev/null || true)"
+        json="$(curl -4 -fsSL --max-time 10 "https://ipwho.is/" 2>/dev/null || true)"
         if printf '%s' "$json" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
             city="$(xray_logger_json_string "$json" city)"
             country="$(xray_logger_json_string "$json" country_code)"
             org="$(xray_logger_json_string "$json" isp)"
+            node_ip="$(xray_logger_json_string "$json" ip)"
             asn="$(printf '%s' "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
             if [ -n "$asn" ] && [ -n "$org" ] && ! printf '%s' "$org" | grep -Eq '^AS[0-9]+'; then
                 org="AS${asn} ${org}"
@@ -619,9 +621,14 @@ xray_logger_detect_node_name() {
     fi
 
     if [ -z "$country" ] && [ -z "$org" ]; then
-        org="$(curl -fsSL --max-time 10 "https://ipinfo.io/org" 2>/dev/null || true)"
-        city="$(curl -fsSL --max-time 10 "https://ipinfo.io/city" 2>/dev/null || true)"
-        country="$(curl -fsSL --max-time 10 "https://ipinfo.io/country" 2>/dev/null || true)"
+        org="$(curl -4 -fsSL --max-time 10 "https://ipinfo.io/org" 2>/dev/null || true)"
+        city="$(curl -4 -fsSL --max-time 10 "https://ipinfo.io/city" 2>/dev/null || true)"
+        country="$(curl -4 -fsSL --max-time 10 "https://ipinfo.io/country" 2>/dev/null || true)"
+        node_ip="$(curl -4 -fsSL --max-time 10 "https://ipinfo.io/ip" 2>/dev/null || true)"
+    fi
+
+    if [ -z "$node_ip" ]; then
+        node_ip="$(curl -4 -fsSL --max-time 5 "https://api.ipify.org" 2>/dev/null || true)"
     fi
 
     org="$(printf '%s' "$org" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
@@ -651,6 +658,11 @@ xray_logger_detect_node_name() {
         name="$short_org"
     else
         return 1
+    fi
+
+    node_ip="$(printf '%s' "$node_ip" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    if printf '%s' "$node_ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        name="$name - $node_ip"
     fi
 
     printf '%s' "$name"
