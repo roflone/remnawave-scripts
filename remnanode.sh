@@ -581,14 +581,48 @@ EOL
     fi
 }
 
-# City / CC, hoster. Same fields as bench.tlab.pw (ipinfo.io), without the full bench.
-# AS215730 H2NEXUS CLOUD SERVICES - FZCO + Helsinki / FI
-#   -> Helsinki / FI, H2NEXUS CLOUD SERVICES
+# City / CC from the IP geolocation, hoster from the AS name.
+# ipinfo.io is not used for the place: hosters publish a geofeed there
+# (Helsinki / FI) that does not match the IP country in other databases.
+# AS215730 H2NEXUS CLOUD SERVICES - FZCO + Oslo / NO
+#   -> Oslo / NO, H2NEXUS CLOUD SERVICES
+xray_logger_json_string() {
+    local json="$1"
+    local key="$2"
+    printf '%s' "$json" | sed -n 's/.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
 xray_logger_detect_node_name() {
-    local org city country short_org place name
-    org="$(curl -fsSL --max-time 10 "https://ipinfo.io/org" 2>/dev/null || true)"
-    city="$(curl -fsSL --max-time 10 "https://ipinfo.io/city" 2>/dev/null || true)"
-    country="$(curl -fsSL --max-time 10 "https://ipinfo.io/country" 2>/dev/null || true)"
+    local org city country short_org place name geo status json asn
+
+    geo="$(curl -fsSL --max-time 10 "http://ip-api.com/line/?fields=status,city,countryCode,as" 2>/dev/null || true)"
+    status="$(printf '%s\n' "$geo" | sed -n '1p' | tr -d '\r')"
+    # ip-api всегда отдаёт поля в своём порядке, не в порядке запроса:
+    # status, countryCode, city, as
+    if [ "$status" = "success" ]; then
+        country="$(printf '%s\n' "$geo" | sed -n '2p' | tr -d '\r')"
+        city="$(printf '%s\n' "$geo" | sed -n '3p' | tr -d '\r')"
+        org="$(printf '%s\n' "$geo" | sed -n '4p' | tr -d '\r')"
+    fi
+
+    if [ -z "$country" ]; then
+        json="$(curl -fsSL --max-time 10 "https://ipwho.is/" 2>/dev/null || true)"
+        if printf '%s' "$json" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
+            city="$(xray_logger_json_string "$json" city)"
+            country="$(xray_logger_json_string "$json" country_code)"
+            org="$(xray_logger_json_string "$json" isp)"
+            asn="$(printf '%s' "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+            if [ -n "$asn" ] && [ -n "$org" ] && ! printf '%s' "$org" | grep -Eq '^AS[0-9]+'; then
+                org="AS${asn} ${org}"
+            fi
+        fi
+    fi
+
+    if [ -z "$country" ] && [ -z "$org" ]; then
+        org="$(curl -fsSL --max-time 10 "https://ipinfo.io/org" 2>/dev/null || true)"
+        city="$(curl -fsSL --max-time 10 "https://ipinfo.io/city" 2>/dev/null || true)"
+        country="$(curl -fsSL --max-time 10 "https://ipinfo.io/country" 2>/dev/null || true)"
+    fi
 
     org="$(printf '%s' "$org" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
     city="$(printf '%s' "$city" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
