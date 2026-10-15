@@ -85,7 +85,7 @@ SCRIPT_URL="https://raw.githubusercontent.com/DigneZzZ/remnawave-scripts/main/re
 # File format:
 #   XRAY_LOGGER_ENCRYPTION_KEY=...
 #   XRAY_LOGGER_API_URL=https://xraylogger.example.com
-#   XRAY_LOGGER_NODE_NAME=Netherlands-1   # optional, defaults to hostname
+#   XRAY_LOGGER_NODE_NAME=Helsinki / FI, H2NEXUS   # optional, otherwise city/country + hoster
 XRAY_LOGGER_ENV_FILE="/root/.xray-logger.env"
 XRAY_LOGGER_ENCRYPTION_KEY="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
 XRAY_LOGGER_API_URL="${XRAY_LOGGER_API_URL:-}"
@@ -581,6 +581,59 @@ EOL
     fi
 }
 
+# City / CC, hoster. Same fields as bench.tlab.pw (ipinfo.io), without the full bench.
+# AS215730 H2NEXUS CLOUD SERVICES - FZCO + Helsinki / FI
+#   -> Helsinki / FI, H2NEXUS CLOUD SERVICES
+xray_logger_detect_node_name() {
+    local org city country short_org place name
+    org="$(curl -fsSL --max-time 10 "https://ipinfo.io/org" 2>/dev/null || true)"
+    city="$(curl -fsSL --max-time 10 "https://ipinfo.io/city" 2>/dev/null || true)"
+    country="$(curl -fsSL --max-time 10 "https://ipinfo.io/country" 2>/dev/null || true)"
+
+    org="$(printf '%s' "$org" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    city="$(printf '%s' "$city" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    country="$(printf '%s' "$country" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+
+    short_org="$(printf '%s' "$org" | sed -E \
+        -e 's/^AS[0-9]+[[:space:]]+//' \
+        -e 's/[[:space:]]+-[[:space:]]*[[:alnum:].]+$//' \
+        -e 's/,?[[:space:]]+(LLC|L\.L\.C\.|Ltd\.?|Limited|Inc\.?|GmbH|FZCO|FZE|OU|OY|B\.V\.|BV|Pte\.?[[:space:]]+Ltd\.?|SRL|SAS|PLC)$//I' \
+        -e 's/[[:space:]]+$//')"
+
+    place=""
+    if [ -n "$city" ] && [ -n "$country" ]; then
+        place="$city / $country"
+    elif [ -n "$city" ]; then
+        place="$city"
+    elif [ -n "$country" ]; then
+        place="$country"
+    fi
+
+    if [ -n "$place" ] && [ -n "$short_org" ]; then
+        name="$place, $short_org"
+    elif [ -n "$place" ]; then
+        name="$place"
+    elif [ -n "$short_org" ]; then
+        name="$short_org"
+    else
+        return 1
+    fi
+
+    printf '%s' "$name"
+}
+
+xray_logger_env_value() {
+    local key="$1"
+    local file="$2"
+    local line val
+    [ -f "$file" ] || return 0
+    line="$(grep -E "^[[:space:]]*${key}=" "$file" 2>/dev/null | tail -n 1 || true)"
+    [ -n "$line" ] || return 0
+    val="${line#*=}"
+    val="$(printf '%s' "$val" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')"
+    printf '%s' "$val"
+}
+
 xray_logger_agent_offer_install() {
     check_running_as_root
 
@@ -633,18 +686,25 @@ xray_logger_agent_offer_install() {
     set_xray_logger_env() {
         local key="$1"
         local value="$2"
+        local rendered="$value"
+        if printf '%s' "$value" | grep -q '[[:space:]"#]'; then
+            local escaped
+            escaped="$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+            rendered="\"${escaped}\""
+        fi
         local esc
-        esc="$(printf '%s' "$value" | sed -e 's/[\/&]/\\&/g')"
+        esc="$(printf '%s' "$rendered" | sed -e 's/[\/&]/\\&/g')"
         if [ -f .env ] && grep -Eq "^[[:space:]]*#?[[:space:]]*$key=" .env; then
             sed -i -E "s|^[[:space:]]*#?[[:space:]]*$key=.*|$key=$esc|" .env
         else
-            printf '%s=%s\n' "$key" "$value" >> .env
+            printf '%s=%s\n' "$key" "$rendered" >> .env
         fi
     }
 
     local ACCESS_LOG_DIR="/var/log/remnanode"
     local ACCESS_LOG_FILE="access.log"
-    local ENCRYPTION_KEY_BASE64 API_URL NODE_NAME
+    local ENCRYPTION_KEY_BASE64 API_URL NODE_NAME OLD_NODE_NAME
+    local logger_dir="/opt/xray-logger-agent"
 
     echo
     colorized_echo gray "Log directory: $ACCESS_LOG_DIR (auto)"
@@ -652,7 +712,20 @@ xray_logger_agent_offer_install() {
 
     ENCRYPTION_KEY_BASE64="${XRAY_LOGGER_ENCRYPTION_KEY:-}"
     API_URL="${XRAY_LOGGER_API_URL:-}"
-    NODE_NAME="${XRAY_LOGGER_NODE_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+    [ -n "$ENCRYPTION_KEY_BASE64" ] || ENCRYPTION_KEY_BASE64="$(xray_logger_env_value ENCRYPTION_KEY_BASE64 "$logger_dir/.env")"
+    [ -n "$API_URL" ] || API_URL="$(xray_logger_env_value API_URL "$logger_dir/.env")"
+    OLD_NODE_NAME="$(xray_logger_env_value NODE_NAME "$logger_dir/.env")"
+
+    if [ -n "${XRAY_LOGGER_NODE_NAME:-}" ]; then
+        NODE_NAME="$XRAY_LOGGER_NODE_NAME"
+    elif NODE_NAME="$(xray_logger_detect_node_name)"; then
+        :
+    elif [ -n "$OLD_NODE_NAME" ]; then
+        NODE_NAME="$OLD_NODE_NAME"
+        colorized_echo yellow "ipinfo.io did not answer. Keeping the current node name."
+    else
+        NODE_NAME="$(hostname -s 2>/dev/null || hostname)"
+    fi
 
     if [ -n "$ENCRYPTION_KEY_BASE64" ]; then
         colorized_echo gray "Secret key: (auto)"
@@ -668,12 +741,15 @@ xray_logger_agent_offer_install() {
         API_URL="$(ask_xray_logger_required "Enter the API URL (example: http://78.222.213.55:8080 or https://xraylogger.domain.com):")"
     fi
 
-    colorized_echo gray "Node name: $NODE_NAME (auto)"
+    if [ -n "$OLD_NODE_NAME" ] && [ "$OLD_NODE_NAME" != "$NODE_NAME" ]; then
+        colorized_echo yellow "Node name: $OLD_NODE_NAME -> $NODE_NAME"
+    else
+        colorized_echo gray "Node name: $NODE_NAME (auto)"
+    fi
     echo
 
     colorized_echo blue "Running Xray Logger Agent installer..."
 
-    local logger_dir="/opt/xray-logger-agent"
     local raw_base="https://raw.githubusercontent.com/likstanov/xray-logger/refs/heads/main/xray-logger-agent"
 
     if (
@@ -693,9 +769,10 @@ xray_logger_agent_offer_install() {
         set_xray_logger_env "NODE_NAME" "$NODE_NAME"
 
         mkdir -p "$ACCESS_LOG_DIR" || true
-        $COMPOSE up -d
+        $COMPOSE up -d --force-recreate
     ); then
         colorized_echo green "Xray Logger Agent installed successfully"
+        colorized_echo green "Container recreated with node name: $NODE_NAME"
     else
         colorized_echo red "Xray Logger Agent installation failed. Please check your network and try again manually."
         return 1
